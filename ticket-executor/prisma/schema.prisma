@@ -10,6 +10,7 @@ datasource db {
 // App settings (single row, id = "default"). Mirrors the Settings modal.
 model Setting {
   id             String   @id @default("default")
+  provider       String   @default("azure-devops") // azure-devops | github | jira | gitlab
   org            String   @default("")
   pat            String   @default("")
   rootRepo       String   @default("C:\\repos")

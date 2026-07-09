@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 const clean = (s: string) => s.replace(/[\r\n]+/g, "").trim();
 
 const DEFAULTS = {
+  provider: clean(process.env.TICKET_PROVIDER ?? "azure-devops"),
   org: process.env.AZURE_DEVOPS_ORG
     ? `https://dev.azure.com/${process.env.AZURE_DEVOPS_ORG}`
     : "",
@@ -39,7 +40,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json();
   const data: Record<string, string> = {};
-  for (const k of ["org", "rootRepo", "defaultProject", "sprint"] as const) {
+  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
   // Only overwrite PAT when a non-empty value is supplied.

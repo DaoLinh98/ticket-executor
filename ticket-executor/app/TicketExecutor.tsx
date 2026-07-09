@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import type { ExecStatus, LogLine, Ticket } from "@/lib/types";
+import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
   EXEC_COLOR,
   EXEC_LABEL,
@@ -34,6 +35,7 @@ type ExecView = {
 };
 
 type SettingsView = {
+  provider: ProviderId;
   org: string;
   pat: string;
   hasPat: boolean;
@@ -74,6 +76,7 @@ export default function TicketExecutor() {
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
+    provider: "azure-devops",
     org: "",
     pat: "",
     hasPat: false,
@@ -460,6 +463,20 @@ export default function TicketExecutor() {
 
   const showResult = tab === "result" && !!ex?.resultText;
 
+  // active provider metadata drives Settings field labels + placeholders
+  const pm = providerMeta(settings.provider);
+  const selectField =
+    (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLSelectElement>) =>
+      setSettings((s) => ({ ...s, [k]: e.target.value }));
+  const fieldInputStyle: CSSProperties = {
+    height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px",
+    background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace",
+    fontSize: "13px", outline: "none",
+  };
+  const fieldLabelStyle: CSSProperties = {
+    fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0",
+  };
+
   return (
     <div
       style={{
@@ -710,12 +727,13 @@ export default function TicketExecutor() {
         <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={closeSettings}>
           <div style={{ width: "540px", maxWidth: "100%", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 22px", borderBottom: "1px solid #1E232C" }}>
-              <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "16px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Azure DevOps connection &amp; execution defaults</div></div>
+              <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "16px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Connect your work-tracking provider &amp; execution defaults</div></div>
               <button onClick={closeSettings} style={{ width: "26px", height: "26px", border: "1.5px solid transparent", background: "linear-gradient(#1A1E25,#1A1E25) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 60%) border-box", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", clipPath: "polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)", animation: "spinAngle 4s linear infinite" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
             <div style={{ padding: "22px", display: "flex", flexDirection: "column", gap: "16px" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={{ fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0" }}>ORGANIZATION URL</span><input value={settings.org} onChange={setField("org")} style={{ height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px", background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace", fontSize: "13px", outline: "none" }} /></label>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={{ fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0" }}>PERSONAL ACCESS TOKEN</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={{ height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px", background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace", fontSize: "13px", outline: "none" }} /></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={selectField("provider")} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                 <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={{ fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0" }}>ROOT REPO</span><input value={settings.rootRepo} onChange={setField("rootRepo")} style={{ height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px", background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace", fontSize: "13px", outline: "none" }} /></label>
                 <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={{ fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0" }}>DEFAULT PROJECT NAME</span><input value={settings.defaultProject} onChange={setField("defaultProject")} style={{ height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px", background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace", fontSize: "13px", outline: "none" }} /></label>
