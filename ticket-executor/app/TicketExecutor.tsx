@@ -44,6 +44,8 @@ type ExecView = {
   logLines: LogLine[];
   resultText: string;
   error: string;
+  prUrl?: string;
+  branch?: string;
   duration?: string;
   currentStep?: number;
 };
@@ -202,6 +204,8 @@ export default function TicketExecutor() {
               logLines: ex.logLines ?? [],
               resultText: ex.resultText ?? "",
               error: ex.errorMessage ?? "",
+              prUrl: ex.prUrl ?? "",
+              branch: ex.branch ?? "",
               duration: ex.duration,
               currentStep: ex.currentStep,
             },
@@ -777,6 +781,18 @@ export default function TicketExecutor() {
                         <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9" }}>Implementation complete</div>
                         <div style={{ fontSize: "12.5px", color: "#8A90A0", marginTop: "2px" }}>Finished{ex.duration ? <> in <span style={{ color: "#C7CCD8", fontWeight: 600 }}>{ex.duration}</span></> : ""} · Claude Code output below</div>
                       </div>
+                      {ex.branch && (
+                        <span title="Branch" style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#9BA6E8", padding: "5px 10px", borderRadius: "999px", background: "rgba(155,166,232,.08)", border: "1px solid #2E3450", maxWidth: "220px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flex: "0 0 auto" }}><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="8" r="2.5" /><path d="M6 8.5v7M18 10.5c0 3-3 3.5-6 3.5" /></svg>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{ex.branch}</span>
+                        </span>
+                      )}
+                      {ex.prUrl && (
+                        <a href={ex.prUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => fireBoltFromEvent(e as unknown as MouseEvent, { color: "#35D6A4" })} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px", textDecoration: "none", border: "1.5px solid transparent", background: "linear-gradient(rgba(53,214,164,.14),rgba(53,214,164,.14)) padding-box, conic-gradient(from var(--angle), transparent, #35D6A4, #baf5e3, #35D6A4, transparent 70%) border-box", color: "#5BE8B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip, animation: "spinAngle 3s linear infinite" }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>
+                          Open PR
+                        </a>
+                      )}
                     </div>
                     <div className="md-body">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{ex.resultText}</ReactMarkdown>

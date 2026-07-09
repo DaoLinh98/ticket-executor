@@ -15,6 +15,8 @@ type Entry = {
   logLines: LogLine[];
   resultText: string;
   error: string;
+  prUrl: string;
+  branch: string;
   currentStep: number;
   cwd: string;
   startedAt: number;
@@ -31,6 +33,25 @@ g.__execStore = store;
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const stripAnsi = (s: string) => s.replace(ANSI, "");
 const cleanPath = (s: string) => s.replace(/[\r\n]+/g, "").trim();
+
+// Pull-request URLs for GitHub and Azure DevOps (also matches GitLab merge requests).
+const PR_URL =
+  /https?:\/\/[^\s)"'\]]*(?:\/pull\/\d+|\/pullrequest\/\d+|\/-\/merge_requests\/\d+)/i;
+// Branch created via git checkout -b / switch -c, or targeted by gh pr create --head.
+const BRANCH_CMD =
+  /git\s+(?:checkout\s+-b|switch\s+-c)\s+(?:"([^"]+)"|'([^']+)'|(\S+))|gh\s+pr\s+create[^\n]*--head[= ]+(?:"([^"]+)"|'([^']+)'|(\S+))/i;
+
+// Scan free text / command output for a PR URL and branch name.
+function detectArtifacts(entry: Entry, text: string) {
+  if (!entry.prUrl) {
+    const m = text.match(PR_URL);
+    if (m) entry.prUrl = m[0];
+  }
+  if (!entry.branch) {
+    const b = text.match(BRANCH_CMD);
+    if (b) entry.branch = (b[1] || b[2] || b[3] || b[4] || b[5] || b[6] || "").trim();
+  }
+}
 
 function fmtDuration(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -109,6 +130,8 @@ export function getExecution(id: string) {
     logLines: e.logLines,
     resultText: e.resultText,
     errorMessage: e.error,
+    prUrl: e.prUrl,
+    branch: e.branch,
     currentStep: e.currentStep,
     duration: e.completedAt ? fmtDuration(e.completedAt - e.startedAt) : undefined,
     startedAt: new Date(e.startedAt).toISOString(),
@@ -149,6 +172,7 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
         const text = block.text.trim();
         if (text) {
           ts.lastText = text;
+          detectArtifacts(entry, text);
           text.split(/\r?\n/).forEach((l) => l.trim() && entry.logLines.push({ text: l, kind: "muted" }));
         }
       } else if (block.type === "tool_use") {
@@ -157,9 +181,11 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
         const step = stepForTool(name, input);
         bump(entry, step);
         let label = `✎ ${name}`;
-        if (name.toLowerCase() === "bash" && typeof input.command === "string")
-          label = `$ ${(input.command as string).split(/\r?\n/)[0].slice(0, 160)}`;
-        else if (typeof input.file_path === "string") label = `✎ ${name} ${input.file_path}`;
+        if (name.toLowerCase() === "bash" && typeof input.command === "string") {
+          const cmd = input.command as string;
+          detectArtifacts(entry, cmd);
+          label = `$ ${cmd.split(/\r?\n/)[0].slice(0, 160)}`;
+        } else if (typeof input.file_path === "string") label = `✎ ${name} ${input.file_path}`;
         entry.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
       }
     }
@@ -167,7 +193,10 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
   }
   if (type === "result") {
     const r = obj as { result?: string; is_error?: boolean };
-    if (typeof r.result === "string" && r.result.trim()) ts.resultText = r.result.trim();
+    if (typeof r.result === "string" && r.result.trim()) {
+      ts.resultText = r.result.trim();
+      detectArtifacts(entry, ts.resultText);
+    }
     ts.isError = !!r.is_error;
   }
 }
@@ -251,7 +280,7 @@ export async function startExecution(params: {
 
   const entry: Entry = {
     id, ticketId, project, skill, command,
-    status: "running", logLines: [], resultText: "", error: "",
+    status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
     currentStep: 0, cwd: repoDir, startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false,
   };
