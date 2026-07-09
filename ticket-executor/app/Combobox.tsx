@@ -116,6 +116,7 @@ export default function Combobox({
       </div>
       {open && list.length > 0 && (
         <div
+          className="te-scroll"
           style={{
             position: "absolute",
             top: "calc(100% + 8px)",

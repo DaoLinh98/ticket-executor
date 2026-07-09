@@ -592,7 +592,7 @@ export default function TicketExecutor() {
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
             </div>
           </div>
-          <div ref={undefined} style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
+          <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
             {loading && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>Loading sprint…</div>}
             {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", padding: "14px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)", lineHeight: 1.5 }}>{loadError}</div>}
             {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", padding: "14px", border: "1px solid #3A2F22", borderRadius: "10px", background: "rgba(245,179,65,.06)", lineHeight: 1.5 }}>{ticketsNotice}</div>}
@@ -673,7 +673,7 @@ export default function TicketExecutor() {
                 </div>
               </div>
 
-              <div ref={tab === "execution" ? undefined : undefined} style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", minHeight: 0, padding: "24px 28px 44px" }}>
+              <div className="te-scroll te-scroll--smooth" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", minHeight: 0, padding: "24px 28px 44px" }}>
                 {tab === "overview" && (
                   <div style={{ maxWidth: "780px", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
                     <section>
@@ -749,7 +749,7 @@ export default function TicketExecutor() {
                           <div style={{ flex: 1 }} />
                           <span style={logStatusStyle}>{lsl}</span>
                         </div>
-                        <div ref={logRef} style={{ position: "relative", zIndex: 1, height: "430px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", lineHeight: 1.75 }}>
+                        <div ref={logRef} className="te-scroll" style={{ position: "relative", zIndex: 1, height: "430px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", lineHeight: 1.75 }}>
                           {logLines.length === 0 && <div style={{ color: "#5B6273" }}>Waiting for output…</div>}
                           {logLines.map((l, i) => (
                             <div key={i} style={{ display: "flex", gap: "12px" }}>
