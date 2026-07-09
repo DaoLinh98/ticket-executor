@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { encryptSecret } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -43,8 +44,8 @@ export async function POST(req: Request) {
   for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
-  // Only overwrite PAT when a non-empty value is supplied.
-  if (typeof body.pat === "string" && body.pat.length > 0) data.pat = body.pat;
+  // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
+  if (typeof body.pat === "string" && body.pat.length > 0) data.pat = encryptSecret(body.pat);
 
   const s = await prisma.setting.upsert({
     where: { id: "default" },
