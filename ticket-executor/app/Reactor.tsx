@@ -194,10 +194,11 @@ export default function Reactor({ accent = "#FB7250" }: { accent?: string }) {
     };
     window.addEventListener("pointermove", onMove);
 
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
     let raf = 0;
     const tick = () => {
-      const t = clock.getElapsedTime();
+      timer.update();
+      const t = timer.getElapsed();
       stt.speed += (stt.target - stt.speed) * 0.045;
       points.rotation.y = t * 0.06 * stt.speed;
       points.rotation.x = Math.sin(t * 0.08) * 0.18;
