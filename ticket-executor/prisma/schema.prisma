@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// App settings (single row, id = "default"). Mirrors the Settings modal.
+model Setting {
+  id             String   @id @default("default")
+  org            String   @default("")
+  pat            String   @default("")
+  rootRepo       String   @default("C:\\repos")
+  defaultProject String   @default("")
+  sprint         String   @default("")
+  updatedAt      DateTime @updatedAt
+}
+
+// One run of Claude CLI against a ticket. Mirrors the Execution data model.
+model Execution {
+  id           String    @id @default(cuid())
+  adoTicketId  String
+  projectName  String
+  skillName    String
+  status       String    @default("running") // running | completed | failed
+  command      String
+  resultText   String    @default("")
+  errorMessage String    @default("")
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([adoTicketId])
+}
