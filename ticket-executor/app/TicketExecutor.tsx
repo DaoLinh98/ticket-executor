@@ -15,6 +15,7 @@ import {
   STEPS,
   avatar,
   branchOf,
+  canImplement,
   execDot,
   initials,
   statusColor,
@@ -383,7 +384,7 @@ export default function TicketExecutor() {
   };
 
   // action button
-  type Action = { label: string; spinner: boolean; playIcon: boolean; onClick: (e?: MouseEvent) => void; style: CSSProperties };
+  type Action = { label: string; spinner: boolean; playIcon: boolean; onClick: (e?: MouseEvent) => void; style: CSSProperties; title?: string };
   let action: Action;
   if (st === "running")
     action = {
@@ -437,13 +438,34 @@ export default function TicketExecutor() {
   if (st === "not started" || st === "failed")
     action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
+  // Gate: implementing is only allowed when the ticket is in the dev lane.
+  const startsNewRun = st === "not started" || st === "failed";
+  const gated = !!t && startsNewRun && !canImplement(t.status);
+  if (gated) {
+    const reason = `Ticket must be "Ready for Dev" or "In Progress" to implement (current: ${t!.status}).`;
+    action.onClick = (e) => {
+      fireBoltFromEvent(e);
+      showToast(reason);
+    };
+    action.playIcon = false;
+    action.title = reason;
+    action.style = {
+      ...action.style,
+      cursor: "not-allowed",
+      opacity: 0.45,
+      filter: "grayscale(.4)",
+      animation: "none",
+    };
+  }
+
   const ctaButtonStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
-  const ctaTitle = st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : "Ready to implement";
+  const ctaTitle = gated ? "Not ready to implement" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : "Ready to implement";
   const ctaSub = t
-    ? st === "completed" ? "Open the Result tab to review what Claude changed."
-      : st === "failed" ? "Fix the blocker below, then retry the run."
-        : st === "running" ? "Watch the execution stream on the Execution tab."
-          : `Claude Code will cd into the repo and run ${getSkill(t)} for ${getArea(t)}.`
+    ? gated ? `This ticket is "${t.status}". Move it to "Ready for Dev" or "In Progress" to enable implementation.`
+      : st === "completed" ? "Open the Result tab to review what Claude changed."
+        : st === "failed" ? "Fix the blocker below, then retry the run."
+          : st === "running" ? "Watch the execution stream on the Execution tab."
+            : `Claude Code will cd into the repo and run ${getSkill(t)} for ${getArea(t)}.`
     : "";
 
   // steps
@@ -641,7 +663,7 @@ export default function TicketExecutor() {
                   <button onClick={() => resultEnabled && setTab("result")} style={tabStyle("result", resultEnabled)}>Result</button>
                   <div style={{ flex: 1 }} />
                   <div style={{ paddingBottom: "8px" }}>
-                    <button onClick={action.onClick} style={action.style}>
+                    <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
                       {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
                       {action.spinner && <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
                       {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
@@ -689,7 +711,7 @@ export default function TicketExecutor() {
                         <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
                         <div style={{ fontSize: "13px", color: "#9A9FAD" }}>{ctaSub}</div>
                       </div>
-                      <button onClick={action.onClick} style={ctaButtonStyle}>
+                      <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={ctaButtonStyle}>
                         {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
                         {action.spinner && <span style={{ width: "15px", height: "15px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
                         {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}

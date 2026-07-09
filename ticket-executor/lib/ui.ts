@@ -49,6 +49,19 @@ export function statusColor(status: string): string {
   return STATUS_COLORS[status] ?? "#8A90A0";
 }
 
+// A ticket can be implemented only when it is actively in the dev lane:
+// "Ready for Dev" / "In Progress" (and the ADO Agile equivalent "Active").
+const IMPLEMENTABLE_STATES = new Set([
+  "ready for dev",
+  "ready for development",
+  "in progress",
+  "active",
+]);
+
+export function canImplement(status: string): boolean {
+  return IMPLEMENTABLE_STATES.has((status ?? "").trim().toLowerCase());
+}
+
 export const EXEC_COLOR: Record<ExecStatus, string> = {
   "not started": "#5B6273",
   running: "#F5B341",
