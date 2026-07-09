@@ -67,6 +67,8 @@ function deriveStep(logLines: LogLine[]): number {
 export default function TicketExecutor() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loadError, setLoadError] = useState<string>("");
+  const [ticketsNotice, setTicketsNotice] = useState<string>("");
+  const [sprintLabel, setSprintLabel] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
   const [tab, setTab] = useState<"overview" | "execution" | "result">("overview");
@@ -91,35 +93,48 @@ export default function TicketExecutor() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---- data load ----
+  // Fetch the ticket list for a given provider and refresh the header sprint.
+  const reloadTickets = useCallback(async (provider: ProviderId) => {
+    setLoading(true);
+    setLoadError("");
+    setTicketsNotice("");
+    try {
+      const r = await fetch(`/api/tickets?provider=${encodeURIComponent(provider)}`);
+      const data = await r.json();
+      if (data.error) setLoadError(data.error);
+      if (data.notice) setTicketsNotice(data.notice);
+      setSprintLabel(typeof data.sprint === "string" ? data.sprint : "");
+      const list: Ticket[] = data.tickets ?? [];
+      setTickets(list);
+      setSelectedId((prev) => (list.some((t) => t.id === prev) ? prev : list[0]?.id ?? ""));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      setTickets([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
-      try {
-        const r = await fetch("/api/tickets");
-        const data = await r.json();
-        if (data.error) setLoadError(data.error);
-        const list: Ticket[] = data.tickets ?? [];
-        setTickets(list);
-        if (list.length) setSelectedId((prev) => prev || list[0].id);
-      } catch (e) {
-        setLoadError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-    (async () => {
+      let provider: ProviderId = "azure-devops";
       try {
         const r = await fetch("/api/settings");
         const data = await r.json();
-        if (data.settings) setSettings(data.settings);
+        if (data.settings) {
+          setSettings(data.settings);
+          provider = data.settings.provider ?? provider;
+        }
       } catch {
-        /* ignore */
+        /* ignore — fall back to default provider */
       }
+      await reloadTickets(provider);
     })();
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
-  }, []);
+  }, [reloadTickets]);
 
   // autoscroll terminal
   useEffect(() => {
@@ -274,6 +289,12 @@ export default function TicketExecutor() {
   };
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
+  // Switching provider immediately reloads the sprint/tickets for that provider.
+  const onProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const provider = e.target.value as ProviderId;
+    setSettings((s) => ({ ...s, provider }));
+    reloadTickets(provider);
+  };
   const saveSettings = async (e?: MouseEvent) => {
     fireBoltFromEvent(e, { color: "#35D6A4" });
     setSettingsOpen(false);
@@ -286,6 +307,7 @@ export default function TicketExecutor() {
       const data = await r.json();
       if (data.settings) setSettings(data.settings);
       showToast("Settings saved", 3200);
+      await reloadTickets((data.settings?.provider as ProviderId) ?? settings.provider);
     } catch {
       showToast("Failed to save settings", 3200);
     }
@@ -465,9 +487,6 @@ export default function TicketExecutor() {
 
   // active provider metadata drives Settings field labels + placeholders
   const pm = providerMeta(settings.provider);
-  const selectField =
-    (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLSelectElement>) =>
-      setSettings((s) => ({ ...s, [k]: e.target.value }));
   const fieldInputStyle: CSSProperties = {
     height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px",
     background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace",
@@ -501,7 +520,7 @@ export default function TicketExecutor() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginLeft: "8px", padding: "6px 13px", border: "1.5px solid transparent", borderRadius: "999px", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box", animation: "spinAngle 4s linear infinite" }}>
           <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4" }} />
-          <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{settings.sprint || "—"}</span>
+          <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{sprintLabel || "—"}</span>
         </div>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap" }}>
@@ -528,8 +547,9 @@ export default function TicketExecutor() {
           </div>
           <div ref={undefined} style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
             {loading && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>Loading sprint…</div>}
-            {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", padding: "14px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)", lineHeight: 1.5 }}>ADO error: {loadError}</div>}
-            {!loading && !loadError && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>No tickets match.</div>}
+            {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", padding: "14px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)", lineHeight: 1.5 }}>{loadError}</div>}
+            {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", padding: "14px", border: "1px solid #3A2F22", borderRadius: "10px", background: "rgba(245,179,65,.06)", lineHeight: 1.5 }}>{ticketsNotice}</div>}
+            {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>No tickets match.</div>}
             {filtered.map((tk, i) => {
               const sel = tk.id === selectedId;
               const est = execStatusOf(tk.id);
@@ -731,7 +751,7 @@ export default function TicketExecutor() {
               <button onClick={closeSettings} style={{ width: "26px", height: "26px", border: "1.5px solid transparent", background: "linear-gradient(#1A1E25,#1A1E25) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 60%) border-box", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", clipPath: "polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)", animation: "spinAngle 4s linear infinite" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
             <div style={{ padding: "22px", display: "flex", flexDirection: "column", gap: "16px" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={selectField("provider")} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={onProviderChange} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
