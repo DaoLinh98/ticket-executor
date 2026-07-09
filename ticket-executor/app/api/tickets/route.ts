@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
-import { getSprintTickets } from "@/lib/ado";
+import { loadTickets, normalizeProvider } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const provider = normalizeProvider(
+    url.searchParams.get("provider") ?? process.env.TICKET_PROVIDER
+  );
   try {
-    const tickets = await getSprintTickets();
-    return NextResponse.json({ tickets });
+    const result = await loadTickets(provider);
+    return NextResponse.json({ provider, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message, tickets: [] }, { status: 500 });
+    return NextResponse.json(
+      { error: message, provider, tickets: [], sprint: "", connected: false },
+      { status: 500 }
+    );
   }
 }
