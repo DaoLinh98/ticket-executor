@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
+import Combobox from "./Combobox";
 import type { ExecStatus, LogLine, Ticket } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
@@ -23,6 +24,18 @@ import {
 
 const ACCENT = "#FB7250";
 const DEFAULT_SKILL = "implement-ticket";
+
+// Suggested skills for the Overview combobox — free text is still allowed.
+const SKILL_OPTIONS = [
+  "implement-ticket",
+  "fix-issue",
+  "fix-code-review",
+  "senior-code-review",
+  "testing-report",
+  "review-re-estimate-ado-tickets",
+  "tackle-requirement",
+];
+const COMMON_ROOT_REPOS = ["C:\\repos", "C:\\src", "D:\\repos"];
 
 type ExecView = {
   executionId?: string;
@@ -151,12 +164,24 @@ export default function TicketExecutor() {
   const getArea = (t: Ticket) => overrides[t.id]?.area || t.project || settings.defaultProject;
   const getSkill = (t: Ticket) => overrides[t.id]?.skill || DEFAULT_SKILL;
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo || settings.rootRepo || "C:\\repos";
-  const setOverride =
-    (ticketId: string, field: "area" | "skill" | "rootRepo") =>
-      (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value;
-        setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
-      };
+  const setOverrideValue = (ticketId: string, field: "area" | "skill" | "rootRepo", value: string) =>
+    setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
+
+  // Combobox option lists (values are suggestions; free text is still allowed).
+  const overrideVals = Object.values(overrides);
+  const projectOptions = Array.from(
+    new Set([
+      ...tickets.map((x) => x.project),
+      ...overrideVals.map((o) => o?.area),
+    ].filter(Boolean) as string[])
+  );
+  const rootRepoOptions = Array.from(
+    new Set([
+      ...COMMON_ROOT_REPOS,
+      settings.rootRepo,
+      ...overrideVals.map((o) => o?.rootRepo),
+    ].filter(Boolean) as string[])
+  );
 
   // ---- polling ----
   const startPolling = useCallback(
@@ -647,9 +672,9 @@ export default function TicketExecutor() {
                       </section>
                     )}
                     <section style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "10px" }}>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><input value={getRootRepo(t)} onChange={setOverride(t.id, "rootRepo")} style={{ width: "100%", border: "none", outline: "none", background: "transparent", padding: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#E4E7EE" }} /></div>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT <span style={{ color: "#3A4150" }}></span></div><input value={getArea(t)} onChange={setOverride(t.id, "area")} style={{ width: "100%", border: "none", outline: "none", background: "transparent", padding: 0, fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#E4E7EE" }} /></div>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><input value={getSkill(t)} onChange={setOverride(t.id, "skill")} style={{ width: "100%", border: "none", outline: "none", background: "transparent", padding: 0, fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#E4E7EE" }} /></div>
+                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
+                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
+                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={SKILL_OPTIONS} ariaLabel="Skill" /></div>
                       <div style={{ padding: "13px 15px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
                     </section>
                     <section>
