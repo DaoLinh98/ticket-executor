@@ -50,6 +50,16 @@ type ExecView = {
   currentStep?: number;
 };
 
+type RunSummary = {
+  id: string;
+  status: ExecStatus;
+  skillName: string;
+  prUrl: string;
+  branch: string;
+  startedAt: string;
+  duration?: string;
+};
+
 type SettingsView = {
   provider: ProviderId;
   org: string;
@@ -92,6 +102,7 @@ export default function TicketExecutor() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
+  const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
@@ -151,6 +162,50 @@ export default function TicketExecutor() {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, [reloadTickets]);
+
+  // ---- execution history ----
+  const loadHistory = useCallback(async (ticketId: string) => {
+    if (!ticketId) return;
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/executions`);
+      const data = await r.json();
+      setHistory((h) => ({ ...h, [ticketId]: data.executions ?? [] }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedId) loadHistory(selectedId);
+  }, [selectedId, loadHistory]);
+
+  // Open a past run (from DB) in the viewer.
+  const openRun = useCallback(async (ticketId: string, execId: string, e?: MouseEvent) => {
+    fireBoltFromEvent(e);
+    try {
+      const r = await fetch(`/api/executions/${execId}`);
+      const data = await r.json();
+      const ex = data.execution;
+      if (!ex) return;
+      setExecs((s) => ({
+        ...s,
+        [ticketId]: {
+          executionId: execId,
+          status: ex.status,
+          logLines: ex.logLines ?? [],
+          resultText: ex.resultText ?? "",
+          error: ex.errorMessage ?? "",
+          prUrl: ex.prUrl ?? "",
+          branch: ex.branch ?? "",
+          duration: ex.duration,
+          currentStep: ex.currentStep,
+        },
+      }));
+      setTab(ex.status === "completed" ? "result" : "execution");
+    } catch {
+      /* ignore */
+    }
+  }, [fireBoltFromEvent]);
 
   // autoscroll terminal
   useEffect(() => {
@@ -218,6 +273,7 @@ export default function TicketExecutor() {
             } catch { }
             if (ex.status === "completed") showToast(`#${ticketId} completed — result ready`);
             else showToast(`#${ticketId} failed`);
+            loadHistory(ticketId);
           }
         } catch {
           /* keep polling */
@@ -226,7 +282,7 @@ export default function TicketExecutor() {
       pollTimers.current[executionId] = setInterval(poll, 1200);
       poll();
     },
-    [showToast]
+    [showToast, loadHistory]
   );
 
   const startImplement = useCallback(
@@ -722,6 +778,25 @@ export default function TicketExecutor() {
                         <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
                       </button>
                     </div>
+                    {(history[t.id]?.length ?? 0) > 0 && (
+                      <section>
+                        <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>PREVIOUS RUNS</h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                          {history[t.id].map((run) => (
+                            <button key={run.id} onClick={(e) => openRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", padding: "10px 13px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s" }}>
+                              <span style={{ ...execDot(run.status), width: "8px", height: "8px" }} />
+                              <span style={{ fontSize: "12.5px", fontWeight: 600, color: EXEC_COLOR[run.status], minWidth: "76px" }}>{EXEC_LABEL[run.status]}</span>
+                              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#8A90A0" }}>{run.skillName}</span>
+                              <div style={{ flex: 1 }} />
+                              {run.branch && <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#9BA6E8", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.branch}</span>}
+                              {run.prUrl && <a href={run.prUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#5BE8B8", fontSize: "11.5px", fontWeight: 600, textDecoration: "none" }}>PR ↗</a>}
+                              {run.duration && <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{run.duration}</span>}
+                              <span style={{ fontSize: "11.5px", color: "#5B6273" }}>{new Date(run.startedAt).toLocaleString()}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                   </div>
                 )}
 

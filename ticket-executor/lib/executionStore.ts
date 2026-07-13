@@ -172,6 +172,28 @@ export async function getPersistedExecution(id: string) {
   };
 }
 
+// Summaries of past runs for a ticket, newest first (for the history panel).
+export async function listExecutions(ticketId: string) {
+  const rows = await prisma.execution.findMany({
+    where: { adoTicketId: ticketId },
+    orderBy: { startedAt: "desc" },
+    take: 20,
+    select: {
+      id: true, status: true, skillName: true, prUrl: true, branch: true,
+      startedAt: true, completedAt: true,
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status as ExecStatus,
+    skillName: r.skillName,
+    prUrl: r.prUrl,
+    branch: r.branch,
+    startedAt: r.startedAt.toISOString(),
+    duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
+  }));
+}
+
 export function cancelExecution(id: string): boolean {
   const e = store.get(id);
   if (!e || e.status !== "running") return false;
