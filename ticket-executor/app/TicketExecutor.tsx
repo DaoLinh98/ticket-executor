@@ -16,6 +16,7 @@ import {
   EXEC_LABEL,
   STATUS_ALL,
   STEPS,
+  actionInfoFor,
   avatar,
   branchOf,
   canImplement,
@@ -118,7 +119,6 @@ export default function TicketExecutor() {
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
-  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [connTest, setConnTest] = useState<{ status: "idle" | "testing" | "ok" | "fail"; message: string }>({ status: "idle", message: "" });
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
@@ -328,7 +328,7 @@ export default function TicketExecutor() {
     showToast(`Status set to "${status}" — synced to Azure DevOps`, 3200);
   };
   const getArea = (t: Ticket) => overrides[t.id]?.area || t.project || settings.defaultProject;
-  const getSkill = (t: Ticket) => overrides[t.id]?.skill || DEFAULT_SKILL;
+  const getSkill = (t: Ticket) => overrides[t.id]?.skill || actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL;
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo || settings.rootRepo || "C:\\repos";
   const setOverrideValue = (ticketId: string, field: "area" | "skill" | "rootRepo", value: string) =>
     setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
@@ -414,6 +414,12 @@ export default function TicketExecutor() {
       if (!t) return;
       const cur = execs[t.id];
       if (cur && cur.status === "running") return;
+      // Guard: only statuses with a runnable action can start a run.
+      const status0 = getStatus(t);
+      if (!skillOverride && !actionInfoFor(status0)) {
+        showToast(`Ticket status "${status0}" has no runnable action yet.`);
+        return;
+      }
       requestNotify();
       const skillName = skillOverride || getSkill(t);
       // Reflect a quick-action skill choice in the per-ticket override.
@@ -584,6 +590,7 @@ export default function TicketExecutor() {
 
   const t = tickets.find((x) => x.id === selectedId);
   const effStatus = t ? getStatus(t) : "";
+  const actionInfo = t ? actionInfoFor(effStatus) : null;
   const ex = t ? execs[t.id] : undefined;
   const st: ExecStatus = ex ? ex.status : "not started";
   const execEnabled = st !== "not started";
@@ -649,7 +656,7 @@ export default function TicketExecutor() {
     };
   else if (st === "failed")
     action = {
-      label: "Retry Implementation", spinner: false, playIcon: true, onClick: startImplement,
+      label: `Retry ${actionInfo?.label ?? "Implement Ticket"}`, spinner: false, playIcon: true, onClick: startImplement,
       style: {
         display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
         border: "1.5px solid transparent",
@@ -659,7 +666,7 @@ export default function TicketExecutor() {
     };
   else
     action = {
-      label: "Implement Ticket", spinner: false, playIcon: true, onClick: startImplement,
+      label: actionInfo?.label ?? "Implement Ticket", spinner: false, playIcon: true, onClick: startImplement,
       style: {
         display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
         border: "1.5px solid transparent",
@@ -673,11 +680,11 @@ export default function TicketExecutor() {
   if (st === "not started" || st === "failed")
     action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
-  // Gate: implementing is only allowed when the ticket is in the dev lane.
+  // Gate: a run can only start when the effective status maps to an action.
   const startsNewRun = st === "not started" || st === "failed";
-  const gated = !!t && startsNewRun && !canImplement(effStatus);
+  const gated = !!t && startsNewRun && !actionInfo;
   if (gated) {
-    const reason = `Ticket must be "Ready for Dev" or "In Progress" to implement (current: ${effStatus}).`;
+    const reason = `Ticket status "${effStatus}" has no runnable action yet.`;
     action.onClick = (e) => {
       fireBoltFromEvent(e);
       showToast(reason);
@@ -693,10 +700,25 @@ export default function TicketExecutor() {
     };
   }
 
+  // Secondary "next action" button — after a run completes, offer the action that
+  // matches the (auto-advanced) status, e.g. "Review Code" once implement finishes.
+  const showSecondaryAction = st === "completed" && !!actionInfo;
+  const secondaryStyleBase: CSSProperties = {
+    position: "relative", overflow: "hidden", display: "flex", alignItems: "center", gap: "7px",
+    border: "1.5px solid transparent",
+    background: `linear-gradient(#1A1E25,#1A1E25) padding-box, conic-gradient(from var(--angle), transparent, ${ACCENT}, transparent 55%) border-box`,
+    color: "#ECEEF3", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
+    animation: "spinAngle 3.2s linear infinite",
+  };
+  const secondaryAction = showSecondaryAction
+    ? { label: actionInfo!.label, onClick: (e?: MouseEvent) => startImplement(e), style: { ...secondaryStyleBase, height: "32px", padding: "0 14px", fontSize: "12px" } }
+    : null;
+  const secondaryCtaButtonStyle: CSSProperties = { ...secondaryStyleBase, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
+
   const ctaButtonStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
-  const ctaTitle = gated ? "Not ready to implement" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : "Ready to implement";
+  const ctaTitle = gated ? "No action for this status" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
-    ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev" or "In Progress" to enable implementation.`
+    ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
       : st === "completed" ? "Open the Result tab to review what Claude changed."
         : st === "failed" ? "Fix the blocker below, then retry the run."
           : st === "running" ? "Watch the execution stream on the Execution tab."
@@ -975,26 +997,11 @@ export default function TicketExecutor() {
                       {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
                       <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
                     </button>
-                    {!gated && st !== "running" && (
-                      <div style={{ position: "relative" }}>
-                        <button onClick={() => setSkillMenuOpen((o) => !o)} title="Run another skill on this ticket" aria-label="Run another skill" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "32px", width: "32px", border: "1.5px solid #2A2F3A", background: "#14171D", color: "#C7CCD8", cursor: "pointer", clipPath: cutClip }}>
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: skillMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
-                        </button>
-                        {skillMenuOpen && (
-                          <>
-                            <div onClick={() => setSkillMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
-                            <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 25, minWidth: "240px", maxHeight: "300px", overflowY: "auto", border: "1px solid #262B36", borderRadius: "11px", background: "#0E1015", boxShadow: "0 22px 54px -24px #000", padding: "6px", animation: "fadeUp .16s ease-out both" }}>
-                              <div style={{ fontSize: "10px", letterSpacing: ".14em", color: "#5B6273", fontWeight: 700, padding: "6px 9px 8px" }}>RUN SKILL</div>
-                              {skillOptions.map((sk) => (
-                                <button key={sk} onClick={(e) => { setSkillMenuOpen(false); startImplement(e as unknown as MouseEvent, sk); }} style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 9px", borderRadius: "7px", border: "none", cursor: "pointer", background: sk === getSkill(t) ? "rgba(251,114,80,.12)" : "transparent", color: sk === getSkill(t) ? "var(--accent)" : "#C7CCD8", fontFamily: "var(--font-mono), monospace", fontSize: "12.5px" }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ flex: "0 0 auto", opacity: 0.8 }}><path d="M7 4l13 8-13 8z" /></svg>
-                                  {sk}
-                                </button>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </div>
+                    {secondaryAction && (
+                      <button onClick={secondaryAction.onClick} style={secondaryAction.style}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>
+                        <span style={{ position: "relative", zIndex: 1 }}>{secondaryAction.label}</span>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1044,6 +1051,12 @@ export default function TicketExecutor() {
                         {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
                         <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
                       </button>
+                      {secondaryAction && (
+                        <button onClick={secondaryAction.onClick} style={secondaryCtaButtonStyle}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>
+                          <span style={{ position: "relative", zIndex: 1 }}>{secondaryAction.label}</span>
+                        </button>
+                      )}
                     </div>
                     {(history[t.id]?.length ?? 0) > 0 && (
                       <section>
