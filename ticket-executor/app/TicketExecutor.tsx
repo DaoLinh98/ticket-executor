@@ -99,6 +99,10 @@ export default function TicketExecutor() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [tab, setTab] = useState<"overview" | "execution" | "result">("overview");
   const [search, setSearch] = useState("");
+  const [fStatus, setFStatus] = useState("");
+  const [fType, setFType] = useState("");
+  const [fAssignee, setFAssignee] = useState("");
+  const [fReadyOnly, setFReadyOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
@@ -404,9 +408,18 @@ export default function TicketExecutor() {
   const activeCount = Object.values(execs).filter((e) => e.status === "running").length;
 
   const q = search.trim().toLowerCase();
-  const filtered = tickets.filter(
-    (t) => !q || (t.id + " " + t.title + " " + t.assignee + " " + t.project).toLowerCase().includes(q)
-  );
+  const statusOptions = Array.from(new Set(tickets.map((x) => x.status).filter(Boolean)));
+  const typeOptions = Array.from(new Set(tickets.map((x) => x.type).filter(Boolean)));
+  const assigneeOptions = Array.from(new Set(tickets.map((x) => x.assignee).filter(Boolean)));
+  const filtered = tickets.filter((t) => {
+    if (q && !(t.id + " " + t.title + " " + t.assignee + " " + t.project).toLowerCase().includes(q)) return false;
+    if (fStatus && t.status !== fStatus) return false;
+    if (fType && t.type !== fType) return false;
+    if (fAssignee && t.assignee !== fAssignee) return false;
+    if (fReadyOnly && !canImplement(t.status)) return false;
+    return true;
+  });
+  const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0) + (fReadyOnly ? 1 : 0);
 
   const t = tickets.find((x) => x.id === selectedId);
   const ex = t ? execs[t.id] : undefined;
@@ -645,11 +658,27 @@ export default function TicketExecutor() {
           <div style={{ padding: "18px 18px 12px", display: "flex", flexDirection: "column", gap: "12px", flex: "0 0 auto" }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
               <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "14px", fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>Sprint Backlog</h2>
-              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{tickets.length} tickets</span>
+              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", border: "1.5px solid transparent", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 50%) border-box", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
+              {([
+                { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
+                { v: fType, set: setFType, label: "Type", opts: typeOptions },
+                { v: fAssignee, set: setFAssignee, label: "Assignee", opts: assigneeOptions },
+              ] as const).map((f) => (
+                <select key={f.label} value={f.v} onChange={(e) => f.set(e.target.value)} title={f.label} style={{ height: "28px", padding: "0 24px 0 9px", border: "1px solid " + (f.v ? "var(--accent)" : "#262B36"), borderRadius: "999px", background: "#14171D", color: f.v ? "#F3F5F9" : "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 7px center" }}>
+                  <option value="" style={{ background: "#14171D" }}>{f.label}: All</option>
+                  {f.opts.map((o) => (<option key={o} value={o} style={{ background: "#14171D" }}>{o}</option>))}
+                </select>
+              ))}
+              <button onClick={() => setFReadyOnly((v) => !v)} title="Only tickets that can be implemented" style={{ height: "28px", padding: "0 11px", border: "1px solid " + (fReadyOnly ? "var(--accent)" : "#262B36"), borderRadius: "999px", background: fReadyOnly ? "rgba(251,114,80,.12)" : "#14171D", color: fReadyOnly ? "var(--accent)" : "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>Ready to dev</button>
+              {activeFilters > 0 && (
+                <button onClick={() => { setFStatus(""); setFType(""); setFAssignee(""); setFReadyOnly(false); }} title="Clear filters" style={{ height: "28px", padding: "0 10px", border: "1px solid #262B36", borderRadius: "999px", background: "transparent", color: "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>Clear</button>
+              )}
             </div>
           </div>
           <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
