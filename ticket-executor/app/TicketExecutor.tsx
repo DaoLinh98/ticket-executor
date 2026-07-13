@@ -107,6 +107,7 @@ export default function TicketExecutor() {
   const [toast, setToast] = useState<{ msg: string } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
+  const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
@@ -160,6 +161,15 @@ export default function TicketExecutor() {
         /* ignore — fall back to default provider */
       }
       await reloadTickets(provider);
+    })();
+    (async () => {
+      try {
+        const r = await fetch("/api/skills");
+        const data = await r.json();
+        if (Array.isArray(data.skills) && data.skills.length) setSkillOptions(data.skills);
+      } catch {
+        /* keep default SKILL_OPTIONS */
+      }
     })();
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
@@ -785,7 +795,7 @@ export default function TicketExecutor() {
                     <section style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "10px" }}>
                       <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
                       <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={SKILL_OPTIONS} ariaLabel="Skill" /></div>
+                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
                       <div style={{ padding: "13px 15px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
                     </section>
                     <section>
