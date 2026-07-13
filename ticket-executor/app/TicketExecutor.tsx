@@ -108,6 +108,7 @@ export default function TicketExecutor() {
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
@@ -300,12 +301,15 @@ export default function TicketExecutor() {
   );
 
   const startImplement = useCallback(
-    async (e?: MouseEvent) => {
+    async (e?: MouseEvent, skillOverride?: string) => {
       fireBoltFromEvent(e, { big: true });
       const t = tickets.find((x) => x.id === selectedId);
       if (!t) return;
       const cur = execs[t.id];
       if (cur && cur.status === "running") return;
+      const skillName = skillOverride || getSkill(t);
+      // Reflect a quick-action skill choice in the per-ticket override.
+      if (skillOverride) setOverrides((s) => ({ ...s, [t.id]: { ...(s[t.id] || {}), skill: skillOverride } }));
       setTab("execution");
       setExecs((s) => ({
         ...s,
@@ -319,7 +323,7 @@ export default function TicketExecutor() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            skillName: getSkill(t),
+            skillName,
             projectName: getArea(t),
             rootRepo: getRootRepo(t),
             title: t.title,
@@ -761,13 +765,34 @@ export default function TicketExecutor() {
                   <button onClick={() => execEnabled && setTab("execution")} style={tabStyle("execution", execEnabled)}>Execution</button>
                   <button onClick={() => resultEnabled && setTab("result")} style={tabStyle("result", resultEnabled)}>Result</button>
                   <div style={{ flex: 1 }} />
-                  <div style={{ paddingBottom: "8px" }}>
+                  <div style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
                     <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
                       {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
                       {action.spinner && <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
                       {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
                       <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
                     </button>
+                    {!gated && st !== "running" && (
+                      <div style={{ position: "relative" }}>
+                        <button onClick={() => setSkillMenuOpen((o) => !o)} title="Run another skill on this ticket" aria-label="Run another skill" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "32px", width: "32px", border: "1.5px solid #2A2F3A", background: "#14171D", color: "#C7CCD8", cursor: "pointer", clipPath: cutClip }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: skillMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
+                        </button>
+                        {skillMenuOpen && (
+                          <>
+                            <div onClick={() => setSkillMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20 }} />
+                            <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 25, minWidth: "240px", maxHeight: "300px", overflowY: "auto", border: "1px solid #262B36", borderRadius: "11px", background: "#0E1015", boxShadow: "0 22px 54px -24px #000", padding: "6px", animation: "fadeUp .16s ease-out both" }}>
+                              <div style={{ fontSize: "10px", letterSpacing: ".14em", color: "#5B6273", fontWeight: 700, padding: "6px 9px 8px" }}>RUN SKILL</div>
+                              {skillOptions.map((sk) => (
+                                <button key={sk} onClick={(e) => { setSkillMenuOpen(false); startImplement(e as unknown as MouseEvent, sk); }} style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 9px", borderRadius: "7px", border: "none", cursor: "pointer", background: sk === getSkill(t) ? "rgba(251,114,80,.12)" : "transparent", color: sk === getSkill(t) ? "var(--accent)" : "#C7CCD8", fontFamily: "var(--font-mono), monospace", fontSize: "12.5px" }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ flex: "0 0 auto", opacity: 0.8 }}><path d="M7 4l13 8-13 8z" /></svg>
+                                  {sk}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
