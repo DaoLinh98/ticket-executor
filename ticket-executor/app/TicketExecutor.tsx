@@ -110,6 +110,7 @@ export default function TicketExecutor() {
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [settingsError, setSettingsError] = useState("");
+  const [connTest, setConnTest] = useState<{ status: "idle" | "testing" | "ok" | "fail"; message: string }>({ status: "idle", message: "" });
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
@@ -409,6 +410,7 @@ export default function TicketExecutor() {
   const openSettings = (e?: MouseEvent) => {
     fireBoltFromEvent(e);
     setSettingsError("");
+    setConnTest({ status: "idle", message: "" });
     setSettingsOpen(true);
   };
   const closeSettings = (e?: MouseEvent) => {
@@ -434,7 +436,22 @@ export default function TicketExecutor() {
   const onProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const provider = e.target.value as ProviderId;
     setSettings((s) => ({ ...s, provider }));
+    setConnTest({ status: "idle", message: "" });
     reloadTickets(provider);
+  };
+  const testConnection = async () => {
+    setConnTest({ status: "testing", message: "" });
+    try {
+      const r = await fetch("/api/settings/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: settings.provider, org: settings.org, pat: settings.pat }),
+      });
+      const data = await r.json();
+      setConnTest({ status: data.ok ? "ok" : "fail", message: data.message || (data.ok ? "Connected." : "Failed.") });
+    } catch (err) {
+      setConnTest({ status: "fail", message: err instanceof Error ? err.message : String(err) });
+    }
   };
   const saveSettings = async (e?: MouseEvent) => {
     const err = validateSettings();
@@ -999,6 +1016,18 @@ export default function TicketExecutor() {
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={onProviderChange} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
+              <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
+                <button onClick={testConnection} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)" }}>
+                  {connTest.status === "testing" ? <span style={{ width: "13px", height: "13px", borderRadius: "50%", border: "2px solid rgba(199,204,216,.3)", borderTopColor: "#C7CCD8", display: "inline-block", animation: "spin .7s linear infinite" }} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
+                  Test connection
+                </button>
+                {connTest.status !== "idle" && connTest.status !== "testing" && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: connTest.status === "ok" ? "#35D6A4" : "#FF6B6B", boxShadow: "0 0 8px " + (connTest.status === "ok" ? "#35D6A4" : "#FF6B6B"), flex: "0 0 auto" }} />
+                    {connTest.message}
+                  </span>
+                )}
+              </div>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
               {settingsError && (
                 <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", padding: "11px 13px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)" }}>
