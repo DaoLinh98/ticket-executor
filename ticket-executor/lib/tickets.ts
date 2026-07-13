@@ -1,5 +1,8 @@
 import type { Ticket } from "./types";
 import { getSprintTickets } from "./ado";
+import { getGithubIssues } from "./github";
+import { prisma } from "./prisma";
+import { decryptSecret } from "./crypto";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
 
 export type TicketLoadResult = {
@@ -18,7 +21,16 @@ export async function loadTickets(provider: ProviderId): Promise<TicketLoadResul
       const tickets = await getSprintTickets();
       return { tickets, sprint: (process.env.AZURE_DEVOPS_SPRINT ?? "").trim(), connected: true };
     }
-    case "github":
+    case "github": {
+      const s = await prisma.setting.findUnique({ where: { id: "default" } });
+      const url = (s?.org ?? "").trim();
+      const token = decryptSecret(s?.pat);
+      if (!url || !token) {
+        return { tickets: [], sprint: "", connected: false, notice: "GitHub is not configured — set the repository URL and access token in Settings." };
+      }
+      const tickets = await getGithubIssues(url, token);
+      return { tickets, sprint: parseRepoLabel(url), connected: true };
+    }
     case "jira":
     case "gitlab":
       return {
@@ -29,6 +41,15 @@ export async function loadTickets(provider: ProviderId): Promise<TicketLoadResul
       };
     default:
       return { tickets: [], sprint: "", connected: false, notice: "Unknown provider." };
+  }
+}
+
+function parseRepoLabel(url: string): string {
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    return parts.length >= 2 ? `${parts[0]}/${parts[1].replace(/\.git$/, "")}` : "";
+  } catch {
+    return "";
   }
 }
 
