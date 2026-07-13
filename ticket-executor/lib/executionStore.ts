@@ -139,6 +139,39 @@ export function getExecution(id: string) {
   };
 }
 
+function safeParseLogs(s: string): LogLine[] {
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? (v as LogLine[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Load a finished execution from the database (used after a server restart or
+// for history, when it is no longer in the in-memory store).
+export async function getPersistedExecution(id: string) {
+  const r = await prisma.execution.findUnique({ where: { id } });
+  if (!r) return null;
+  return {
+    id: r.id,
+    adoTicketId: r.adoTicketId,
+    projectName: r.projectName,
+    skillName: r.skillName,
+    command: r.command,
+    status: r.status as ExecStatus,
+    logLines: safeParseLogs(r.logLines),
+    resultText: r.resultText,
+    errorMessage: r.errorMessage,
+    prUrl: r.prUrl,
+    branch: r.branch,
+    currentStep: r.currentStep,
+    duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
+    startedAt: r.startedAt.toISOString(),
+    completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+  };
+}
+
 export function cancelExecution(id: string): boolean {
   const e = store.get(id);
   if (!e || e.status !== "running") return false;
@@ -299,7 +332,16 @@ export async function startExecution(params: {
     try {
       await prisma.execution.update({
         where: { id },
-        data: { status, resultText: entry.resultText, errorMessage: error, completedAt: new Date(entry.completedAt) },
+        data: {
+          status,
+          resultText: entry.resultText,
+          errorMessage: error,
+          logLines: JSON.stringify(entry.logLines),
+          currentStep: entry.currentStep,
+          prUrl: entry.prUrl,
+          branch: entry.branch,
+          completedAt: new Date(entry.completedAt),
+        },
       });
     } catch {
       /* ignore */
