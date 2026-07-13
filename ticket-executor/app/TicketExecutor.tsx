@@ -7,6 +7,8 @@ import remarkGfm from "remark-gfm";
 import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
+import SprintPicker, { type IterationOption } from "./SprintPicker";
+import { useSmoothScroll } from "./useSmoothScroll";
 import type { ExecStatus, LogLine, Ticket } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
@@ -95,6 +97,8 @@ export default function TicketExecutor() {
   const [loadError, setLoadError] = useState<string>("");
   const [ticketsNotice, setTicketsNotice] = useState<string>("");
   const [sprintLabel, setSprintLabel] = useState<string>("");
+  const [sprintOptions, setSprintOptions] = useState<IterationOption[]>([]);
+  const [selectedSprint, setSelectedSprint] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
   const [tab, setTab] = useState<"overview" | "execution" | "result">("overview");
@@ -122,19 +126,39 @@ export default function TicketExecutor() {
     sprint: "",
   });
 
+  useSmoothScroll();
   const { bolts, flashes, fireBolt, fireBoltFromEvent, statusBoltAnchor } = useBolts();
   const logRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingCoreRef = useRef<HTMLDivElement>(null);
+
+  // While the sprint list is (re)loading, crackle small bolts around the energy core.
+  useEffect(() => {
+    if (!loading) return;
+    const strike = () => {
+      const el = loadingCoreRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2 + (Math.random() - 0.5) * 26;
+      const y = r.top + r.height / 2 + (Math.random() - 0.5) * 26;
+      fireBolt(x, y, { color: ACCENT });
+    };
+    strike();
+    const id = setInterval(strike, 420);
+    return () => clearInterval(id);
+  }, [loading, fireBolt]);
 
   // ---- data load ----
-  // Fetch the ticket list for a given provider and refresh the header sprint.
-  const reloadTickets = useCallback(async (provider: ProviderId) => {
+  // Fetch the ticket list for a given provider (and optional sprint override) and refresh the header sprint.
+  const reloadTickets = useCallback(async (provider: ProviderId, sprint?: string) => {
     setLoading(true);
     setLoadError("");
     setTicketsNotice("");
     try {
-      const r = await fetch(`/api/tickets?provider=${encodeURIComponent(provider)}`);
+      const qs = new URLSearchParams({ provider });
+      if (sprint) qs.set("sprint", sprint);
+      const r = await fetch(`/api/tickets?${qs.toString()}`);
       const data = await r.json();
       if (data.error) setLoadError(data.error);
       if (data.notice) setTicketsNotice(data.notice);
@@ -150,6 +174,30 @@ export default function TicketExecutor() {
     }
   }, []);
 
+  // Populate the sprint picker (Azure DevOps only) and default-select ADO's current iteration.
+  const loadSprintOptions = useCallback(async (provider: ProviderId) => {
+    if (provider !== "azure-devops") {
+      setSprintOptions([]);
+      setSelectedSprint("");
+      return;
+    }
+    try {
+      const r = await fetch("/api/sprints");
+      const data = await r.json();
+      setSprintOptions(Array.isArray(data.sprints) ? data.sprints : []);
+      setSelectedSprint(typeof data.current === "string" ? data.current : "");
+    } catch {
+      setSprintOptions([]);
+    }
+  }, []);
+
+  // User picked a specific sprint from the dropdown — reload tickets for it.
+  const onSprintChange = (value: string, e: { clientX: number; clientY: number }) => {
+    fireBoltFromEvent(e);
+    setSelectedSprint(value);
+    reloadTickets(settings.provider, value);
+  };
+
   useEffect(() => {
     (async () => {
       let provider: ProviderId = "azure-devops";
@@ -163,6 +211,7 @@ export default function TicketExecutor() {
       } catch {
         /* ignore — fall back to default provider */
       }
+      await loadSprintOptions(provider);
       await reloadTickets(provider);
     })();
     (async () => {
@@ -178,7 +227,7 @@ export default function TicketExecutor() {
       Object.values(pollTimers.current).forEach(clearInterval);
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
-  }, [reloadTickets]);
+  }, [reloadTickets, loadSprintOptions]);
 
   // ---- execution history ----
   const loadHistory = useCallback(async (ticketId: string) => {
@@ -437,6 +486,7 @@ export default function TicketExecutor() {
     const provider = e.target.value as ProviderId;
     setSettings((s) => ({ ...s, provider }));
     setConnTest({ status: "idle", message: "" });
+    loadSprintOptions(provider);
     reloadTickets(provider);
   };
   const testConnection = async () => {
@@ -471,7 +521,9 @@ export default function TicketExecutor() {
       const data = await r.json();
       if (data.settings) setSettings(data.settings);
       showToast("Settings saved", 3200);
-      await reloadTickets((data.settings?.provider as ProviderId) ?? settings.provider);
+      const provider = (data.settings?.provider as ProviderId) ?? settings.provider;
+      await loadSprintOptions(provider);
+      await reloadTickets(provider);
     } catch {
       showToast("Failed to save settings", 3200);
     }
@@ -712,10 +764,7 @@ export default function TicketExecutor() {
             <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginLeft: "8px", padding: "6px 13px", border: "1.5px solid transparent", borderRadius: "999px", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box", animation: "spinAngle 4s linear infinite" }}>
-          <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4" }} />
-          <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{sprintLabel || "—"}</span>
-        </div>
+        <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap" }}>
           <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
@@ -756,11 +805,57 @@ export default function TicketExecutor() {
             </div>
           </div>
           <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
-            {loading && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>Loading sprint…</div>}
+            {loading && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", padding: "58px 6px 46px" }}>
+                <div ref={loadingCoreRef} style={{ position: "relative", width: "78px", height: "78px" }}>
+                  {/* outer spinning conic-gradient ring — same technique as the header pills */}
+                  <span
+                    style={{
+                      position: "absolute", inset: "-9px", borderRadius: "50%", padding: "2px",
+                      background: "conic-gradient(from var(--angle), transparent, var(--accent), transparent 55%)",
+                      WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+                      WebkitMaskComposite: "xor", maskComposite: "exclude",
+                      animation: "spinAngle 3.2s linear infinite",
+                    }}
+                  />
+                  {/* counter-rotating faceted ring for extra crispness */}
+                  <span
+                    style={{
+                      position: "absolute", inset: "9px", borderRadius: "50%", padding: "1.5px",
+                      background: "conic-gradient(from var(--angle), var(--accent) 0deg 8deg, transparent 8deg 42deg, var(--accent) 42deg 50deg, transparent 50deg 92deg, var(--accent) 92deg 100deg, transparent 100deg 180deg, var(--accent) 180deg 188deg, transparent 188deg 230deg, var(--accent) 230deg 238deg, transparent 238deg 360deg)",
+                      WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+                      WebkitMaskComposite: "xor", maskComposite: "exclude",
+                      animation: "spinAngle 2.1s linear infinite reverse",
+                      opacity: 0.8,
+                    }}
+                  />
+                  {/* shockwave rings releasing outward */}
+                  <span style={{ position: "absolute", inset: "6px", borderRadius: "50%", border: "1px solid rgba(251,114,80,.55)", animation: "ringPulse 1.8s ease-out infinite" }} />
+                  <span style={{ position: "absolute", inset: "6px", borderRadius: "50%", border: "1px solid rgba(251,114,80,.32)", animation: "ringPulse 1.8s ease-out .9s infinite" }} />
+                  {/* orbiting sparks */}
+                  <div style={{ position: "absolute", inset: 0, animation: "spin 2.3s linear infinite" }}>
+                    <span style={{ position: "absolute", top: "50%", left: "50%", width: "5px", height: "5px", borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", transform: "translate(-50%,-50%) translateX(37px)" }} />
+                  </div>
+                  <div style={{ position: "absolute", inset: 0, animation: "spin 1.5s linear infinite reverse" }}>
+                    <span style={{ position: "absolute", top: "50%", left: "50%", width: "4px", height: "4px", borderRadius: "50%", background: "#FFD9BE", boxShadow: "0 0 6px #FFC15E", transform: "translate(-50%,-50%) translateX(29px)" }} />
+                  </div>
+                  {/* core sphere — off-center highlight for a sharper, dimensional look */}
+                  <span
+                    style={{
+                      position: "absolute", inset: "22px", borderRadius: "50%",
+                      background: "radial-gradient(circle at 34% 32%, #FFF3EA 0%, #FFC15E 14%, var(--accent) 40%, rgba(251,114,80,.65) 62%, transparent 80%)",
+                      boxShadow: "0 0 20px 2px rgba(251,114,80,.55)",
+                      animation: "corePulse 1.1s ease-in-out infinite",
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#8A90A0", letterSpacing: ".02em" }}>Loading sprint…</span>
+              </div>
+            )}
             {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", padding: "14px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)", lineHeight: 1.5 }}>{loadError}</div>}
             {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", padding: "14px", border: "1px solid #3A2F22", borderRadius: "10px", background: "rgba(245,179,65,.06)", lineHeight: 1.5 }}>{ticketsNotice}</div>}
             {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>No tickets match.</div>}
-            {filtered.map((tk, i) => {
+            {!loading && filtered.map((tk, i) => {
               const sel = tk.id === selectedId;
               const est = execStatusOf(tk.id);
               const rowStyle: CSSProperties = {

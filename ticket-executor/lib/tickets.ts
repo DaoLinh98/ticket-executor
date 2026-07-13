@@ -15,11 +15,11 @@ export type TicketLoadResult = {
 // Dispatch ticket loading by provider. Azure DevOps is fully wired; the other
 // providers are scaffolded — they return a graceful empty result rather than
 // throwing, so the UI can show a "not connected yet" state.
-export async function loadTickets(provider: ProviderId): Promise<TicketLoadResult> {
+export async function loadTickets(provider: ProviderId, sprintOverride?: string): Promise<TicketLoadResult> {
   switch (provider) {
     case "azure-devops": {
-      const tickets = await getSprintTickets();
-      return { tickets, sprint: (process.env.AZURE_DEVOPS_SPRINT ?? "").trim(), connected: true };
+      const { tickets, sprintName } = await getSprintTickets(sprintOverride);
+      return { tickets, sprint: sprintName, connected: true };
     }
     case "github": {
       const s = await prisma.setting.findUnique({ where: { id: "default" } });

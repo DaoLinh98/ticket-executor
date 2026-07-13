@@ -54,16 +54,49 @@ function lastAreaSegment(areaPath: string): string {
   return last === PROJECT ? "" : last;
 }
 
-type Iteration = { id: string; name: string };
+export type IterationInfo = {
+  id: string;
+  name: string;
+  timeFrame?: "past" | "current" | "future";
+  startDate?: string;
+  finishDate?: string;
+};
 
-async function getIterationId(sprintName: string): Promise<string> {
+type RawIteration = {
+  id: string;
+  name: string;
+  attributes?: { startDate?: string; finishDate?: string; timeFrame?: "past" | "current" | "future" };
+};
+
+/** All team iterations (used to resolve the current sprint and to populate the sprint picker). */
+export async function listIterations(): Promise<IterationInfo[]> {
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
   )}/${encodeURIComponent(TEAM)}/_apis/work/teamsettings/iterations?${API}`;
-  const data = await adoGet<{ value: Iteration[] }>(url);
-  const found = data.value.find((i) => i.name === sprintName);
-  if (!found) throw new Error(`Sprint "${sprintName}" not found among team iterations`);
-  return found.id;
+  const data = await adoGet<{ value: RawIteration[] }>(url);
+  return data.value.map((i) => ({
+    id: i.id,
+    name: i.name,
+    timeFrame: i.attributes?.timeFrame,
+    startDate: i.attributes?.startDate,
+    finishDate: i.attributes?.finishDate,
+  }));
+}
+
+/** Resolve which iteration to load: an explicit override name, else ADO's current iteration, else the env-configured fallback. */
+async function resolveIteration(sprintOverride?: string): Promise<IterationInfo> {
+  const iterations = await listIterations();
+  const requested = sprintOverride?.trim();
+  if (requested) {
+    const found = iterations.find((i) => i.name === requested);
+    if (!found) throw new Error(`Sprint "${requested}" not found among team iterations`);
+    return found;
+  }
+  const current = iterations.find((i) => i.timeFrame === "current");
+  if (current) return current;
+  const fallback = iterations.find((i) => i.name === SPRINT);
+  if (!fallback) throw new Error("No current sprint found among team iterations");
+  return fallback;
 }
 
 type WorkItemRelations = { workItemRelations: { target?: { id: number } }[] };
@@ -73,20 +106,22 @@ type WorkItemDetail = {
   fields: Record<string, unknown>;
 };
 
-/** Fetch all tickets in the configured sprint, mapped to the UI Ticket shape. */
-export async function getSprintTickets(): Promise<Ticket[]> {
-  const iterationId = await getIterationId(SPRINT);
+/** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to ADO's current iteration. */
+export async function getSprintTickets(
+  sprintOverride?: string
+): Promise<{ tickets: Ticket[]; sprintName: string }> {
+  const iteration = await resolveIteration(sprintOverride);
 
   const wiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
   )}/${encodeURIComponent(
     TEAM
-  )}/_apis/work/teamsettings/iterations/${iterationId}/workitems?${API}`;
+  )}/_apis/work/teamsettings/iterations/${iteration.id}/workitems?${API}`;
   const rel = await adoGet<WorkItemRelations>(wiUrl);
   const ids = Array.from(
     new Set(rel.workItemRelations.map((r) => r.target?.id).filter(Boolean) as number[])
   );
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { tickets: [], sprintName: iteration.name };
 
   const fields = [
     "System.Id",
@@ -128,5 +163,5 @@ export async function getSprintTickets(): Promise<Ticket[]> {
   }
 
   // Keep ADO's board order roughly stable by id.
-  return tickets;
+  return { tickets, sprintName: iteration.name };
 }

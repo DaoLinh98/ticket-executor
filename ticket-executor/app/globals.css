@@ -30,6 +30,7 @@ input{font-family:inherit;}
 @keyframes gridScroll{to{background-position:44px 44px;}}
 @keyframes meshFloat{0%,100%{transform:translate(0,0);}50%{transform:translate(-28px,26px);}}
 @keyframes ringPulse{0%{transform:scale(.55);opacity:.7;}100%{transform:scale(1.8);opacity:0;}}
+@keyframes corePulse{0%,100%{transform:scale(.82);opacity:.55;}50%{transform:scale(1.22);opacity:1;}}
 @keyframes flow{0%{background-position:0 0;}100%{background-position:0 20px;}}
 @keyframes lineIn{from{opacity:0;transform:translateX(-7px);}to{opacity:1;transform:translateX(0);}}
 @keyframes growX{from{transform:scaleX(0);}to{transform:scaleX(1);}}

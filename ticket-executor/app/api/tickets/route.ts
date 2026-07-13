@@ -8,8 +8,9 @@ export async function GET(req: Request) {
   const provider = normalizeProvider(
     url.searchParams.get("provider") ?? process.env.TICKET_PROVIDER
   );
+  const sprint = url.searchParams.get("sprint") ?? undefined;
   try {
-    const result = await loadTickets(provider);
+    const result = await loadTickets(provider, sprint);
     return NextResponse.json({ provider, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
