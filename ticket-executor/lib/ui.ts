@@ -29,6 +29,8 @@ const STATUS_COLORS: Record<string, string> = {
   New: "#8A90A0",
   "To Do": "#8A90A0",
   Approved: "#8A90A0",
+  "Ready for Dev": "#F5B341",
+  "Ready for Development": "#F5B341",
   Active: "#F5B341",
   "In Progress": "#F5B341",
   Committed: "#F5B341",
@@ -61,6 +63,39 @@ const IMPLEMENTABLE_STATES = new Set([
 export function canImplement(status: string): boolean {
   return IMPLEMENTABLE_STATES.has((status ?? "").trim().toLowerCase());
 }
+
+// A ticket in the review lane can be code-reviewed.
+const REVIEWABLE_STATES = new Set(["code review", "in review"]);
+
+export type ActionInfo = { label: string; skill: string };
+
+// Maps the effective ticket status to the runnable action (label + skill).
+// Returns null when no action applies for that status (button is gated).
+export function actionInfoFor(status: string): ActionInfo | null {
+  const s = (status ?? "").trim().toLowerCase();
+  if (IMPLEMENTABLE_STATES.has(s)) return { label: "Implement Ticket", skill: "implement-ticket" };
+  if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
+  return null;
+}
+
+// The status a ticket moves to once a given skill's run completes (simulated ADO sync).
+export function nextStatusAfter(skill: string, current: string): string {
+  if (skill === "implement-ticket") return "Code Review";
+  if (skill === "senior-code-review") return "Ready for QA";
+  return current;
+}
+
+// Statuses offered in the detail-header status dropdown.
+export const STATUS_ALL = [
+  "New",
+  "Ready for Dev",
+  "Active",
+  "In Progress",
+  "Code Review",
+  "Ready for QA",
+  "Resolved",
+  "Done",
+];
 
 export const EXEC_COLOR: Record<ExecStatus, string> = {
   "not started": "#5B6273",
@@ -98,6 +133,29 @@ export function statusPill(status: string): CSSProperties {
     color: statusColor(status),
     background: "rgba(255,255,255,.04)",
     border: "1px solid #262B36",
+  };
+}
+
+// Clickable status pill with an LED conic border colored by the status.
+export function statusPillActive(status: string): CSSProperties {
+  const c = statusColor(status);
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    fontSize: "11px",
+    fontWeight: 700,
+    padding: "3px 10px",
+    borderRadius: "999px",
+    color: c,
+    cursor: "pointer",
+    outline: "none",
+    border: "1.5px solid transparent",
+    background:
+      "linear-gradient(rgba(255,255,255,.04),rgba(255,255,255,.04)) padding-box, conic-gradient(from var(--angle), transparent, " +
+      c +
+      ", transparent 55%) border-box",
+    animation: "spinAngle 3.6s linear infinite",
   };
 }
 

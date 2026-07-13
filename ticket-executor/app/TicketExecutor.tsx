@@ -14,14 +14,17 @@ import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
   EXEC_COLOR,
   EXEC_LABEL,
+  STATUS_ALL,
   STEPS,
   avatar,
   branchOf,
   canImplement,
   execDot,
   initials,
+  nextStatusAfter,
   statusColor,
   statusPill,
+  statusPillActive,
   typeBadge,
 } from "@/lib/ui";
 
@@ -43,6 +46,7 @@ const COMMON_ROOT_REPOS = ["C:\\repos", "C:\\src", "D:\\repos"];
 type ExecView = {
   executionId?: string;
   status: ExecStatus;
+  skillName?: string;
   logLines: LogLine[];
   resultText: string;
   error: string;
@@ -107,6 +111,8 @@ export default function TicketExecutor() {
   const [fType, setFType] = useState("");
   const [fAssignee, setFAssignee] = useState("");
   const [fReadyOnly, setFReadyOnly] = useState(false);
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
@@ -129,6 +135,7 @@ export default function TicketExecutor() {
   useSmoothScroll();
   const { bolts, flashes, fireBolt, fireBoltFromEvent, statusBoltAnchor } = useBolts();
   const logRef = useRef<HTMLDivElement>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingCoreRef = useRef<HTMLDivElement>(null);
@@ -258,6 +265,7 @@ export default function TicketExecutor() {
         [ticketId]: {
           executionId: execId,
           status: ex.status,
+          skillName: ex.skillName,
           logLines: ex.logLines ?? [],
           resultText: ex.resultText ?? "",
           error: ex.errorMessage ?? "",
@@ -277,6 +285,16 @@ export default function TicketExecutor() {
   useEffect(() => {
     if (tab === "execution" && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   });
+
+  // Close the status dropdown on outside click.
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const onDoc = (e: globalThis.MouseEvent) => {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) setStatusMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [statusMenuOpen]);
 
   const showToast = useCallback((msg: string, ms = 4000) => {
     setToast({ msg });
@@ -301,6 +319,14 @@ export default function TicketExecutor() {
   }, []);
 
   // ---- per-ticket resolved config ----
+  // Effective status: a locally-applied override (simulated ADO sync) wins over the ADO state.
+  const getStatus = (t: Ticket) => statusOverrides[t.id] || t.status;
+  const selectStatus = (ticketId: string, status: string, e?: MouseEvent) => {
+    fireBoltFromEvent(e, { color: "#35D6A4" });
+    setStatusOverrides((s) => ({ ...s, [ticketId]: status }));
+    setStatusMenuOpen(false);
+    showToast(`Status set to "${status}" — synced to Azure DevOps`, 3200);
+  };
   const getArea = (t: Ticket) => overrides[t.id]?.area || t.project || settings.defaultProject;
   const getSkill = (t: Ticket) => overrides[t.id]?.skill || DEFAULT_SKILL;
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo || settings.rootRepo || "C:\\repos";
@@ -338,6 +364,7 @@ export default function TicketExecutor() {
             [ticketId]: {
               executionId,
               status: ex.status,
+              skillName: ex.skillName ?? s[ticketId]?.skillName,
               logLines: ex.logLines ?? [],
               resultText: ex.resultText ?? "",
               error: ex.errorMessage ?? "",
@@ -354,8 +381,16 @@ export default function TicketExecutor() {
               window.__reactor?.setMode(ex.status === "completed" ? "completed" : "idle");
             } catch { }
             if (ex.status === "completed") {
-              showToast(`#${ticketId} completed — result ready`);
-              notify("Ticket Executor", `#${ticketId} completed — result ready`);
+              // Simulated ADO sync: advance the ticket status based on the skill that ran.
+              const next = nextStatusAfter(ex.skillName ?? "", "");
+              if (next) {
+                setStatusOverrides((so) => ({ ...so, [ticketId]: next }));
+                showToast(`#${ticketId} completed — status synced to "${next}"`);
+                notify("Ticket Executor", `#${ticketId} completed — status synced to "${next}"`);
+              } else {
+                showToast(`#${ticketId} completed — result ready`);
+                notify("Ticket Executor", `#${ticketId} completed — result ready`);
+              }
             } else {
               showToast(`#${ticketId} failed`);
               notify("Ticket Executor", `#${ticketId} failed`);
@@ -534,20 +569,21 @@ export default function TicketExecutor() {
   const activeCount = Object.values(execs).filter((e) => e.status === "running").length;
 
   const q = search.trim().toLowerCase();
-  const statusOptions = Array.from(new Set(tickets.map((x) => x.status).filter(Boolean)));
+  const statusOptions = Array.from(new Set(tickets.map((x) => getStatus(x)).filter(Boolean)));
   const typeOptions = Array.from(new Set(tickets.map((x) => x.type).filter(Boolean)));
   const assigneeOptions = Array.from(new Set(tickets.map((x) => x.assignee).filter(Boolean)));
   const filtered = tickets.filter((t) => {
     if (q && !(t.id + " " + t.title + " " + t.assignee + " " + t.project).toLowerCase().includes(q)) return false;
-    if (fStatus && t.status !== fStatus) return false;
+    if (fStatus && getStatus(t) !== fStatus) return false;
     if (fType && t.type !== fType) return false;
     if (fAssignee && t.assignee !== fAssignee) return false;
-    if (fReadyOnly && !canImplement(t.status)) return false;
+    if (fReadyOnly && !canImplement(getStatus(t))) return false;
     return true;
   });
   const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0) + (fReadyOnly ? 1 : 0);
 
   const t = tickets.find((x) => x.id === selectedId);
+  const effStatus = t ? getStatus(t) : "";
   const ex = t ? execs[t.id] : undefined;
   const st: ExecStatus = ex ? ex.status : "not started";
   const execEnabled = st !== "not started";
@@ -639,9 +675,9 @@ export default function TicketExecutor() {
 
   // Gate: implementing is only allowed when the ticket is in the dev lane.
   const startsNewRun = st === "not started" || st === "failed";
-  const gated = !!t && startsNewRun && !canImplement(t.status);
+  const gated = !!t && startsNewRun && !canImplement(effStatus);
   if (gated) {
-    const reason = `Ticket must be "Ready for Dev" or "In Progress" to implement (current: ${t!.status}).`;
+    const reason = `Ticket must be "Ready for Dev" or "In Progress" to implement (current: ${effStatus}).`;
     action.onClick = (e) => {
       fireBoltFromEvent(e);
       showToast(reason);
@@ -660,7 +696,7 @@ export default function TicketExecutor() {
   const ctaButtonStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
   const ctaTitle = gated ? "Not ready to implement" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : "Ready to implement";
   const ctaSub = t
-    ? gated ? `This ticket is "${t.status}". Move it to "Ready for Dev" or "In Progress" to enable implementation.`
+    ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev" or "In Progress" to enable implementation.`
       : st === "completed" ? "Open the Result tab to review what Claude changed."
         : st === "failed" ? "Fix the blocker below, then retry the run."
           : st === "running" ? "Watch the execution stream on the Execution tab."
@@ -885,7 +921,7 @@ export default function TicketExecutor() {
                   </div>
                   <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "1px" }}>
-                    <span style={statusPill(tk.status)}>{tk.status}</span>
+                    <span style={statusPill(getStatus(tk))}>{getStatus(tk)}</span>
                     <div style={{ flex: 1 }} />
                     <span style={avatar(tk.assignee)}>{initials(tk.assignee)}</span>
                     <span style={{ fontSize: "11.5px", color: "#6B7283" }}>{tk.assignee}</span>
@@ -906,7 +942,19 @@ export default function TicketExecutor() {
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "9px" }}>
                   <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
                   <span style={typeBadge(t.type)}>{t.type}</span>
-                  <span style={statusPill(t.status)}>{t.status}</span>
+                  <div ref={statusMenuRef} style={{ position: "relative" }}>
+                    <button onClick={() => setStatusMenuOpen((o) => !o)} style={statusPillActive(effStatus)}>
+                      {effStatus}
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: statusMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
+                    </button>
+                    {statusMenuOpen && (
+                      <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: "190px", zIndex: 30, maxHeight: "280px", overflowY: "auto", border: "1px solid #262B36", borderRadius: "11px", background: "#0E1015", boxShadow: "0 22px 54px -24px #000", padding: "5px", animation: "fadeUp .16s ease-out both" }}>
+                        {STATUS_ALL.map((s) => (
+                          <button key={s} onClick={(e) => selectStatus(t.id, s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: "12.5px", fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <h1 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
                 <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: "12.5px", color: "#8A90A0", flexWrap: "wrap" }}>
