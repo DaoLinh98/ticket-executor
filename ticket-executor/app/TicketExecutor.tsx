@@ -109,6 +109,7 @@ export default function TicketExecutor() {
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
@@ -407,11 +408,25 @@ export default function TicketExecutor() {
   // ---- settings ----
   const openSettings = (e?: MouseEvent) => {
     fireBoltFromEvent(e);
+    setSettingsError("");
     setSettingsOpen(true);
   };
   const closeSettings = (e?: MouseEvent) => {
     fireBoltFromEvent(e);
     setSettingsOpen(false);
+  };
+  // Validate connection settings before saving; returns an error string or "".
+  const validateSettings = (): string => {
+    const url = settings.org.trim();
+    if (!url) return `${pm.urlLabel} is required.`;
+    try {
+      const u = new URL(url);
+      if (!/^https?:$/.test(u.protocol)) return "URL must start with http:// or https://";
+    } catch {
+      return "Enter a valid URL (e.g. https://…).";
+    }
+    if (!settings.hasPat && !settings.pat.trim()) return `${pm.tokenLabel} is required.`;
+    return "";
   };
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
@@ -422,6 +437,12 @@ export default function TicketExecutor() {
     reloadTickets(provider);
   };
   const saveSettings = async (e?: MouseEvent) => {
+    const err = validateSettings();
+    if (err) {
+      setSettingsError(err);
+      return; // keep modal open, show inline error
+    }
+    setSettingsError("");
     fireBoltFromEvent(e, { color: "#35D6A4" });
     setSettingsOpen(false);
     try {
@@ -979,6 +1000,12 @@ export default function TicketExecutor() {
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
+              {settingsError && (
+                <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", padding: "11px 13px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
+                  <span style={{ fontSize: "12.5px", color: "#FF8F8F", lineHeight: 1.5 }}>{settingsError}</span>
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "18px 22px", borderTop: "1px solid #1E232C", background: "#101318" }}>
               <button onClick={closeSettings} style={{ height: "32px", padding: "0 16px", border: "1.5px solid #2A2F3A", background: "transparent", color: "#C7CCD8", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", transition: "border-color .15s,color .15s,transform .12s" }}>Cancel</button>
