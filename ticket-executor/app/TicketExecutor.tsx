@@ -233,6 +233,22 @@ export default function TicketExecutor() {
     toastTimer.current = setTimeout(() => setToast(null), ms);
   }, []);
 
+  // Ask for notification permission (best-effort) and fire a desktop notification
+  // when a run finishes while the tab is not focused.
+  const requestNotify = useCallback(() => {
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default")
+        Notification.requestPermission().catch(() => {});
+    } catch {}
+  }, []);
+  const notify = useCallback((title: string, body: string) => {
+    try {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      if (typeof document !== "undefined" && !document.hidden) return; // tab visible → toast is enough
+      new Notification(title, { body });
+    } catch {}
+  }, []);
+
   // ---- per-ticket resolved config ----
   const getArea = (t: Ticket) => overrides[t.id]?.area || t.project || settings.defaultProject;
   const getSkill = (t: Ticket) => overrides[t.id]?.skill || DEFAULT_SKILL;
@@ -286,8 +302,13 @@ export default function TicketExecutor() {
             try {
               window.__reactor?.setMode(ex.status === "completed" ? "completed" : "idle");
             } catch { }
-            if (ex.status === "completed") showToast(`#${ticketId} completed — result ready`);
-            else showToast(`#${ticketId} failed`);
+            if (ex.status === "completed") {
+              showToast(`#${ticketId} completed — result ready`);
+              notify("Ticket Executor", `#${ticketId} completed — result ready`);
+            } else {
+              showToast(`#${ticketId} failed`);
+              notify("Ticket Executor", `#${ticketId} failed`);
+            }
             loadHistory(ticketId);
           }
         } catch {
@@ -297,7 +318,7 @@ export default function TicketExecutor() {
       pollTimers.current[executionId] = setInterval(poll, 1200);
       poll();
     },
-    [showToast, loadHistory]
+    [showToast, loadHistory, notify]
   );
 
   const startImplement = useCallback(
@@ -307,6 +328,7 @@ export default function TicketExecutor() {
       if (!t) return;
       const cur = execs[t.id];
       if (cur && cur.status === "running") return;
+      requestNotify();
       const skillName = skillOverride || getSkill(t);
       // Reflect a quick-action skill choice in the per-ticket override.
       if (skillOverride) setOverrides((s) => ({ ...s, [t.id]: { ...(s[t.id] || {}), skill: skillOverride } }));
