@@ -1,4 +1,4 @@
-import type { Ticket } from "./types";
+import type { Ticket, TicketComment } from "./types";
 
 const ORG = process.env.AZURE_DEVOPS_ORG ?? "";
 const PROJECT = process.env.AZURE_DEVOPS_PROJECT ?? "";
@@ -164,4 +164,34 @@ export async function getSprintTickets(
 
   // Keep ADO's board order roughly stable by id.
   return { tickets, sprintName: iteration.name };
+}
+
+type RawComment = {
+  text?: string;
+  createdBy?: { displayName?: string };
+  createdDate?: string;
+};
+
+/** Format an ISO date as a short "Mon D" label. */
+function shortDate(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Fetch the discussion comments for a single work item, oldest first. */
+export async function getWorkItemComments(id: string): Promise<TicketComment[]> {
+  // Comments live behind a preview API version.
+  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
+  const data = await adoGet<{ comments?: RawComment[] }>(url);
+  return (data.comments ?? [])
+    .map((c) => ({
+      author: c.createdBy?.displayName ?? "Unknown",
+      date: shortDate(c.createdDate),
+      text: htmlToText(c.text ?? ""),
+    }))
+    .filter((c) => c.text.length > 0);
 }

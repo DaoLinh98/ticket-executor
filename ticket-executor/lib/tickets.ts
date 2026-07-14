@@ -1,5 +1,5 @@
-import type { Ticket } from "./types";
-import { getSprintTickets } from "./ado";
+import type { Ticket, TicketComment } from "./types";
+import { getSprintTickets, getWorkItemComments } from "./ado";
 import { getGithubIssues } from "./github";
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
@@ -42,6 +42,13 @@ export async function loadTickets(provider: ProviderId, sprintOverride?: string)
     default:
       return { tickets: [], sprint: "", connected: false, notice: "Unknown provider." };
   }
+}
+
+// Load the discussion comments for a single ticket. Only Azure DevOps is wired;
+// other providers return an empty list so the section simply hides.
+export async function loadTicketComments(provider: ProviderId, id: string): Promise<TicketComment[]> {
+  if (provider === "azure-devops") return getWorkItemComments(id);
+  return [];
 }
 
 function parseRepoLabel(url: string): string {

@@ -9,7 +9,7 @@ import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
 import SprintPicker, { type IterationOption } from "./SprintPicker";
 import { useSmoothScroll } from "./useSmoothScroll";
-import type { ExecStatus, LogLine, Ticket } from "@/lib/types";
+import type { ExecStatus, LogLine, Ticket, TicketComment } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
   EXEC_COLOR,
@@ -96,6 +96,23 @@ function deriveStep(logLines: LogLine[]): number {
   return reached;
 }
 
+// Render a comment body: color @mentions and keep line breaks (ADO-style).
+const MENTION_RE = /(@[A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)?)/g;
+function renderCommentBody(text: string) {
+  return text.split("\n").map((line, li) => (
+    <span key={li}>
+      {li > 0 && <br />}
+      {line.split(MENTION_RE).map((part, pi) =>
+        /^@[A-Z]/.test(part) ? (
+          <span key={pi} style={{ color: "#6C8EEF", fontWeight: 600 }}>{part}</span>
+        ) : (
+          part
+        )
+      )}
+    </span>
+  ));
+}
+
 export default function TicketExecutor() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loadError, setLoadError] = useState<string>("");
@@ -117,6 +134,7 @@ export default function TicketExecutor() {
   const [toast, setToast] = useState<{ msg: string } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
+  const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [settingsError, setSettingsError] = useState("");
   const [connTest, setConnTest] = useState<{ status: "idle" | "testing" | "ok" | "fail"; message: string }>({ status: "idle", message: "" });
@@ -247,9 +265,25 @@ export default function TicketExecutor() {
     }
   }, []);
 
+  // Lazily load a ticket's discussion comments when it becomes selected.
+  const loadComments = useCallback(async (ticketId: string, provider: ProviderId) => {
+    if (!ticketId || comments[ticketId]) return;
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/comments?provider=${provider}`);
+      const data = await r.json();
+      setComments((c) => ({ ...c, [ticketId]: data.comments ?? [] }));
+    } catch {
+      /* ignore — section stays hidden */
+    }
+  }, [comments]);
+
   useEffect(() => {
     if (selectedId) loadHistory(selectedId);
   }, [selectedId, loadHistory]);
+
+  useEffect(() => {
+    if (selectedId) loadComments(selectedId, settings.provider);
+  }, [selectedId, settings.provider, loadComments]);
 
   // Open a past run (from DB) in the viewer.
   const openRun = useCallback(async (ticketId: string, execId: string, e?: MouseEvent) => {
@@ -1042,6 +1076,24 @@ export default function TicketExecutor() {
                         </div>
                       </section>
                     )}
+                    {(comments[t.id]?.length ?? 0) > 0 && (
+                      <section>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                          {comments[t.id].map((cm, i) => (
+                            <div key={i} style={{ display: "flex", gap: "11px", alignItems: "flex-start" }}>
+                              <span style={{ ...avatar(cm.author), flex: "0 0 auto", width: "28px", height: "28px", fontSize: "11px" }}>{initials(cm.author)}</span>
+                              <div style={{ flex: 1, minWidth: 0, padding: "11px 14px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: "13px", fontWeight: 700, color: "#E4E7EE" }}>{cm.author}</span>
+                                  <span style={{ fontSize: "11.5px", color: "#6B7283", textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
+                                </div>
+                                <div style={{ fontSize: "13.5px", lineHeight: 1.65, color: "#C7CCD8", marginTop: "5px" }}>{renderCommentBody(cm.text)}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                     <section style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "10px" }}>
                       <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
                       <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
@@ -1055,6 +1107,21 @@ export default function TicketExecutor() {
                         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "#C7CCD8" }}>{selCommand}</span></div>
                       </div>
                     </section>
+                    {(history[t.id]?.length ?? 0) > 0 && (
+                      <section>
+                        <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>PAST RUNS</h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                          {history[t.id].map((run) => (
+                            <button key={run.id} onClick={(e) => openRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", padding: "10px 13px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s" }}>
+                              <span style={{ ...execDot(run.status), width: "8px", height: "8px" }} />
+                              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", flex: "0 0 auto" }}>{run.skillName}</span>
+                              <span style={{ fontSize: "12px", color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
+                              <span style={{ fontSize: "11.5px", fontWeight: 600, color: EXEC_COLOR[run.status] }}>{EXEC_LABEL[run.status]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                     <div style={{ display: "flex", alignItems: "center", gap: "16px", padding: "20px 22px", border: "1px solid #2A2018", borderRadius: "14px", background: "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))" }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
@@ -1073,25 +1140,6 @@ export default function TicketExecutor() {
                         </button>
                       )}
                     </div>
-                    {(history[t.id]?.length ?? 0) > 0 && (
-                      <section>
-                        <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>PREVIOUS RUNS</h3>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
-                          {history[t.id].map((run) => (
-                            <button key={run.id} onClick={(e) => openRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", padding: "10px 13px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s" }}>
-                              <span style={{ ...execDot(run.status), width: "8px", height: "8px" }} />
-                              <span style={{ fontSize: "12.5px", fontWeight: 600, color: EXEC_COLOR[run.status], minWidth: "76px" }}>{EXEC_LABEL[run.status]}</span>
-                              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#8A90A0" }}>{run.skillName}</span>
-                              <div style={{ flex: 1 }} />
-                              {run.branch && <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#9BA6E8", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.branch}</span>}
-                              {run.prUrl && <a href={run.prUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#5BE8B8", fontSize: "11.5px", fontWeight: 600, textDecoration: "none" }}>PR ↗</a>}
-                              {run.duration && <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{run.duration}</span>}
-                              <span style={{ fontSize: "11.5px", color: "#5B6273" }}>{new Date(run.startedAt).toLocaleString()}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    )}
                   </div>
                 )}
 

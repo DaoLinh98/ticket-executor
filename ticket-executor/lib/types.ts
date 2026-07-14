@@ -10,6 +10,12 @@ export type Ticket = {
   criteria: string[]; // acceptance criteria, one line each
 };
 
+export type TicketComment = {
+  author: string;
+  date: string; // short human date, e.g. "Jul 2"
+  text: string; // plain text (may contain @mentions and newlines)
+};
+
 export type ExecStatus = "not started" | "running" | "completed" | "failed";
 
 export type LogLine = { text: string; kind: string };
