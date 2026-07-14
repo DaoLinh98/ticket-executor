@@ -19,7 +19,6 @@ import {
   actionInfoFor,
   avatar,
   branchOf,
-  canImplement,
   execDot,
   initials,
   nextStatusAfter,
@@ -111,7 +110,7 @@ export default function TicketExecutor() {
   const [fStatus, setFStatus] = useState("");
   const [fType, setFType] = useState("");
   const [fAssignee, setFAssignee] = useState("");
-  const [fReadyOnly, setFReadyOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -583,10 +582,17 @@ export default function TicketExecutor() {
     if (fStatus && getStatus(t) !== fStatus) return false;
     if (fType && t.type !== fType) return false;
     if (fAssignee && t.assignee !== fAssignee) return false;
-    if (fReadyOnly && !canImplement(getStatus(t))) return false;
     return true;
   });
-  const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0) + (fReadyOnly ? 1 : 0);
+  const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0);
+  const clearFilters = () => { setFStatus(""); setFType(""); setFAssignee(""); };
+  // LED-wrapped filter dropdown styling: the border runs only when a value is selected.
+  const filterWrapStyle = (active: boolean): CSSProperties =>
+    active
+      ? { position: "relative", flex: 1, minWidth: 0, height: "32px", border: "1.5px solid transparent", borderRadius: "9px", background: "linear-gradient(#14171D,#14171D) padding-box, conic-gradient(from var(--angle), transparent, var(--accent), transparent 55%) border-box", animation: "spinAngle 3.4s linear infinite" }
+      : { position: "relative", flex: 1, minWidth: 0, height: "32px", border: "1px solid #262B36", borderRadius: "9px", background: "#14171D" };
+  const filterSelStyle = (active: boolean): CSSProperties =>
+    ({ position: "absolute", inset: 0, width: "100%", height: "100%", padding: "0 26px 0 11px", border: "none", borderRadius: "9px", background: "transparent", color: active ? "#F3F5F9" : "#8A90A0", fontSize: "12px", fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", colorScheme: "dark" });
 
   const t = tickets.find((x) => x.id === selectedId);
   const effStatus = t ? getStatus(t) : "";
@@ -841,26 +847,35 @@ export default function TicketExecutor() {
               <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "14px", fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>Sprint Backlog</h2>
               <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", border: "1.5px solid transparent", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 50%) border-box", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", border: "1.5px solid transparent", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 50%) border-box", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
+              </div>
+              <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", border: "1.5px solid transparent", background: (filtersOpen || activeFilters > 0) ? "linear-gradient(rgba(251,114,80,.14),rgba(251,114,80,.14)) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box" : "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
+              </button>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
-              {([
-                { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
-                { v: fType, set: setFType, label: "Type", opts: typeOptions },
-                { v: fAssignee, set: setFAssignee, label: "Assignee", opts: assigneeOptions },
-              ] as const).map((f) => (
-                <select key={f.label} value={f.v} onChange={(e) => f.set(e.target.value)} title={f.label} style={{ height: "28px", padding: "0 24px 0 9px", border: "1px solid " + (f.v ? "var(--accent)" : "#262B36"), borderRadius: "999px", background: "#14171D", color: f.v ? "#F3F5F9" : "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 7px center" }}>
-                  <option value="" style={{ background: "#14171D" }}>{f.label}: All</option>
-                  {f.opts.map((o) => (<option key={o} value={o} style={{ background: "#14171D" }}>{o}</option>))}
-                </select>
-              ))}
-              <button onClick={() => setFReadyOnly((v) => !v)} title="Only tickets that can be implemented" style={{ height: "28px", padding: "0 11px", border: "1px solid " + (fReadyOnly ? "var(--accent)" : "#262B36"), borderRadius: "999px", background: fReadyOnly ? "rgba(251,114,80,.12)" : "#14171D", color: fReadyOnly ? "var(--accent)" : "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>Ready to dev</button>
-              {activeFilters > 0 && (
-                <button onClick={() => { setFStatus(""); setFType(""); setFAssignee(""); setFReadyOnly(false); }} title="Clear filters" style={{ height: "28px", padding: "0 10px", border: "1px solid #262B36", borderRadius: "999px", background: "transparent", color: "#8A90A0", fontSize: "11.5px", fontWeight: 600, cursor: "pointer" }}>Clear</button>
-              )}
-            </div>
+            {filtersOpen && (
+              <div style={{ display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both" }}>
+                {([
+                  { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
+                  { v: fType, set: setFType, label: "Type", opts: typeOptions },
+                  { v: fAssignee, set: setFAssignee, label: "Assignee", opts: assigneeOptions },
+                ] as const).map((f) => (
+                  <div key={f.label} style={filterWrapStyle(!!f.v)}>
+                    <select value={f.v} onChange={(e) => f.set(e.target.value)} title={f.label} style={filterSelStyle(!!f.v)}>
+                      <option value="" style={{ background: "#14171D", color: "#8A90A0" }}>{f.label}: All</option>
+                      {f.opts.map((o) => (<option key={o} value={o} style={{ background: "#14171D", color: "#ECEEF3" }}>{o}</option>))}
+                    </select>
+                  </div>
+                ))}
+                {activeFilters > 0 && (
+                  <button onClick={clearFilters} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #262B36", borderRadius: "9px", background: "transparent", color: "#8A90A0", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+                )}
+              </div>
+            )}
           </div>
           <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
             {loading && (
