@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect } from "react";
+// Ported from the prototype's attachSmooth() (Ticket Executor.dc.html, ~line 547):
+// direct per-element wheel interception, eased toward a target scrollTop.
+//
+// Two differences from the port that used to live here:
+// 1. Attachment is a plain ref callback on each known `.te-scroll` container,
+//    not a MutationObserver on `document.body` with `subtree: true`. The
+//    observer fired on every DOM mutation anywhere in the app (log lines
+//    streaming in, bolt animations, any re-render) just to re-scan for
+//    `.te-scroll` nodes, which was the main source of main-thread jank —
+//    tuning the easing math alone couldn't fix that.
+// 2. The catch-up rate is time-corrected (scaled by real elapsed time, not a
+//    flat fraction) so it still looks smooth if a frame is skipped, e.g.
+//    while the WebGL Reactor background is rendering — but with the observer
+//    gone this matters far less now.
+const DAMPING = 0.72; // per ~16.7ms frame; lower = snappier catch-up
 
-// Ported verbatim from the prototype's attachSmooth() (Ticket Executor.dc.html,
-// ~line 546) — direct per-element wheel interception with a heavy 0.1 ease
-// factor, which is what actually reads as "smooth" rather than a quick 0.2+
-// catch-up that still feels like a snap. Attached to every `.te-scroll`
-// element (ticket list, sprint/combobox dropdowns, tab content, log viewer)
-// as they mount, via MutationObserver since this app's scroll containers are
-// dynamic (dropdowns open/close) rather than the prototype's two fixed refs.
-function attachSmooth(el: HTMLElement) {
+export function attachSmoothScroll(el: HTMLElement | null) {
+  if (!el) return;
   if ((el as HTMLElement & { __smooth?: boolean }).__smooth) return;
   (el as HTMLElement & { __smooth?: boolean }).__smooth = true;
 
@@ -17,11 +25,6 @@ function attachSmooth(el: HTMLElement) {
   let animating = false;
   let lastTime = 0;
 
-  // Time-corrected version of the reference's `diff * 0.1` per frame: at a
-  // steady 60fps this reduces to the exact same 0.1-per-~16.7ms step, but it
-  // stays correct (no visible stutter) if the tab drops frames — e.g. while
-  // the WebGL Reactor background is also rendering — by scaling the catch-up
-  // fraction to however much real time actually elapsed since the last frame.
   const ease = (now: number) => {
     const dt = lastTime ? now - lastTime : 16.7;
     lastTime = now;
@@ -33,7 +36,7 @@ function attachSmooth(el: HTMLElement) {
       lastTime = 0;
       return;
     }
-    const rate = 1 - Math.pow(0.9, dt / 16.7);
+    const rate = 1 - Math.pow(DAMPING, dt / 16.7);
     el.scrollTop = cur + diff * rate;
     requestAnimationFrame(ease);
   };
@@ -54,32 +57,9 @@ function attachSmooth(el: HTMLElement) {
         requestAnimationFrame(ease);
       }
     },
-    { passive: false }
+    { passive: false },
   );
   el.addEventListener("scroll", () => {
     if (!animating) target = el.scrollTop;
   });
-}
-
-export function useSmoothScroll() {
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    const scan = (root: ParentNode) => {
-      root.querySelectorAll(".te-scroll").forEach((el) => attachSmooth(el as HTMLElement));
-    };
-    scan(document);
-
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        m.addedNodes.forEach((node) => {
-          if (!(node instanceof HTMLElement)) return;
-          if (node.matches(".te-scroll")) attachSmooth(node);
-          scan(node);
-        });
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
 }
