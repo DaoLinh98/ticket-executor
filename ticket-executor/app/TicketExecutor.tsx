@@ -31,6 +31,13 @@ import {
 const ACCENT = "#FB7250";
 const DEFAULT_SKILL = "implement-ticket";
 
+// Result-tab section split: order implementation before review, with friendly titles.
+const RESULT_SKILL_ORDER = ["implement-ticket", "senior-code-review"];
+const RESULT_SKILL_TITLE: Record<string, string> = {
+  "implement-ticket": "Implementation",
+  "senior-code-review": "Code Review",
+};
+
 // Suggested skills for the Overview combobox — free text is still allowed.
 const SKILL_OPTIONS = [
   "implement-ticket",
@@ -49,6 +56,7 @@ type ExecView = {
   skillName?: string;
   logLines: LogLine[];
   resultText: string;
+  resultsBySkill?: Record<string, string>;
   error: string;
   prUrl?: string;
   branch?: string;
@@ -301,6 +309,7 @@ export default function TicketExecutor() {
           skillName: ex.skillName,
           logLines: ex.logLines ?? [],
           resultText: ex.resultText ?? "",
+          resultsBySkill: ex.resultText ? { [ex.skillName || "implement-ticket"]: ex.resultText } : {},
           error: ex.errorMessage ?? "",
           prUrl: ex.prUrl ?? "",
           branch: ex.branch ?? "",
@@ -400,6 +409,10 @@ export default function TicketExecutor() {
               skillName: ex.skillName ?? s[ticketId]?.skillName,
               logLines: ex.logLines ?? [],
               resultText: ex.resultText ?? "",
+              // Keep prior runs' results; index the new one by the skill that produced it.
+              resultsBySkill: ex.resultText
+                ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket"]: ex.resultText }
+                : s[ticketId]?.resultsBySkill,
               error: ex.errorMessage ?? "",
               prUrl: ex.prUrl ?? "",
               branch: ex.branch ?? "",
@@ -460,7 +473,7 @@ export default function TicketExecutor() {
       setTab("execution");
       setExecs((s) => ({
         ...s,
-        [t.id]: { status: "running", logLines: [], resultText: "", error: "" },
+        [t.id]: { status: "running", logLines: [], resultText: "", resultsBySkill: s[t.id]?.resultsBySkill || {}, error: "" },
       }));
       try {
         window.__reactor?.setMode("running");
@@ -827,7 +840,19 @@ export default function TicketExecutor() {
     background: "rgba(255,255,255,.03)", border: "1px solid " + EXEC_COLOR[st] + "44",
   };
 
-  const showResult = tab === "result" && !!ex?.resultText;
+  // Split the result into per-skill sections (Implementation / Code Review),
+  // keeping the results of every run this ticket has been through.
+  const resultsBySkill: Record<string, string> =
+    ex?.resultsBySkill && Object.keys(ex.resultsBySkill).length
+      ? ex.resultsBySkill
+      : ex?.resultText
+        ? { "implement-ticket": ex.resultText }
+        : {};
+  const resultSections = Object.keys(resultsBySkill)
+    .sort((a, b) => RESULT_SKILL_ORDER.indexOf(a) - RESULT_SKILL_ORDER.indexOf(b))
+    .map((sk) => ({ key: sk, title: RESULT_SKILL_TITLE[sk] || sk, markdown: resultsBySkill[sk] }));
+  const showResultSectionHeader = resultSections.length > 1;
+  const showResult = tab === "result" && resultSections.length > 0;
 
   // active provider metadata drives Settings field labels + placeholders
   const pm = providerMeta(settings.provider);
@@ -1212,9 +1237,16 @@ export default function TicketExecutor() {
                         </a>
                       )}
                     </div>
-                    <div className="md-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{ex.resultText}</ReactMarkdown>
-                    </div>
+                    {resultSections.map((rs) => (
+                      <div key={rs.key}>
+                        {showResultSectionHeader && (
+                          <h2 style={{ margin: "0 0 10px", fontFamily: "var(--font-space), sans-serif", fontSize: "13px", fontWeight: 700, letterSpacing: ".06em", color: "var(--accent)", textTransform: "uppercase" }}>{rs.title}</h2>
+                        )}
+                        <div className="md-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{rs.markdown}</ReactMarkdown>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
