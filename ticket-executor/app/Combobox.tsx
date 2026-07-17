@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { dropdownPanelStyle } from "@/lib/ui";
 
 // Creatable combobox: pick an option from the themed dropdown OR type a custom
 // value that is not in the list. Styled to match the prototype (dark, mono).
@@ -123,13 +124,8 @@ export default function Combobox({
             left: "-7px",
             right: "-7px",
             zIndex: 30,
-            maxHeight: "196px",
-            overflowY: "auto",
-            border: "1px solid #262B36",
+            ...dropdownPanelStyle({ maxHeight: "196px" }),
             borderRadius: "10px",
-            background: "#0E1015",
-            boxShadow: "0 22px 54px -24px #000",
-            padding: "5px",
             animation: "fadeUp .16s ease-out both",
           }}
         >

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // Skills relevant to ticket work — used to rank/seed the list and as a fallback
 // when the skills directory can't be read.
 const CURATED = [
-  "implement-ticket",
+  "implement-ticket-v2",
   "fix-issue",
   "fix-code-review",
   "senior-code-review",

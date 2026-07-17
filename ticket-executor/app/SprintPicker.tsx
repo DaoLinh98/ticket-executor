@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
 
 export type IterationOption = {
   id: string;
@@ -47,14 +48,10 @@ export default function SprintPicker({
           gap: "8px",
           height: "34px",
           padding: "0 13px",
-          border: "1.5px solid transparent",
-          borderRadius: "999px",
-          background:
-            "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box",
-          animation: "spinAngle 4s linear infinite",
           cursor: hasOptions ? "pointer" : "default",
           color: "inherit",
           font: "inherit",
+          ...ringBorder({ fill: "#14171D", shape: "pill", duration: 4 }),
         }}
       >
         <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4", flex: "0 0 auto" }} />
@@ -81,16 +78,12 @@ export default function SprintPicker({
             position: "absolute",
             top: "calc(100% + 10px)",
             left: 0,
-            minWidth: "230px",
             zIndex: 40,
-            maxHeight: "340px",
-            overflowY: "auto",
-            border: "1px solid #262B36",
+            animation: "fadeUp .16s ease-out both",
+            ...dropdownPanelStyle({ minWidth: "230px", maxHeight: "340px" }),
             borderRadius: "13px",
-            background: "#0E1015",
             boxShadow: "0 26px 64px -22px rgba(0,0,0,.7), 0 0 0 1px rgba(251,114,80,.06)",
             padding: "6px",
-            animation: "fadeUp .16s ease-out both",
           }}
         >
           {options.map((o) => {
@@ -131,13 +124,9 @@ export default function SprintPicker({
                 {o.timeFrame === "current" && (
                   <span
                     style={{
+                      ...pill({ color: "#35D6A4", background: "rgba(53,214,164,.12)", size: "xs", weight: 700 }),
                       fontSize: "9.5px",
-                      fontWeight: 700,
                       letterSpacing: ".05em",
-                      color: "#35D6A4",
-                      background: "rgba(53,214,164,.12)",
-                      padding: "2px 7px",
-                      borderRadius: "999px",
                       flex: "0 0 auto",
                     }}
                   >

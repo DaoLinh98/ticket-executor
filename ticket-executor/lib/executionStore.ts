@@ -59,22 +59,6 @@ function fmtDuration(ms: number): string {
   return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
-// Tier 1 — grant full autonomy so `claude -p` never stalls waiting for a human.
-const AUTOMATED_RUN_DIRECTIVE = [
-  "You are running in a FULLY AUTOMATED, non-interactive pipeline. No human is available to answer questions mid-run.",
-  "Complete the entire task end-to-end without pausing: create a branch if needed, implement all acceptance criteria,",
-  "run the project's tests/verification, commit the changes, push the branch, and open a pull request.",
-  "Do NOT ask for confirmation or approval at any step — this OVERRIDES any guidance in memory/CLAUDE.md or the skill",
-  "that says to ask before committing or to wait for authorization. If a choice is ambiguous, pick the most reasonable",
-  "default and proceed. Never end your turn with a question; finish only when the pull request is open, or you are",
-  "genuinely blocked by a hard external error (then explain the blocker).",
-].join(" ");
-
-const CONTINUE_NUDGE =
-  "Continue and finish autonomously: commit, push, and open the pull request now. Do not ask again — this is an automated run.";
-
-const MAX_CONTINUATIONS = 3;
-
 // ---- optional guardrails via env ----
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MCP_CONFIG = process.env.CLAUDE_MCP_CONFIG || ""; // path to MCP json; empty = inherit
@@ -87,9 +71,8 @@ function commonArgs(): string[] {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
-    "--append-system-prompt",
-    AUTOMATED_RUN_DIRECTIVE,
   ];
   if (MCP_CONFIG) a.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
   if (MAX_BUDGET) a.push("--max-budget-usd", MAX_BUDGET);
@@ -209,10 +192,9 @@ export function cancelExecution(id: string): boolean {
 }
 
 // Parse one NDJSON line from `--output-format stream-json`, updating the entry live.
-type TurnState = { sessionId: string; resultText: string; lastText: string; isError: boolean };
+type TurnState = { resultText: string; isError: boolean; errorDetail: string };
 function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) {
   const type = obj.type;
-  if (typeof obj.session_id === "string") ts.sessionId = obj.session_id;
 
   if (type === "system" && obj.subtype === "init") {
     const model = (obj as { model?: string }).model ?? "";
@@ -226,7 +208,6 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
       if (block.type === "text" && typeof block.text === "string") {
         const text = block.text.trim();
         if (text) {
-          ts.lastText = text;
           detectArtifacts(entry, text);
           text.split(/\r?\n/).forEach((l) => l.trim() && entry.logLines.push({ text: l, kind: "muted" }));
         }
@@ -256,18 +237,10 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
   }
 }
 
-function looksLikeQuestion(text: string): boolean {
-  const t = text.trim();
-  return (
-    /\?\s*$/.test(t) ||
-    /(let me know|would you like|shall i|should i|do you want|confirm|cho tôi biết|bạn có muốn|xác nhận)/i.test(t)
-  );
-}
-
 // Run one Claude turn; resolves when the process closes.
 function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exitCode: number | null }> {
   return new Promise((resolve) => {
-    const ts: TurnState = { sessionId: "", resultText: "", lastText: "", isError: false };
+    const ts: TurnState = { resultText: "", isError: false, errorDetail: "" };
     let child: ChildProcess;
     try {
       child = spawn(CLAUDE_BIN, args, {
@@ -276,8 +249,9 @@ function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exitCode: 
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) {
-      entry.logLines.push({ text: `✖ ${e instanceof Error ? e.message : String(e)}`, kind: "err" });
-      resolve({ ...ts, isError: true, exitCode: -1 });
+      const detail = e instanceof Error ? e.message : String(e);
+      entry.logLines.push({ text: `✖ ${detail}`, kind: "err" });
+      resolve({ ...ts, isError: true, errorDetail: detail, exitCode: -1 });
       return;
     }
     entry.child = child;
@@ -303,12 +277,15 @@ function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exitCode: 
     });
     child.on("error", (e) => {
       entry.logLines.push({ text: `✖ ${e.message}`, kind: "err" });
-      resolve({ ...ts, isError: true, exitCode: -1 });
+      resolve({ ...ts, isError: true, errorDetail: e.message, exitCode: -1 });
     });
     child.on("close", (code) => {
       entry.child = null;
-      if (code !== 0 && !ts.resultText && errTail.trim())
-        entry.logLines.push({ text: errTail.trim(), kind: "err" });
+      if (code !== 0 && !ts.resultText) {
+        const detail = errTail.trim() || `claude exited with code ${code}`;
+        entry.logLines.push({ text: detail, kind: "err" });
+        ts.errorDetail = detail;
+      }
       resolve({ ...ts, isError: ts.isError || code !== 0, exitCode: code });
     });
   });
@@ -324,9 +301,8 @@ export async function startExecution(params: {
   const skill = cleanPath(params.skill);
   const project = cleanPath(params.project);
   const rootRepo = cleanPath(params.rootRepo);
-  const repoDir = path.join(rootRepo, project);
   const prompt = `/${skill} ID: ${ticketId} - Project name: ${project}`;
-  const command = `cd ${repoDir} && claude -p "${prompt}"`;
+  const command = `cd ${rootRepo} && claude -p "${prompt}"`;
 
   const row = await prisma.execution.create({
     data: { adoTicketId: ticketId, projectName: project, skillName: skill, status: "running", command },
@@ -336,7 +312,7 @@ export async function startExecution(params: {
   const entry: Entry = {
     id, ticketId, project, skill, command,
     status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
-    currentStep: 0, cwd: repoDir, startedAt: Date.now(), completedAt: null,
+    currentStep: 0, cwd: rootRepo, startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false,
   };
   store.set(id, entry);
@@ -370,47 +346,35 @@ export async function startExecution(params: {
     }
   };
 
-  if (!existsSync(repoDir)) {
-    await finish("failed", `Project folder not found: ${repoDir}. Set the correct Root repo / Project on the Overview tab.`);
+  if (!existsSync(rootRepo)) {
+    await finish("failed", `Project folder not found: ${rootRepo}. Set the correct Root repo / Project on the Overview tab.`);
     return id;
   }
 
-  // Optional Tier 3: isolate the run in a fresh git worktree so the main tree is untouched.
+  // Optional Tier 3: isolate the run in a fresh git worktree so concurrent executions against the
+  // same rootRepo/project don't race on one shared working tree. Checked out detached (no branch
+  // of its own) — the skill's own "create a branch" step creates the one real branch, from inside
+  // this worktree.
   if (USE_WORKTREE) {
     try {
       const wt = path.join(rootRepo, `.te-worktrees`, `${project}-${id}`);
-      const branch = `te/${ticketId}-${id}`;
-      execSync(`git -C "${repoDir}" worktree add -b "${branch}" "${wt}" HEAD`, { stdio: "ignore" });
+      execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
       entry.cwd = wt;
-      entry.logLines.push({ text: `● Isolated worktree ${wt} (branch ${branch})`, kind: "step" });
+      entry.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
     } catch (e) {
       entry.logLines.push({ text: `⚠ worktree setup failed, running in repo: ${e instanceof Error ? e.message : e}`, kind: "muted" });
     }
   }
 
-  // Fire-and-forget supervised loop (Tier 2). The route returns immediately.
+  // Fire-and-forget single turn (Tier 2). The route returns immediately.
+  // The skill itself now owns branch/commit/push/PR — no forced directive, no auto-continue.
   void (async () => {
-    let ts = await runTurn(entry, ["-p", prompt, ...commonArgs()]);
+    const ts = await runTurn(entry, ["-p", prompt, ...commonArgs()]);
     if (ts.resultText) entry.resultText = ts.resultText;
 
-    let tries = 0;
-    while (
-      !entry.cancelled &&
-      !ts.isError &&
-      tries < MAX_CONTINUATIONS &&
-      looksLikeQuestion(ts.resultText || ts.lastText)
-    ) {
-      tries++;
-      entry.logLines.push({ text: `↻ Auto-continue (${tries}/${MAX_CONTINUATIONS})`, kind: "step" });
-      const resumeArgs = ts.sessionId
-        ? ["-p", CONTINUE_NUDGE, "--resume", ts.sessionId, ...commonArgs()]
-        : ["-p", CONTINUE_NUDGE, ...commonArgs()];
-      ts = await runTurn(entry, resumeArgs);
-      if (ts.resultText) entry.resultText = ts.resultText;
-    }
-
     if (entry.cancelled) await finish("failed", "Cancelled by user");
-    else if (ts.isError) await finish("failed", ts.resultText || "Claude CLI reported an error");
+    else if (ts.isError)
+      await finish("failed", ts.resultText || ts.errorDetail || "Claude CLI reported an error");
     else await finish("completed", "");
   })();
 

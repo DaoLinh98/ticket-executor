@@ -2,11 +2,12 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { COLORS } from "@/lib/ui";
 
 type Bolt = { id: string; d: string; d2: string | null; color: string; big: boolean };
 type Flash = { id: string; color: string; x: number; y: number };
 
-const ACCENT = "#FB7250";
+const ACCENT = COLORS.accent;
 
 function zigzagPath(x1: number, y1: number, x2: number, y2: number, segs: number, jitter: number) {
   const pts: [number, number][] = [[x1, y1]];

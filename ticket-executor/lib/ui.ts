@@ -73,14 +73,14 @@ export type ActionInfo = { label: string; skill: string };
 // Returns null when no action applies for that status (button is gated).
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
-  if (IMPLEMENTABLE_STATES.has(s)) return { label: "Implement Ticket", skill: "implement-ticket" };
+  if (IMPLEMENTABLE_STATES.has(s)) return { label: "Implement Ticket", skill: "implement-ticket-v2" };
   if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
   return null;
 }
 
 // The status a ticket moves to once a given skill's run completes (simulated ADO sync).
 export function nextStatusAfter(skill: string, current: string): string {
-  if (skill === "implement-ticket") return "Code Review";
+  if (skill === "implement-ticket-v2") return "Code Review";
   if (skill === "senior-code-review") return "Ready for QA";
   return current;
 }
@@ -111,51 +111,203 @@ export const EXEC_LABEL: Record<ExecStatus, string> = {
   failed: "Failed",
 };
 
-export function typeBadge(type: string): CSSProperties {
-  const c = TYPES[type] || TYPES.Task;
+// ---- Shared design tokens ----
+// Single source of truth for the palette + shape/animation primitives reused
+// across TicketExecutor.tsx, SprintPicker.tsx, Combobox.tsx and Bolts.tsx.
+// See UI-STYLEGUIDE.md — any new element should compose these instead of
+// re-typing raw gradient/clip-path/color literals.
+export const COLORS = {
+  accent: "#FB7250",
+  success: "#35D6A4",
+  danger: "#FF6B6B",
+  warning: "#F5B341",
+  info: "#5B9DFF",
+  indigo: "#9BA6E8",
+  text: "#ECEEF3",
+  textDim: "#8A90A0",
+  textMuted: "#6B7283",
+  faint: "#5B6273",
+  border: "#262B36",
+  borderSubtle: "#1E232C",
+  panelBg: "#111419",
+  panelBgDark: "#0A0B0E",
+} as const;
+
+// Corner-cut hexagon clip-path used by every "chip" shaped element (buttons,
+// tabs, search bar, settings/close buttons). Prototype used 6/7/8px corners
+// interchangeably — pick one of those three, don't invent a new radius.
+export function clipCorner(px: 6 | 7 | 8 = 8): string {
+  return `polygon(${px}px 0,100% 0,100% calc(100% - ${px}px),calc(100% - ${px}px) 100%,0 100%,0 ${px}px)`;
+}
+
+type RingOpts = {
+  /** Fill color behind the ring (the padding-box layer). */
+  fill: string;
+  /** "outline": 4-stop transparent→ring→highlight→ring→transparent sweep (default).
+   *  "filled": 3-stop transparent→highlight→transparent — for CTA buttons whose
+   *  fill itself already IS the accent color, so the ring only needs one sheen stop. */
+  variant?: "outline" | "filled";
+  /** Outline ring color. Ignored when variant is "filled". Default: var(--accent). */
+  ring?: string;
+  /** Outline mid-stop / filled sheen color. Default "#ffd8c9" (outline) or "#ffe4d8" (filled). */
+  highlight?: string;
+  /** spinAngle duration in seconds. Default 3.2 — don't go faster than ~1.6s or slower than ~5.5s. */
+  duration?: number;
+  shape?: "pill" | "clip" | "none";
+  cornerPx?: 6 | 7 | 8;
+};
+
+// The one spinning conic-gradient "energy ring" border used everywhere in the
+// app (buttons, tabs, pills, panels). Always compose new ring elements through
+// this helper instead of re-typing the gradient stops.
+export function ringBorder(opts: RingOpts): CSSProperties {
+  const { fill, variant = "outline", ring = "var(--accent)", duration = 3.2, shape = "clip", cornerPx = 8 } = opts;
+  const highlight = opts.highlight ?? (variant === "filled" ? "#ffe4d8" : "#ffd8c9");
+  const conic =
+    variant === "filled"
+      ? `conic-gradient(from var(--angle), transparent, ${highlight}, transparent 70%)`
+      : `conic-gradient(from var(--angle), transparent, ${ring}, ${highlight}, ${ring}, transparent 70%)`;
+  const style: CSSProperties = {
+    border: "1.5px solid transparent",
+    background: `linear-gradient(${fill},${fill}) padding-box, ${conic} border-box`,
+    animation: `spinAngle ${duration}s linear infinite`,
+  };
+  if (shape === "pill") style.borderRadius = "999px";
+  else if (shape === "clip") style.clipPath = clipCorner(cornerPx);
+  return style;
+}
+
+// Neutral bordered container — the "card" used for meta tiles, comment
+// bubbles, acceptance-criteria rows, past-run rows, etc.
+export function card(opts?: { padding?: string; radius?: string; border?: string; background?: string }): CSSProperties {
+  const { padding = "11px 13px", radius = "10px", border = COLORS.border, background = COLORS.panelBg } = opts || {};
+  return { padding, borderRadius: radius, border: `1px solid ${border}`, background };
+}
+
+// Color-tinted banner card (success/danger/warning/accent) — result banners,
+// error/notice boxes, the "ready to implement" CTA strip.
+const TINT: Record<"success" | "danger" | "warning" | "accent", { border: string; background: string }> = {
+  success: { border: "#24382F", background: "linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02))" },
+  danger: { border: "#4A2626", background: "rgba(255,107,107,.06)" },
+  warning: { border: "#3A2F22", background: "rgba(245,179,65,.06)" },
+  accent: { border: "#2A2018", background: "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))" },
+};
+export function tintedCard(tone: keyof typeof TINT, opts?: { padding?: string; radius?: string }): CSSProperties {
+  const t = TINT[tone];
+  const { padding = "15px 18px", radius = "12px" } = opts || {};
+  return { padding, borderRadius: radius, border: `1px solid ${t.border}`, background: t.background };
+}
+
+// Dropdown/menu panel chrome shared by SprintPicker, Combobox, and the inline
+// status menu in TicketExecutor.tsx.
+export function dropdownPanelStyle(opts?: { minWidth?: string; maxHeight?: string }): CSSProperties {
   return {
-    fontSize: "10.5px",
-    fontWeight: 700,
-    letterSpacing: ".04em",
-    padding: "2px 8px",
-    borderRadius: "6px",
-    color: c.c,
-    background: c.bg,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: "11px",
+    background: "#0E1015",
+    boxShadow: "0 22px 54px -24px #000",
+    padding: "5px",
+    ...(opts?.minWidth ? { minWidth: opts.minWidth } : {}),
+    ...(opts?.maxHeight ? { maxHeight: opts.maxHeight, overflowY: "auto" } : {}),
   };
 }
 
-export function statusPill(status: string): CSSProperties {
-  return {
-    fontSize: "11px",
-    fontWeight: 600,
-    padding: "2px 9px",
-    borderRadius: "999px",
-    color: statusColor(status),
-    background: "rgba(255,255,255,.04)",
-    border: "1px solid #262B36",
+// Generic pill/badge factory — status pills, exec pills, branch pill, log
+// status badge, filter-count badge all compose this instead of hand-rolling
+// padding/radius/fontSize combos.
+export function pill(opts: {
+  color: string;
+  background?: string;
+  border?: string;
+  size?: "xs" | "sm" | "md";
+  weight?: number;
+}): CSSProperties {
+  const { color, background = "rgba(255,255,255,.04)", border, size = "sm", weight = 600 } = opts;
+  const sizes: Record<"xs" | "sm" | "md", CSSProperties> = {
+    xs: { fontSize: "10.5px", padding: "2px 7px" },
+    sm: { fontSize: "11px", padding: "2px 9px" },
+    md: { fontSize: "12px", padding: "3px 10px" },
   };
-}
-
-// Clickable status pill with an LED conic border colored by the status.
-export function statusPillActive(status: string): CSSProperties {
-  const c = statusColor(status);
   return {
     display: "inline-flex",
     alignItems: "center",
     gap: "5px",
-    fontSize: "11px",
-    fontWeight: 700,
-    padding: "3px 10px",
     borderRadius: "999px",
-    color: c,
+    fontWeight: weight,
+    color,
+    background,
+    ...sizes[size],
+    ...(border ? { border: `1px solid ${border}` } : {}),
+  };
+}
+
+// Action-button factory — the accent-filled primary CTA, the success/warning
+// state buttons, and the outline/ghost secondary buttons all come from here.
+export function ctaButtonStyle(
+  variant: "primary" | "success" | "warning" | "outline" | "ghost",
+  opts?: { height?: string; cornerPx?: 6 | 7 | 8 }
+): CSSProperties {
+  const height = opts?.height ?? "32px";
+  const cornerPx = opts?.cornerPx ?? 8;
+  const base: CSSProperties = {
+    position: "relative",
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    height,
+    padding: "0 14px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer",
+    transition: "filter .18s, transform .12s, box-shadow .25s",
+  };
+  if (variant === "primary")
+    return { ...base, color: "#0B0C10", ...ringBorder({ fill: COLORS.accent, variant: "filled", cornerPx }), animation: undefined };
+  if (variant === "success")
+    return {
+      ...base,
+      color: "#5BE8B8",
+      ...ringBorder({ fill: "rgba(53,214,164,.14)", ring: COLORS.success, highlight: "#baf5e3", duration: 3, cornerPx }),
+    };
+  if (variant === "warning")
+    return {
+      ...base,
+      color: "#C7CCD8",
+      ...ringBorder({ fill: "#2A2E38", ring: COLORS.warning, highlight: COLORS.warning, duration: 1.6, cornerPx }),
+    };
+  if (variant === "outline")
+    return {
+      ...base,
+      color: "#C7CCD8",
+      fontWeight: 600,
+      border: "1.5px solid #2A2F3A",
+      background: "transparent",
+      clipPath: clipCorner(opts?.cornerPx ?? 7),
+      animation: undefined,
+    };
+  // ghost — dark fill + accent ring (the "secondary next action" button)
+  return { ...base, color: "#ECEEF3", ...ringBorder({ fill: "#1A1E25", duration: 3.2, cornerPx }) };
+}
+
+export function typeBadge(type: string): CSSProperties {
+  const c = TYPES[type] || TYPES.Task;
+  return { ...pill({ color: c.c, background: c.bg, size: "xs", weight: 700 }), borderRadius: "6px", letterSpacing: ".04em" };
+}
+
+export function statusPill(status: string): CSSProperties {
+  return pill({ color: statusColor(status), border: COLORS.border });
+}
+
+// Clickable status pill — reuses the exact same ring/background/animation as
+// the active Overview tab (tabStyle in TicketExecutor.tsx); only the text is
+// colored by status.
+export function statusPillActive(status: string): CSSProperties {
+  return {
+    ...pill({ color: statusColor(status), size: "md", weight: 700 }),
     cursor: "pointer",
     outline: "none",
-    border: "1.5px solid transparent",
-    background:
-      "linear-gradient(rgba(255,255,255,.04),rgba(255,255,255,.04)) padding-box, conic-gradient(from var(--angle), transparent, " +
-      c +
-      ", transparent 55%) border-box",
-    animation: "spinAngle 3.6s linear infinite",
+    ...ringBorder({ fill: "#171A21", shape: "pill" }),
   };
 }
 

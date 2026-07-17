@@ -8,10 +8,10 @@ import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
 import SprintPicker, { type IterationOption } from "./SprintPicker";
-import { useSmoothScroll } from "./useSmoothScroll";
 import type { ExecStatus, LogLine, Ticket, TicketComment } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
+  COLORS,
   EXEC_COLOR,
   EXEC_LABEL,
   STATUS_ALL,
@@ -19,28 +19,35 @@ import {
   actionInfoFor,
   avatar,
   branchOf,
+  card,
+  clipCorner,
+  ctaButtonStyle,
+  dropdownPanelStyle,
   execDot,
   initials,
   nextStatusAfter,
+  pill,
+  ringBorder,
   statusColor,
   statusPill,
   statusPillActive,
+  tintedCard,
   typeBadge,
 } from "@/lib/ui";
 
-const ACCENT = "#FB7250";
-const DEFAULT_SKILL = "implement-ticket";
+const ACCENT = COLORS.accent;
+const DEFAULT_SKILL = "implement-ticket-v2";
 
 // Result-tab section split: order implementation before review, with friendly titles.
-const RESULT_SKILL_ORDER = ["implement-ticket", "senior-code-review"];
+const RESULT_SKILL_ORDER = ["implement-ticket-v2", "senior-code-review"];
 const RESULT_SKILL_TITLE: Record<string, string> = {
-  "implement-ticket": "Implementation",
+  "implement-ticket-v2": "Implementation",
   "senior-code-review": "Code Review",
 };
 
 // Suggested skills for the Overview combobox — free text is still allowed.
 const SKILL_OPTIONS = [
-  "implement-ticket",
+  "implement-ticket-v2",
   "fix-issue",
   "fix-code-review",
   "senior-code-review",
@@ -83,9 +90,6 @@ type SettingsView = {
   defaultProject: string;
   sprint: string;
 };
-
-const chipClip = "polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)";
-const cutClip = "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)";
 
 // Heuristic: derive how many of the 7 steps a running log has reached.
 const STEP_PATTERNS = [
@@ -157,7 +161,6 @@ export default function TicketExecutor() {
     sprint: "",
   });
 
-  useSmoothScroll();
   const { bolts, flashes, fireBolt, fireBoltFromEvent, statusBoltAnchor } = useBolts();
   const logRef = useRef<HTMLDivElement>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
@@ -309,7 +312,7 @@ export default function TicketExecutor() {
           skillName: ex.skillName,
           logLines: ex.logLines ?? [],
           resultText: ex.resultText ?? "",
-          resultsBySkill: ex.resultText ? { [ex.skillName || "implement-ticket"]: ex.resultText } : {},
+          resultsBySkill: ex.resultText ? { [ex.skillName || "implement-ticket-v2"]: ex.resultText } : {},
           error: ex.errorMessage ?? "",
           prUrl: ex.prUrl ?? "",
           branch: ex.branch ?? "",
@@ -411,7 +414,7 @@ export default function TicketExecutor() {
               resultText: ex.resultText ?? "",
               // Keep prior runs' results; index the new one by the skill that produced it.
               resultsBySkill: ex.resultText
-                ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket"]: ex.resultText }
+                ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket-v2"]: ex.resultText }
                 : s[ticketId]?.resultsBySkill,
               error: ex.errorMessage ?? "",
               prUrl: ex.prUrl ?? "",
@@ -636,7 +639,7 @@ export default function TicketExecutor() {
   // LED-wrapped filter dropdown styling: the border runs only when a value is selected.
   const filterWrapStyle = (active: boolean): CSSProperties =>
     active
-      ? { position: "relative", flex: 1, minWidth: 0, height: "32px", border: "1.5px solid transparent", borderRadius: "9px", background: "linear-gradient(#14171D,#14171D) padding-box, conic-gradient(from var(--angle), transparent, var(--accent), transparent 55%) border-box", animation: "spinAngle 3.4s linear infinite" }
+      ? { position: "relative", flex: 1, minWidth: 0, height: "32px", borderRadius: "9px", ...ringBorder({ fill: "#14171D", shape: "none", duration: 3.4 }) }
       : { position: "relative", flex: 1, minWidth: 0, height: "32px", border: "1px solid #262B36", borderRadius: "9px", background: "#14171D" };
   const filterSelStyle = (active: boolean): CSSProperties =>
     ({ position: "absolute", inset: 0, width: "100%", height: "100%", padding: "0 26px 0 11px", border: "none", borderRadius: "9px", background: "transparent", color: active ? "#F3F5F9" : "#8A90A0", fontSize: "12px", fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", colorScheme: "dark" });
@@ -659,16 +662,13 @@ export default function TicketExecutor() {
       marginBottom: "3px",
       transition: "color .15s, transform .12s",
       opacity: enabled ? 1 : 0.5,
-      clipPath: chipClip,
+      clipPath: clipCorner(6),
     };
     if (active)
       return {
         ...base,
-        border: "1.5px solid transparent",
-        background:
-          "linear-gradient(#171A21,#171A21) padding-box, conic-gradient(from var(--angle), transparent, var(--accent), #ffd8c9, var(--accent), transparent 70%) border-box",
         color: "#F3F5F9",
-        animation: "spinAngle 3.2s linear infinite",
+        ...ringBorder({ fill: "#171A21", duration: 3.2, shape: "none" }),
       };
     return {
       ...base,
@@ -687,45 +687,23 @@ export default function TicketExecutor() {
       spinner: true,
       playIcon: false,
       onClick: cancelImplement,
-      style: {
-        display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
-        border: "1.5px solid transparent",
-        background: "linear-gradient(#2A2E38,#2A2E38) padding-box, conic-gradient(from var(--angle), transparent, #F5B341, transparent 55%) border-box",
-        color: "#C7CCD8", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
-        animation: "spinAngle 1.6s linear infinite",
-      },
+      style: ctaButtonStyle("warning"),
     };
   else if (st === "completed")
     action = {
       label: "Show Result", spinner: false, playIcon: false,
       onClick: (e) => { fireBoltFromEvent(e); setTab("result"); },
-      style: {
-        display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
-        border: "1.5px solid transparent",
-        background: "linear-gradient(rgba(53,214,164,.14),rgba(53,214,164,.14)) padding-box, conic-gradient(from var(--angle), transparent, #35D6A4, #baf5e3, #35D6A4, transparent 70%) border-box",
-        color: "#5BE8B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
-        animation: "spinAngle 3s linear infinite",
-      },
+      style: ctaButtonStyle("success"),
     };
   else if (st === "failed")
     action = {
       label: `Retry ${actionInfo?.label ?? "Implement Ticket"}`, spinner: false, playIcon: true, onClick: startImplement,
-      style: {
-        display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
-        border: "1.5px solid transparent",
-        background: `linear-gradient(${ACCENT},${ACCENT}) padding-box, conic-gradient(from var(--angle), transparent, #ffe4d8, transparent 55%) border-box`,
-        color: "#0B0C10", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
-      },
+      style: ctaButtonStyle("primary"),
     };
   else
     action = {
       label: actionInfo?.label ?? "Implement Ticket", spinner: false, playIcon: true, onClick: startImplement,
-      style: {
-        display: "flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px",
-        border: "1.5px solid transparent",
-        background: `linear-gradient(${ACCENT},${ACCENT}) padding-box, conic-gradient(from var(--angle), transparent, #ffe4d8, transparent 55%) border-box`,
-        color: "#0B0C10", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
-      },
+      style: ctaButtonStyle("primary"),
     };
   action.style.position = "relative";
   action.style.overflow = "hidden";
@@ -756,19 +734,12 @@ export default function TicketExecutor() {
   // Secondary "next action" button — after a run completes, offer the action that
   // matches the (auto-advanced) status, e.g. "Review Code" once implement finishes.
   const showSecondaryAction = st === "completed" && !!actionInfo;
-  const secondaryStyleBase: CSSProperties = {
-    position: "relative", overflow: "hidden", display: "flex", alignItems: "center", gap: "7px",
-    border: "1.5px solid transparent",
-    background: `linear-gradient(#1A1E25,#1A1E25) padding-box, conic-gradient(from var(--angle), transparent, ${ACCENT}, transparent 55%) border-box`,
-    color: "#ECEEF3", fontWeight: 700, cursor: "pointer", clipPath: cutClip,
-    animation: "spinAngle 3.2s linear infinite",
-  };
   const secondaryAction = showSecondaryAction
-    ? { label: actionInfo!.label, onClick: (e?: MouseEvent) => startImplement(e), style: { ...secondaryStyleBase, height: "32px", padding: "0 14px", fontSize: "12px" } }
+    ? { label: actionInfo!.label, onClick: (e?: MouseEvent) => startImplement(e), style: ctaButtonStyle("ghost") }
     : null;
-  const secondaryCtaButtonStyle: CSSProperties = { ...secondaryStyleBase, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
+  const secondaryCtaButtonStyle: CSSProperties = { ...ctaButtonStyle("ghost", { height: "38px" }), padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
 
-  const ctaButtonStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
+  const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
   const ctaTitle = gated ? "No action for this status" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
     ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
@@ -826,19 +797,16 @@ export default function TicketExecutor() {
   };
   const [lsl, lsc] = logStatusMap[st];
   const logStatusStyle: CSSProperties = {
-    fontSize: "10.5px", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase",
-    color: lsc, padding: "2px 9px", borderRadius: "999px", background: "rgba(255,255,255,.04)", border: "1px solid " + lsc + "55",
+    letterSpacing: ".1em", textTransform: "uppercase",
+    ...pill({ color: lsc, background: "rgba(255,255,255,.04)", border: lsc + "55", size: "xs", weight: 700 }),
+    padding: "2px 9px",
   };
 
   const selProject = t ? getArea(t) : "";
   const selBranch = t ? branchOf(t.id, t.title) : "";
   const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
   const selCdCommand = t ? `cd ${getRootRepo(t)}\\${getArea(t)} && claude` : "";
-  const selExecPillStyle: CSSProperties = {
-    display: "inline-flex", alignItems: "center", gap: "7px", fontSize: "12px", fontWeight: 600,
-    color: EXEC_COLOR[st], padding: "3px 10px", borderRadius: "999px",
-    background: "rgba(255,255,255,.03)", border: "1px solid " + EXEC_COLOR[st] + "44",
-  };
+  const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),
   // keeping the results of every run this ticket has been through.
@@ -846,7 +814,7 @@ export default function TicketExecutor() {
     ex?.resultsBySkill && Object.keys(ex.resultsBySkill).length
       ? ex.resultsBySkill
       : ex?.resultText
-        ? { "implement-ticket": ex.resultText }
+        ? { "implement-ticket-v2": ex.resultText }
         : {};
   const resultSections = Object.keys(resultsBySkill)
     .sort((a, b) => RESULT_SKILL_ORDER.indexOf(a) - RESULT_SKILL_ORDER.indexOf(b))
@@ -879,7 +847,7 @@ export default function TicketExecutor() {
       {/* Header */}
       <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "34px", height: "34px", border: "1.5px solid transparent", background: "linear-gradient(var(--accent),var(--accent)) padding-box,conic-gradient(from var(--angle),transparent,#ffe4d8,transparent 55%) border-box", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 3.4s linear infinite" }}>
+          <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
@@ -889,10 +857,10 @@ export default function TicketExecutor() {
         </div>
         <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
           <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
         </div>
-        <button onClick={openSettings} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px 0 11px", border: "1.5px solid transparent", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent 0deg,var(--accent) 70deg,#ffd8c9 100deg,var(--accent) 130deg,transparent 230deg,transparent 360deg) border-box", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "filter .15s,transform .12s", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", animation: "spinAngle 3.4s linear infinite" }}>
+        <button onClick={openSettings} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px 0 11px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
           Settings
         </button>
@@ -907,11 +875,11 @@ export default function TicketExecutor() {
               <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", border: "1.5px solid transparent", background: "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 50%) border-box", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
               </div>
-              <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", border: "1.5px solid transparent", background: (filtersOpen || activeFilters > 0) ? "linear-gradient(rgba(251,114,80,.14),rgba(251,114,80,.14)) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box" : "linear-gradient(#14171D,#14171D) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 55%) border-box", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)", animation: "spinAngle 4.2s linear infinite" }}>
+              <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
                 {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
               </button>
@@ -984,8 +952,8 @@ export default function TicketExecutor() {
                 <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#8A90A0", letterSpacing: ".02em" }}>Loading sprint…</span>
               </div>
             )}
-            {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", padding: "14px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)", lineHeight: 1.5 }}>{loadError}</div>}
-            {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", padding: "14px", border: "1px solid #3A2F22", borderRadius: "10px", background: "rgba(245,179,65,.06)", lineHeight: 1.5 }}>{ticketsNotice}</div>}
+            {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", lineHeight: 1.5, ...tintedCard("danger", { padding: "14px", radius: "10px" }) }}>{loadError}</div>}
+            {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", lineHeight: 1.5, ...tintedCard("warning", { padding: "14px", radius: "10px" }) }}>{ticketsNotice}</div>}
             {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>No tickets match.</div>}
             {!loading && filtered.map((tk, i) => {
               const sel = tk.id === selectedId;
@@ -1044,7 +1012,7 @@ export default function TicketExecutor() {
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: statusMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
                     </button>
                     {statusMenuOpen && (
-                      <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: "190px", zIndex: 30, maxHeight: "280px", overflowY: "auto", border: "1px solid #262B36", borderRadius: "11px", background: "#0E1015", boxShadow: "0 22px 54px -24px #000", padding: "5px", animation: "fadeUp .16s ease-out both" }}>
+                      <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "190px", maxHeight: "280px" }) }}>
                         {STATUS_ALL.map((s) => (
                           <button key={s} onClick={(e) => selectStatus(t.id, s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: "12.5px", fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
                         ))}
@@ -1093,7 +1061,7 @@ export default function TicketExecutor() {
                         <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>ACCEPTANCE CRITERIA</h3>
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                           {t.criteria.map((c, i) => (
-                            <div key={i} style={{ display: "flex", gap: "12px", alignItems: "flex-start", padding: "12px 14px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}>
+                            <div key={i} style={{ display: "flex", gap: "12px", alignItems: "flex-start", ...card({ padding: "12px 14px", border: COLORS.borderSubtle }) }}>
                               <span style={{ flex: "0 0 auto", width: "18px", height: "18px", borderRadius: "6px", border: "1.5px solid #2E3644", display: "flex", alignItems: "center", justifyContent: "center", marginTop: "1px" }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="3"><path d="M5 13l4 4L19 7" /></svg></span>
                               <span style={{ fontSize: "13.5px", color: "#C7CCD8", lineHeight: 1.5 }}>{c}</span>
                             </div>
@@ -1107,7 +1075,7 @@ export default function TicketExecutor() {
                           {comments[t.id].map((cm, i) => (
                             <div key={i} style={{ display: "flex", gap: "11px", alignItems: "flex-start" }}>
                               <span style={{ ...avatar(cm.author), flex: "0 0 auto", width: "28px", height: "28px", fontSize: "11px" }}>{initials(cm.author)}</span>
-                              <div style={{ flex: 1, minWidth: 0, padding: "11px 14px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}>
+                              <div style={{ flex: 1, minWidth: 0, ...card({ padding: "11px 14px", border: COLORS.borderSubtle }) }}>
                                 <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
                                   <span style={{ fontSize: "13px", fontWeight: 700, color: "#E4E7EE" }}>{cm.author}</span>
                                   <span style={{ fontSize: "11.5px", color: "#6B7283", textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
@@ -1120,14 +1088,14 @@ export default function TicketExecutor() {
                       </section>
                     )}
                     <section style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "10px" }}>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
-                      <div style={{ padding: "11px 13px", border: "1px solid #262B36", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
-                      <div style={{ padding: "13px 15px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419" }}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
+                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
+                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
+                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
+                      <div style={card({ padding: "13px 15px", border: COLORS.borderSubtle })}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
                     </section>
                     <section>
                       <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>COMMAND PREVIEW</h3>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "15px 18px", border: "1px solid #23272F", borderRadius: "12px", background: "#0A0B0E", fontFamily: "var(--font-mono), monospace", fontSize: "13px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: "13px", ...card({ padding: "15px 18px", radius: "12px", border: "#23272F", background: COLORS.panelBgDark }) }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "#5B6273" }}>$</span><span style={{ color: "#8A90A0" }}>{selCdCommand}</span></div>
                         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "#C7CCD8" }}>{selCommand}</span></div>
                       </div>
@@ -1137,7 +1105,7 @@ export default function TicketExecutor() {
                         <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>PAST RUNS</h3>
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                           {history[t.id].map((run) => (
-                            <button key={run.id} onClick={(e) => openRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", padding: "10px 13px", border: "1px solid #1E232C", borderRadius: "10px", background: "#111419", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s" }}>
+                            <button key={run.id} onClick={(e) => openRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s", ...card({ padding: "10px 13px", border: COLORS.borderSubtle }) }}>
                               <span style={{ ...execDot(run.status), width: "8px", height: "8px" }} />
                               <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", flex: "0 0 auto" }}>{run.skillName}</span>
                               <span style={{ fontSize: "12px", color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
@@ -1147,12 +1115,12 @@ export default function TicketExecutor() {
                         </div>
                       </section>
                     )}
-                    <div style={{ display: "flex", alignItems: "center", gap: "16px", padding: "20px 22px", border: "1px solid #2A2018", borderRadius: "14px", background: "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard("accent", { padding: "20px 22px", radius: "14px" }) }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
                         <div style={{ fontSize: "13px", color: "#9A9FAD" }}>{ctaSub}</div>
                       </div>
-                      <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={ctaButtonStyle}>
+                      <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={bannerCtaStyle}>
                         {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
                         {action.spinner && <span style={{ width: "15px", height: "15px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
                         {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
@@ -1187,7 +1155,7 @@ export default function TicketExecutor() {
                           </div>
                         ))}
                       </div>
-                      <div style={{ position: "relative", flex: 1, minWidth: 0, border: "1.5px solid transparent", borderRadius: "13px", overflow: "hidden", background: "linear-gradient(#0A0B0E,#0A0B0E) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 40%) border-box", boxShadow: "0 24px 60px -34px #000", animation: "spinAngle 5.5s linear infinite" }}>
+                      <div style={{ position: "relative", flex: 1, minWidth: 0, borderRadius: "13px", overflow: "hidden", boxShadow: "0 24px 60px -34px #000", ...ringBorder({ fill: "#0A0B0E", duration: 5.5, shape: "none" }) }}>
                         <div style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", background: "repeating-linear-gradient(0deg,rgba(255,255,255,.016) 0px,rgba(255,255,255,.016) 1px,transparent 1px,transparent 3px)" }} />
                         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "1px", zIndex: 0, pointerEvents: "none", background: "linear-gradient(90deg,transparent,var(--accent),transparent)", opacity: 0.55 }} />
                         <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: "10px", padding: "11px 15px", borderBottom: "1px solid #1A1E25", background: "#0E1015" }}>
@@ -1208,7 +1176,7 @@ export default function TicketExecutor() {
                       </div>
                     </div>
                     {st === "failed" && ex?.error && (
-                      <div style={{ display: "flex", gap: "13px", alignItems: "flex-start", padding: "15px 18px", border: "1px solid #4A2626", borderRadius: "12px", background: "rgba(255,107,107,.06)" }}>
+                      <div style={{ display: "flex", gap: "13px", alignItems: "flex-start", ...tintedCard("danger") }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
                         <div><div style={{ fontSize: "13.5px", fontWeight: 700, color: "#FF8F8F", marginBottom: "3px" }}>Execution failed</div><div style={{ fontSize: "13px", color: "#C7A8A8", lineHeight: 1.55 }}>{ex.error}</div></div>
                       </div>
@@ -1218,20 +1186,52 @@ export default function TicketExecutor() {
 
                 {showResult && ex && (
                   <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .35s both" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "14px", padding: "16px 18px", border: "1px solid #24382F", borderRadius: "13px", background: "linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02))" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard("success", { padding: "16px 18px", radius: "13px" }) }}>
                       <span style={{ flex: "0 0 auto", width: "40px", height: "40px", borderRadius: "11px", background: "rgba(53,214,164,.14)", border: "1px solid #35D6A4", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#35D6A4" strokeWidth="2.6"><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .6s .2s ease forwards" }} /></svg></span>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9" }}>Implementation complete</div>
                         <div style={{ fontSize: "12.5px", color: "#8A90A0", marginTop: "2px" }}>Finished{ex.duration ? <> in <span style={{ color: "#C7CCD8", fontWeight: 600 }}>{ex.duration}</span></> : ""} · Claude Code output below</div>
                       </div>
                       {ex.branch && (
-                        <span title="Branch" style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#9BA6E8", padding: "5px 10px", borderRadius: "999px", background: "rgba(155,166,232,.08)", border: "1px solid #2E3450", maxWidth: "220px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                        <span
+                          title="Branch"
+                          style={{
+                            fontFamily: "var(--font-mono), monospace",
+                            maxWidth: "220px",
+                            overflow: "hidden",
+                            whiteSpace: "nowrap",
+                            textOverflow: "ellipsis",
+                            ...pill({ color: COLORS.indigo, background: "rgba(155,166,232,.08)", border: "#2E3450", size: "md" }),
+                            gap: "6px",
+                            padding: "5px 10px",
+                            fontWeight: 400,
+                          }}
+                        >
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flex: "0 0 auto" }}><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="8" r="2.5" /><path d="M6 8.5v7M18 10.5c0 3-3 3.5-6 3.5" /></svg>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{ex.branch}</span>
                         </span>
                       )}
                       {ex.prUrl && (
-                        <a href={ex.prUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => fireBoltFromEvent(e as unknown as MouseEvent, { color: "#35D6A4" })} style={{ flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: "7px", height: "32px", padding: "0 14px", textDecoration: "none", border: "1.5px solid transparent", background: "linear-gradient(rgba(53,214,164,.14),rgba(53,214,164,.14)) padding-box, conic-gradient(from var(--angle), transparent, #35D6A4, #baf5e3, #35D6A4, transparent 70%) border-box", color: "#5BE8B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", clipPath: cutClip, animation: "spinAngle 3s linear infinite" }}>
+                        <a
+                          href={ex.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => fireBoltFromEvent(e as unknown as MouseEvent, { color: "#35D6A4" })}
+                          style={{
+                            flex: "0 0 auto",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "7px",
+                            height: "32px",
+                            padding: "0 14px",
+                            textDecoration: "none",
+                            color: "#5BE8B8",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            ...ringBorder({ fill: "rgba(53,214,164,.14)", ring: COLORS.success, highlight: "#baf5e3", duration: 3 }),
+                          }}
+                        >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>
                           Open PR
                         </a>
@@ -1261,7 +1261,7 @@ export default function TicketExecutor() {
           <div style={{ width: "540px", maxWidth: "100%", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 22px", borderBottom: "1px solid #1E232C" }}>
               <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "16px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Connect your work-tracking provider &amp; execution defaults</div></div>
-              <button onClick={closeSettings} style={{ width: "26px", height: "26px", border: "1.5px solid transparent", background: "linear-gradient(#1A1E25,#1A1E25) padding-box,conic-gradient(from var(--angle),transparent,var(--accent),transparent 60%) border-box", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", clipPath: "polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)", animation: "spinAngle 4s linear infinite" }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+              <button onClick={closeSettings} style={{ width: "26px", height: "26px", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
             <div style={{ padding: "22px", display: "flex", flexDirection: "column", gap: "16px" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={onProviderChange} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
@@ -1281,7 +1281,7 @@ export default function TicketExecutor() {
               </div>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
               {settingsError && (
-                <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", padding: "11px 13px", border: "1px solid #4A2626", borderRadius: "10px", background: "rgba(255,107,107,.06)" }}>
+                <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
                   <span style={{ fontSize: "12.5px", color: "#FF8F8F", lineHeight: 1.5 }}>{settingsError}</span>
                 </div>
@@ -1289,7 +1289,7 @@ export default function TicketExecutor() {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "18px 22px", borderTop: "1px solid #1E232C", background: "#101318" }}>
               <button onClick={closeSettings} style={{ height: "32px", padding: "0 16px", border: "1.5px solid #2A2F3A", background: "transparent", color: "#C7CCD8", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", transition: "border-color .15s,color .15s,transform .12s" }}>Cancel</button>
-              <button onClick={saveSettings} style={{ height: "32px", padding: "0 18px", border: "1.5px solid transparent", background: "linear-gradient(var(--accent),var(--accent)) padding-box,conic-gradient(from var(--angle),transparent,#ffe4d8,transparent 55%) border-box", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", animation: "spinAngle 3s linear infinite" }}>Save changes</button>
+              <button onClick={saveSettings} style={{ height: "32px", padding: "0 18px", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
             </div>
           </div>
         </div>
