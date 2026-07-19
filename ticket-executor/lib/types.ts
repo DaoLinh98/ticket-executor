@@ -33,3 +33,43 @@ export type Execution = {
   startedAt: string;
   completedAt: string | null;
 };
+
+export type PullRequestOverview = {
+  id: string;
+  url: string;
+  title: string;
+  status: string; // Active | Approved | Changes requested | Completed | Abandoned
+  branch: string;
+  targetBranch: string;
+  author: string;
+  reviewers: string[];
+  createdAt: string; // ISO
+};
+
+export type ReviewComment = {
+  id: string;
+  threadId: number;
+  author: string;
+  text: string;
+  filePath?: string;
+  line?: number;
+  status: "open" | "resolved";
+  date: string;
+};
+
+export type ReviewData = {
+  pr: PullRequestOverview | null;
+  comments: ReviewComment[];
+  unresolvedCount: number;
+};
+
+export type ReviewSummaryEntry = {
+  ticketId: string;
+  prId: string;
+  prUrl: string;
+  prTitle: string;
+  reviewer: string;
+  unresolvedCount: number;
+  latestComment: string;
+  latestAt: string;
+};

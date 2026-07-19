@@ -5,13 +5,15 @@ import * as THREE from "three";
 
 declare global {
   interface Window {
-    __reactor?: { setMode: (m: string) => void };
+    __reactor?: { setMode: (m: string) => void; setFrozen: (frozen: boolean) => void };
   }
 }
 
 // Ported from the prototype's initReactor() — the animated WebGL background.
-export default function Reactor({ accent = "#FB7250" }: { accent?: string }) {
+export default function Reactor({ accent = "#FB7250", frozen = false }: { accent?: string; frozen?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frozenRef = useRef(frozen);
+  frozenRef.current = frozen;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -184,6 +186,9 @@ export default function Reactor({ accent = "#FB7250" }: { accent?: string }) {
           stt.flash = 1;
         } else stt.target = 1;
       },
+      setFrozen(f: boolean) {
+        frozenRef.current = f;
+      },
     };
 
     let mx = 0,
@@ -197,6 +202,10 @@ export default function Reactor({ accent = "#FB7250" }: { accent?: string }) {
     const timer = new THREE.Timer();
     let raf = 0;
     const tick = () => {
+      if (frozenRef.current) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
       timer.update();
       const t = timer.getElapsed();
       stt.speed += (stt.target - stt.speed) * 0.045;

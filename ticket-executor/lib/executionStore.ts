@@ -82,7 +82,7 @@ function commonArgs(): string[] {
 // Map a tool call to the furthest workflow step it implies (index into STEPS), or -1.
 function stepForTool(name: string, input: Record<string, unknown>): number {
   const n = name.toLowerCase();
-  if (n.includes("ado") || n.includes("azure") || n.includes("workitem")) return 1; // Read ticket
+  if (n.includes("ado") || n.includes("azure") || n.includes("workitem") || n.includes("github") || n.includes("gitlab") || n.includes("issue")) return 1; // Read ticket
   const cmd = typeof input?.command === "string" ? (input.command as string).toLowerCase() : "";
   if (n === "bash" && cmd) {
     if (/git\s+(checkout\s+-b|switch\s+-c|branch\b)/.test(cmd)) return 2; // Create branch
@@ -296,12 +296,18 @@ export async function startExecution(params: {
   skill: string;
   project: string;
   rootRepo: string;
+  prUrl?: string;
+  provider?: string;
 }): Promise<string> {
   const ticketId = cleanPath(params.ticketId);
   const skill = cleanPath(params.skill);
   const project = cleanPath(params.project);
   const rootRepo = cleanPath(params.rootRepo);
-  const prompt = `/${skill} ID: ${ticketId} - Project name: ${project}`;
+  const prUrl = params.prUrl ? cleanPath(params.prUrl) : "";
+  const provider = cleanPath(params.provider || "azure-devops");
+  const prompt = prUrl
+    ? `/${skill} Provider: ${provider} - PR: ${prUrl} - Ticket ID: ${ticketId} - Project name: ${project}`
+    : `/${skill} Provider: ${provider} - ID: ${ticketId} - Project name: ${project}`;
   const command = `cd ${rootRepo} && claude -p "${prompt}"`;
 
   const row = await prisma.execution.create({

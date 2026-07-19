@@ -16,6 +16,7 @@ model Setting {
   rootRepo       String   @default("C:\\repos")
   defaultProject String   @default("")
   sprint         String   @default("")
+  animatedBackground Boolean @default(true)
   updatedAt      DateTime @updatedAt
 }
 

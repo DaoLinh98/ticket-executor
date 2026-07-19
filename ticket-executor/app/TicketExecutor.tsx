@@ -8,7 +8,7 @@ import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
 import SprintPicker, { type IterationOption } from "./SprintPicker";
-import type { ExecStatus, LogLine, Ticket, TicketComment } from "@/lib/types";
+import type { ExecStatus, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
 import {
   COLORS,
@@ -39,10 +39,12 @@ const ACCENT = COLORS.accent;
 const DEFAULT_SKILL = "implement-ticket-v2";
 
 // Result-tab section split: order implementation before review, with friendly titles.
-const RESULT_SKILL_ORDER = ["implement-ticket-v2", "senior-code-review"];
+// "senior-code-review" section disabled along with the run code-review feature below.
+const RESULT_SKILL_ORDER = ["implement-ticket-v2", /* "senior-code-review", */ "fix-code-review-v2"];
 const RESULT_SKILL_TITLE: Record<string, string> = {
   "implement-ticket-v2": "Implementation",
-  "senior-code-review": "Code Review",
+  // "senior-code-review": "Code Review",
+  "fix-code-review-v2": "Fix Code Review",
 };
 
 // Suggested skills for the Overview combobox — free text is still allowed.
@@ -50,7 +52,7 @@ const SKILL_OPTIONS = [
   "implement-ticket-v2",
   "fix-issue",
   "fix-code-review",
-  "senior-code-review",
+  // "senior-code-review", // run code-review feature disabled for now
   "testing-report",
   "review-re-estimate-ado-tickets",
   "tackle-requirement",
@@ -89,6 +91,7 @@ type SettingsView = {
   rootRepo: string;
   defaultProject: string;
   sprint: string;
+  animatedBackground: boolean;
 };
 
 // Heuristic: derive how many of the 7 steps a running log has reached.
@@ -125,6 +128,19 @@ function renderCommentBody(text: string) {
   ));
 }
 
+// Format an ISO date as a short relative label ("2 days ago") for the PR overview.
+function timeAgo(iso: string): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 export default function TicketExecutor() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loadError, setLoadError] = useState<string>("");
@@ -134,7 +150,7 @@ export default function TicketExecutor() {
   const [selectedSprint, setSelectedSprint] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
-  const [tab, setTab] = useState<"overview" | "execution" | "result">("overview");
+  const [tab, setTab] = useState<"overview" | "execution" | "resolve-review" | "result">("overview");
   const [search, setSearch] = useState("");
   const [fStatus, setFStatus] = useState("");
   const [fType, setFType] = useState("");
@@ -159,7 +175,13 @@ export default function TicketExecutor() {
     rootRepo: "C:\\repos",
     defaultProject: "",
     sprint: "",
+    animatedBackground: true,
   });
+  const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
+  const [reviewReadMap, setReviewReadMap] = useState<Record<string, { count: number; readAt: string }>>({});
+  const [bellOpen, setBellOpen] = useState(false);
+  const bellRef = useRef<HTMLDivElement>(null);
 
   const { bolts, flashes, fireBolt, fireBoltFromEvent, statusBoltAnchor } = useBolts();
   const logRef = useRef<HTMLDivElement>(null);
@@ -295,6 +317,87 @@ export default function TicketExecutor() {
   useEffect(() => {
     if (selectedId) loadComments(selectedId, settings.provider);
   }, [selectedId, settings.provider, loadComments]);
+
+  // Fetch (or refetch) the Resolve Review data for one ticket — the linked PR
+  // overview plus its open/resolved review-comment threads.
+  const loadReview = useCallback(async (ticketId: string, provider: ProviderId) => {
+    if (!ticketId) return;
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/review?provider=${provider}`);
+      const data = await r.json();
+      setReviews((s) => ({ ...s, [ticketId]: data.review ?? { pr: null, comments: [], unresolvedCount: 0 } }));
+    } catch {
+      /* ignore — Resolve Review tab shows the empty state */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedId && !reviews[selectedId]) loadReview(selectedId, settings.provider);
+  }, [selectedId, settings.provider, reviews, loadReview]);
+
+  // Review data can go stale the moment new comments land on the PR upstream —
+  // force a fresh fetch every time the Resolve Review tab is (re)opened.
+  useEffect(() => {
+    if (selectedId && tab === "resolve-review") loadReview(selectedId, settings.provider);
+  }, [selectedId, tab, settings.provider, loadReview]);
+
+  // Load the bell's read/unread bookkeeping (persisted across reloads).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("reviewReadMap");
+      if (raw) setReviewReadMap(JSON.parse(raw));
+    } catch {
+      /* ignore corrupt storage */
+    }
+  }, []);
+
+  // Mark a bell notification as read up to its current unresolved-comment count.
+  const markReviewRead = useCallback((rv: ReviewSummaryEntry) => {
+    setReviewReadMap((prev) => {
+      const next = { ...prev, [rv.ticketId]: { count: rv.unresolvedCount, readAt: new Date().toISOString() } };
+      try {
+        localStorage.setItem("reviewReadMap", JSON.stringify(next));
+      } catch {
+        /* ignore quota errors */
+      }
+      return next;
+    });
+  }, []);
+
+  // Poll the bell's unresolved-review-comment summary across every loaded ticket.
+  useEffect(() => {
+    if (tickets.length === 0) {
+      setReviewSummary([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchSummary = async () => {
+      try {
+        const ids = tickets.map((tk) => tk.id).join(",");
+        const r = await fetch(`/api/reviews/summary?provider=${settings.provider}&ids=${ids}`);
+        const data = await r.json();
+        if (!cancelled) setReviewSummary(Array.isArray(data.reviews) ? data.reviews : []);
+      } catch {
+        /* keep last known summary */
+      }
+    };
+    fetchSummary();
+    const id = setInterval(fetchSummary, 45000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tickets, settings.provider]);
+
+  // Close the bell dropdown on outside click.
+  useEffect(() => {
+    if (!bellOpen) return;
+    const onDoc = (e: globalThis.MouseEvent) => {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [bellOpen]);
 
   // Open a past run (from DB) in the viewer.
   const openRun = useCallback(async (ticketId: string, execId: string, e?: MouseEvent) => {
@@ -444,6 +547,14 @@ export default function TicketExecutor() {
               showToast(`#${ticketId} failed`);
               notify("Ticket Executor", `#${ticketId} failed`);
             }
+            // A fix-code-review-v2 run resolves PR threads itself — refetch
+            // the Resolve Review data so the tab reflects the new state.
+            if (ex.skillName === "fix-code-review-v2") {
+              setReviews((s) => {
+                const { [ticketId]: _drop, ...rest } = s;
+                return rest;
+              });
+            }
             loadHistory(ticketId);
           }
         } catch {
@@ -456,8 +567,64 @@ export default function TicketExecutor() {
     [showToast, loadHistory, notify]
   );
 
+  // Rehydrate a ticket's exec state from its most recent execution row —
+  // covers the case where the page reloaded (or the ticket is reselected)
+  // after a run finished, so the CTA/result tab don't forget it happened.
+  const hydrateExecution = useCallback(
+    async (ticketId: string, executionId: string, skillNameHint?: string) => {
+      try {
+        const r = await fetch(`/api/executions/${executionId}`);
+        const data = await r.json();
+        const ex = data.execution;
+        if (!ex) return;
+        setExecs((s) => ({
+          ...s,
+          [ticketId]: {
+            executionId,
+            status: ex.status,
+            skillName: ex.skillName ?? skillNameHint,
+            logLines: ex.logLines ?? [],
+            resultText: ex.resultText ?? "",
+            resultsBySkill: ex.resultText
+              ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket-v2"]: ex.resultText }
+              : s[ticketId]?.resultsBySkill,
+            error: ex.errorMessage ?? "",
+            prUrl: ex.prUrl ?? "",
+            branch: ex.branch ?? "",
+            duration: ex.duration,
+            currentStep: ex.currentStep,
+          },
+        }));
+        if (ex.status === "running") {
+          startPolling(ticketId, executionId);
+        } else if (ex.status === "completed") {
+          const next = nextStatusAfter(ex.skillName ?? skillNameHint ?? "", "");
+          if (next) setStatusOverrides((so) => (so[ticketId] ? so : { ...so, [ticketId]: next }));
+        }
+      } catch {
+        /* ignore — CTA just stays in its default state */
+      }
+    },
+    [startPolling]
+  );
+
+  // Once a ticket's history has loaded, hydrate its exec state so we don't
+  // have to have been present for a run to know it happened: prefer an
+  // in-progress run (resume polling it), else any completed run that has a
+  // PR link — the newest record's own status doesn't matter for that check
+  // (a completed run with a PR is "done" even if a later retry failed).
+  useEffect(() => {
+    if (!selectedId) return;
+    const list = history[selectedId];
+    if (!list || execs[selectedId]) return;
+    const running = list.find((r) => r.status === "running");
+    const completedWithPr = list.find((r) => r.status === "completed" && r.prUrl);
+    const target = running ?? completedWithPr ?? list[0];
+    if (target) hydrateExecution(selectedId, target.id, target.skillName);
+  }, [selectedId, history, execs, hydrateExecution]);
+
   const startImplement = useCallback(
-    async (e?: MouseEvent, skillOverride?: string) => {
+    async (e?: MouseEvent, skillOverride?: string, prUrl?: string) => {
       fireBoltFromEvent(e, { big: true });
       const t = tickets.find((x) => x.id === selectedId);
       if (!t) return;
@@ -490,6 +657,8 @@ export default function TicketExecutor() {
             projectName: getArea(t),
             rootRepo: getRootRepo(t),
             title: t.title,
+            provider: settings.provider,
+            ...(prUrl ? { prUrl } : {}),
           }),
         });
         const data = await r.json();
@@ -622,6 +791,10 @@ export default function TicketExecutor() {
   // ---- derived ----
   const execStatusOf = (id: string): ExecStatus => execs[id]?.status ?? "not started";
   const activeCount = Object.values(execs).filter((e) => e.status === "running").length;
+  const reviewBadgeCount = reviewSummary.reduce(
+    (sum, r) => sum + Math.max(0, r.unresolvedCount - (reviewReadMap[r.ticketId]?.count ?? 0)),
+    0
+  );
 
   const q = search.trim().toLowerCase();
   const statusOptions = Array.from(new Set(tickets.map((x) => getStatus(x)).filter(Boolean)));
@@ -695,6 +868,14 @@ export default function TicketExecutor() {
       onClick: (e) => { fireBoltFromEvent(e); setTab("result"); },
       style: ctaButtonStyle("success"),
     };
+  else if (st === "failed" && ex?.skillName === "fix-code-review-v2")
+    action = {
+      label: "Retry Fix Code Review",
+      spinner: false,
+      playIcon: true,
+      onClick: (e) => startImplement(e, "fix-code-review-v2", t ? reviews[t.id]?.pr?.url : undefined),
+      style: ctaButtonStyle("primary"),
+    };
   else if (st === "failed")
     action = {
       label: `Retry ${actionInfo?.label ?? "Implement Ticket"}`, spinner: false, playIcon: true, onClick: startImplement,
@@ -712,8 +893,11 @@ export default function TicketExecutor() {
     action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
   // Gate: a run can only start when the effective status maps to an action.
+  // Exception: retrying a failed fix-code-review-v2 run is always valid — it
+  // isn't driven by ticket status, so it must bypass the status-based gate.
+  const isFixReviewRetry = st === "failed" && ex?.skillName === "fix-code-review-v2";
   const startsNewRun = st === "not started" || st === "failed";
-  const gated = !!t && startsNewRun && !actionInfo;
+  const gated = !!t && startsNewRun && !actionInfo && !isFixReviewRetry;
   if (gated) {
     const reason = `Ticket status "${effStatus}" has no runnable action yet.`;
     action.onClick = (e) => {
@@ -805,7 +989,7 @@ export default function TicketExecutor() {
   const selProject = t ? getArea(t) : "";
   const selBranch = t ? branchOf(t.id, t.title) : "";
   const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
-  const selCdCommand = t ? `cd ${getRootRepo(t)}\\${getArea(t)} && claude` : "";
+  const selCdCommand = t ? `cd ${getRootRepo(t)} && claude` : "";
   const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),
@@ -819,6 +1003,11 @@ export default function TicketExecutor() {
   const resultSections = Object.keys(resultsBySkill)
     .sort((a, b) => RESULT_SKILL_ORDER.indexOf(a) - RESULT_SKILL_ORDER.indexOf(b))
     .map((sk) => ({ key: sk, title: RESULT_SKILL_TITLE[sk] || sk, markdown: resultsBySkill[sk] }));
+
+  const EMPTY_REVIEW: ReviewData = { pr: null, comments: [], unresolvedCount: 0 };
+  const ticketReview: ReviewData = t ? reviews[t.id] ?? EMPTY_REVIEW : EMPTY_REVIEW;
+  const fixReviewRunning = st === "running" && ex?.skillName === "fix-code-review-v2";
+  const fixReviewDisabled = ticketReview.unresolvedCount === 0 || (st === "running" && !fixReviewRunning);
   const showResultSectionHeader = resultSections.length > 1;
   const showResult = tab === "result" && resultSections.length > 0;
 
@@ -841,7 +1030,7 @@ export default function TicketExecutor() {
         overflow: "hidden", ["--accent" as string]: ACCENT,
       }}
     >
-      <Reactor accent={ACCENT} />
+      <Reactor accent={ACCENT} frozen={!settings.animatedBackground} />
       <BoltLayer bolts={bolts} flashes={flashes} />
 
       {/* Header */}
@@ -859,6 +1048,49 @@ export default function TicketExecutor() {
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
           <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
+        </div>
+        <div ref={bellRef} style={{ position: "relative" }}>
+          <button
+            onClick={(e) => { fireBoltFromEvent(e as unknown as MouseEvent); setBellOpen((o) => !o); }}
+            title="Unresolved review comments"
+            style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: "30px", height: "30px", color: reviewBadgeCount > 0 ? "var(--accent)" : "#8A90A0", cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: reviewBadgeCount > 0 ? "rgba(251,114,80,.14)" : "#14171D", duration: 3.4, cornerPx: 7 }) }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+            {reviewBadgeCount > 0 && (
+              <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{reviewBadgeCount}</span>
+            )}
+          </button>
+          {bellOpen && (
+            <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "340px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "360px" }) }}>
+              {reviewSummary.length === 0 && (
+                <div style={{ padding: "16px 12px", fontSize: "12.5px", color: "#5B6273", textAlign: "center" }}>No unresolved review comments.</div>
+              )}
+              {reviewSummary.map((rv) => {
+                const readEntry = reviewReadMap[rv.ticketId];
+                const unread = Math.max(0, rv.unresolvedCount - (readEntry?.count ?? 0));
+                const isUnread = unread > 0;
+                return (
+                  <button
+                    key={rv.ticketId}
+                    onClick={(e) => { markReviewRead(rv); selectTicket(rv.ticketId, e); setTab("resolve-review"); setBellOpen(false); }}
+                    style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%", textAlign: "left", padding: "10px 11px", borderRadius: "9px", border: "none", cursor: "pointer", background: isUnread ? "rgba(251,114,80,.08)" : "transparent", marginBottom: "2px" }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isUnread ? "var(--accent)" : "transparent", flex: "0 0 auto" }} />
+                      <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 700, color: isUnread ? "var(--accent)" : "#6B7283" }}>#{rv.ticketId}</span>
+                      <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 700, color: isUnread ? "#E4E7EE" : "#6B7283" }}>PR #{rv.prId}</span>
+                    </div>
+                    <div style={{ fontSize: "12px", color: isUnread ? "#9A9FAD" : "#5B6273", lineHeight: 1.5, paddingLeft: "13px" }}>
+                      {rv.reviewer} left {rv.unresolvedCount} review comment{rv.unresolvedCount === 1 ? "" : "s"} — {rv.prTitle}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#5B6273", lineHeight: 1.4, paddingLeft: "13px" }}>
+                      {isUnread ? rv.latestAt : `Read ${timeAgo(readEntry!.readAt)}`}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <button onClick={openSettings} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px 0 11px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
@@ -1030,6 +1262,12 @@ export default function TicketExecutor() {
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
                   <button onClick={() => setTab("overview")} style={tabStyle("overview", true)}>Overview</button>
                   <button onClick={() => execEnabled && setTab("execution")} style={tabStyle("execution", execEnabled)}>Execution</button>
+                  <button onClick={() => setTab("resolve-review")} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
+                    Resolve Review
+                    {ticketReview.unresolvedCount > 0 && (
+                      <span style={{ ...pill({ color: "#0B0C10", background: "var(--accent)", size: "xs", weight: 700 }), padding: "1px 6px" }}>{ticketReview.unresolvedCount}</span>
+                    )}
+                  </button>
                   <button onClick={() => resultEnabled && setTab("result")} style={tabStyle("result", resultEnabled)}>Result</button>
                   <div style={{ flex: 1 }} />
                   <div style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
@@ -1184,6 +1422,83 @@ export default function TicketExecutor() {
                   </div>
                 )}
 
+                {tab === "resolve-review" && (
+                  <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "22px", animation: "fadeUp .35s both" }}>
+                    {!ticketReview.pr ? (
+                      <div style={{ color: "#5B6273", fontSize: "13.5px", ...card({ padding: "22px" }) }}>
+                        No pull request linked to this ticket yet.
+                      </div>
+                    ) : (
+                      <>
+                        <section style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "10px" }}>
+                          <div style={card()}>
+                            <div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PULL REQUEST</div>
+                            <a href={ticketReview.pr.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#9BA6E8", textDecoration: "none" }}>
+                              PR #{ticketReview.pr.id} — {ticketReview.pr.branch}
+                            </a>
+                          </div>
+                          <div style={card()}>
+                            <div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>STATUS</div>
+                            <span style={statusPill(ticketReview.pr.status)}>{ticketReview.pr.status}</span>
+                          </div>
+                          <div style={card()}>
+                            <div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>CREATED</div>
+                            <div style={{ fontSize: "12.5px", color: "#C7CCD8" }}>{timeAgo(ticketReview.pr.createdAt)}</div>
+                          </div>
+                        </section>
+                        <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                          <div style={card()}>
+                            <div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>AUTHOR</div>
+                            <span style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#E4E7EE" }}><span style={avatar(ticketReview.pr.author)}>{initials(ticketReview.pr.author)}</span>{ticketReview.pr.author}</span>
+                          </div>
+                          <div style={card()}>
+                            <div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>REVIEWER</div>
+                            <span style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#E4E7EE" }}>
+                              {ticketReview.pr.reviewers[0] ? (<><span style={avatar(ticketReview.pr.reviewers[0])}>{initials(ticketReview.pr.reviewers[0])}</span>{ticketReview.pr.reviewers[0]}</>) : "Unassigned"}
+                            </span>
+                          </div>
+                        </section>
+                        {ticketReview.comments.length > 0 && (
+                          <section>
+                            <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>REVIEW COMMENTS</h3>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
+                              {ticketReview.comments.map((c) => (
+                                <div key={c.id} style={{ ...card({ padding: "12px 14px", border: c.status === "open" ? "#4A2626" : COLORS.borderSubtle, background: c.status === "open" ? "rgba(255,107,107,.05)" : COLORS.panelBg }), opacity: c.status === "resolved" ? 0.6 : 1 }}>
+                                  <div style={{ display: "flex", alignItems: "baseline", gap: "9px", flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: "13px", fontWeight: 700, color: "#E4E7EE" }}>{c.author}</span>
+                                    {c.filePath && <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#6B7283" }}>{c.filePath}{c.line ? `:${c.line}` : ""}</span>}
+                                    {c.status === "resolved" && <span style={{ ...pill({ color: COLORS.success, size: "xs" }) }}>Resolved</span>}
+                                  </div>
+                                  <div style={{ fontSize: "13.5px", lineHeight: 1.6, color: "#C7CCD8", marginTop: "5px" }}>{c.text}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+                        <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard(ticketReview.unresolvedCount > 0 ? "danger" : "success", { padding: "18px 20px", radius: "13px" }) }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "14.5px", fontWeight: 700, color: "#F3F5F9" }}>
+                              {ticketReview.unresolvedCount > 0 ? "Unresolved review comments" : "All review comments resolved"}
+                            </div>
+                            <div style={{ fontSize: "13px", color: "#9A9FAD", marginTop: "2px" }}>
+                              {ticketReview.unresolvedCount > 0 ? `${ticketReview.unresolvedCount} issue(s) to fix from the code review.` : "Nothing left to fix on this PR."}
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => startImplement(e, "fix-code-review-v2", ticketReview.pr!.url)}
+                            disabled={fixReviewDisabled}
+                            style={{ ...ctaButtonStyle(fixReviewDisabled ? "outline" : "primary"), height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto", opacity: fixReviewDisabled ? 0.5 : 1, cursor: fixReviewDisabled ? "not-allowed" : "pointer" }}
+                          >
+                            {fixReviewRunning && <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite" }} />}
+                            {!fixReviewRunning && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z" /></svg>}
+                            <span>{fixReviewRunning ? "Running…" : "Fix Code Review"}</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {showResult && ex && (
                   <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .35s both" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard("success", { padding: "16px 18px", radius: "13px" }) }}>
@@ -1229,7 +1544,10 @@ export default function TicketExecutor() {
                             fontSize: "12px",
                             fontWeight: 700,
                             cursor: "pointer",
-                            ...ringBorder({ fill: "rgba(53,214,164,.14)", ring: COLORS.success, highlight: "#baf5e3", duration: 3 }),
+                            // Opaque fill so the spinning conic-gradient stays confined to the
+                            // border ring, matching the subtle tab/CTA glow instead of bleeding
+                            // through the translucent fill as a harsh diagonal sweep.
+                            ...ringBorder({ fill: "#162F2C", ring: COLORS.success, highlight: "#baf5e3", duration: 3 }),
                           }}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>
@@ -1280,6 +1598,32 @@ export default function TicketExecutor() {
                 )}
               </div>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
+              <div style={{ height: "1px", background: "#1E232C" }} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+                <div>
+                  <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Animated background</div>
+                  <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Turn off to freeze the 3D reactor backdrop.</div>
+                </div>
+                <button
+                  onClick={() => setSettings((s) => ({ ...s, animatedBackground: !s.animatedBackground }))}
+                  aria-pressed={settings.animatedBackground}
+                  title="Toggle animated background"
+                  style={{
+                    position: "relative", flex: "0 0 auto", width: "42px", height: "24px", borderRadius: "999px",
+                    border: "none", cursor: "pointer",
+                    background: settings.animatedBackground ? "var(--accent)" : "#2A2F3A",
+                    transition: "background .18s",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute", top: "3px", left: settings.animatedBackground ? "21px" : "3px",
+                      width: "18px", height: "18px", borderRadius: "50%", background: "#0B0C10",
+                      transition: "left .18s",
+                    }}
+                  />
+                </button>
+              </div>
               {settingsError && (
                 <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>

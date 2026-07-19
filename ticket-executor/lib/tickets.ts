@@ -1,6 +1,6 @@
-import type { Ticket, TicketComment } from "./types";
-import { getSprintTickets, getWorkItemComments } from "./ado";
-import { getGithubIssues } from "./github";
+import type { Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
+import { getSprintTickets, getWorkItemComments, getPullRequestReview } from "./ado";
+import { getGithubIssues, getGithubPullRequestReview } from "./github";
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
@@ -49,6 +49,61 @@ export async function loadTickets(provider: ProviderId, sprintOverride?: string)
 export async function loadTicketComments(provider: ProviderId, id: string): Promise<TicketComment[]> {
   if (provider === "azure-devops") return getWorkItemComments(id);
   return [];
+}
+
+// Load the PR review overview + comments for a single ticket. Azure DevOps and
+// GitHub are wired; other providers report no linked PR (Resolve Review tab
+// stays empty).
+export async function loadReview(provider: ProviderId, ticketId: string): Promise<ReviewData> {
+  if (provider === "azure-devops") return getPullRequestReview(ticketId);
+  if (provider === "github") return loadGithubReview(ticketId);
+  return { pr: null, comments: [], unresolvedCount: 0 };
+}
+
+// GitHub has no work-item-to-PR link API like ADO — reuse the PR URL recorded
+// on the ticket's most recent execution (see `Execution.prUrl`) instead.
+async function loadGithubReview(ticketId: string): Promise<ReviewData> {
+  const s = await prisma.setting.findUnique({ where: { id: "default" } });
+  const token = decryptSecret(s?.pat);
+  if (!token) return { pr: null, comments: [], unresolvedCount: 0 };
+  const exec = await prisma.execution.findFirst({
+    where: { adoTicketId: ticketId, NOT: { prUrl: "" } },
+    orderBy: { startedAt: "desc" },
+    select: { prUrl: true },
+  });
+  if (!exec?.prUrl) return { pr: null, comments: [], unresolvedCount: 0 };
+  return getGithubPullRequestReview(exec.prUrl, token);
+}
+
+// Aggregate unresolved-review-comment counts across a set of tickets, for the
+// header bell. Only tickets with a linked PR and open comments are returned.
+export async function loadReviewsSummary(
+  provider: ProviderId,
+  ticketIds: string[]
+): Promise<ReviewSummaryEntry[]> {
+  if (provider !== "azure-devops" && provider !== "github") return [];
+  const loadOne = provider === "azure-devops" ? getPullRequestReview : loadGithubReview;
+  const results = await Promise.allSettled(
+    ticketIds.map(async (id) => ({ id, review: await loadOne(id) }))
+  );
+  const entries: ReviewSummaryEntry[] = [];
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    const { id, review } = r.value;
+    if (!review.pr || review.unresolvedCount === 0) continue;
+    const latest = [...review.comments].reverse().find((c) => c.status === "open");
+    entries.push({
+      ticketId: id,
+      prId: review.pr.id,
+      prUrl: review.pr.url,
+      prTitle: review.pr.title,
+      reviewer: latest?.author ?? review.pr.reviewers[0] ?? "",
+      unresolvedCount: review.unresolvedCount,
+      latestComment: latest?.text ?? "",
+      latestAt: latest?.date ?? "",
+    });
+  }
+  return entries;
 }
 
 function parseRepoLabel(url: string): string {

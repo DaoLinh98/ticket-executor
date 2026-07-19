@@ -65,7 +65,8 @@ export function canImplement(status: string): boolean {
 }
 
 // A ticket in the review lane can be code-reviewed.
-const REVIEWABLE_STATES = new Set(["code review", "in review"]);
+// Run code-review feature disabled for now — kept for a possible future reopen.
+// const REVIEWABLE_STATES = new Set(["code review", "in review"]);
 
 export type ActionInfo = { label: string; skill: string };
 
@@ -74,14 +75,14 @@ export type ActionInfo = { label: string; skill: string };
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
   if (IMPLEMENTABLE_STATES.has(s)) return { label: "Implement Ticket", skill: "implement-ticket-v2" };
-  if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
+  // if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
   return null;
 }
 
 // The status a ticket moves to once a given skill's run completes (simulated ADO sync).
 export function nextStatusAfter(skill: string, current: string): string {
   if (skill === "implement-ticket-v2") return "Code Review";
-  if (skill === "senior-code-review") return "Ready for QA";
+  // if (skill === "senior-code-review") return "Ready for QA";
   return current;
 }
 
@@ -268,7 +269,10 @@ export function ctaButtonStyle(
     return {
       ...base,
       color: "#5BE8B8",
-      ...ringBorder({ fill: "rgba(53,214,164,.14)", ring: COLORS.success, highlight: "#baf5e3", duration: 3, cornerPx }),
+      // Opaque fill (not the translucent rgba used for static success tints) — ringBorder's
+      // mask only hides the spinning conic-gradient inside the padding-box when that layer
+      // is fully opaque; a translucent fill lets the sweep bleed through the whole button.
+      ...ringBorder({ fill: "#162F2C", ring: COLORS.success, highlight: "#baf5e3", duration: 3, cornerPx }),
     };
   if (variant === "warning")
     return {

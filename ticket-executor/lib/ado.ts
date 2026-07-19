@@ -1,4 +1,4 @@
-import type { Ticket, TicketComment } from "./types";
+import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview } from "./types";
 
 const ORG = process.env.AZURE_DEVOPS_ORG ?? "";
 const PROJECT = process.env.AZURE_DEVOPS_PROJECT ?? "";
@@ -194,4 +194,111 @@ export async function getWorkItemComments(id: string): Promise<TicketComment[]> 
       text: htmlToText(c.text ?? ""),
     }))
     .filter((c) => c.text.length > 0);
+}
+
+// ---- Pull request review (Resolve Review tab) ----
+
+type ArtifactRelation = { rel?: string; url?: string };
+
+/** Resolve the PR linked to a work item via its "Pull Request" artifact link relation. */
+async function getLinkedPullRequestRef(
+  ticketId: string
+): Promise<{ repositoryId: string; prId: string } | null> {
+  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
+    ticketId
+  )}?$expand=relations&${API}`;
+  const data = await adoGet<{ relations?: ArtifactRelation[] }>(url);
+  for (const r of data.relations ?? []) {
+    if (r.rel !== "ArtifactLink" || !r.url) continue;
+    const m = r.url.match(/vstfs:\/\/\/Git\/PullRequestId\/[^%]+%2F([^%]+)%2F(\d+)/i);
+    if (m) return { repositoryId: m[1], prId: m[2] };
+  }
+  return null;
+}
+
+type RawReviewer = { displayName?: string; vote?: number };
+type RawPullRequest = {
+  pullRequestId: number;
+  title?: string;
+  status?: string;
+  createdBy?: { displayName?: string };
+  reviewers?: RawReviewer[];
+  sourceRefName?: string;
+  targetRefName?: string;
+  creationDate?: string;
+  repository?: { name?: string };
+};
+
+function prStatusLabel(raw: RawPullRequest): string {
+  const status = (raw.status ?? "").toLowerCase();
+  if (status === "completed") return "Completed";
+  if (status === "abandoned") return "Abandoned";
+  const reviewers = raw.reviewers ?? [];
+  if (reviewers.some((r) => (r.vote ?? 0) <= -5)) return "Changes requested";
+  if (reviewers.length && reviewers.every((r) => (r.vote ?? 0) >= 5)) return "Approved";
+  return "Active";
+}
+
+type RawThreadComment = {
+  id?: number;
+  content?: string;
+  commentType?: string;
+  isDeleted?: boolean;
+  author?: { displayName?: string };
+  publishedDate?: string;
+};
+type RawThread = {
+  id: number;
+  status?: string;
+  comments?: RawThreadComment[];
+  threadContext?: { filePath?: string; rightFileStart?: { line?: number } };
+};
+
+const RESOLVED_THREAD_STATUSES = new Set(["fixed", "closed", "wontfix"]);
+
+/** Fetch the PR (if any) linked to a work item, plus its review-comment threads. */
+export async function getPullRequestReview(ticketId: string): Promise<ReviewData> {
+  const ref = await getLinkedPullRequestRef(ticketId);
+  if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
+
+  const prApiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}?${API}`;
+  const raw = await adoGet<RawPullRequest>(prApiUrl);
+  const pr: PullRequestOverview = {
+    id: String(raw.pullRequestId),
+    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_git/${encodeURIComponent(
+      raw.repository?.name ?? ""
+    )}/pullrequest/${raw.pullRequestId}`,
+    title: raw.title ?? "",
+    status: prStatusLabel(raw),
+    branch: (raw.sourceRefName ?? "").replace(/^refs\/heads\//, ""),
+    targetBranch: (raw.targetRefName ?? "").replace(/^refs\/heads\//, ""),
+    author: raw.createdBy?.displayName ?? "Unknown",
+    reviewers: (raw.reviewers ?? []).map((r) => r.displayName ?? "").filter(Boolean),
+    createdAt: raw.creationDate ?? "",
+  };
+
+  const threadsUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}/threads?${API}`;
+  const threadsData = await adoGet<{ value?: RawThread[] }>(threadsUrl);
+  const comments: ReviewComment[] = [];
+  for (const th of threadsData.value ?? []) {
+    if (!th.threadContext) continue; // skip system threads (status/vote updates)
+    const first = (th.comments ?? []).find((c) => !c.isDeleted && c.commentType !== "system");
+    if (!first?.content) continue;
+    comments.push({
+      id: String(first.id ?? th.id),
+      threadId: th.id,
+      author: first.author?.displayName ?? "Unknown",
+      text: first.content,
+      filePath: th.threadContext.filePath,
+      line: th.threadContext.rightFileStart?.line,
+      status: RESOLVED_THREAD_STATUSES.has((th.status ?? "").toLowerCase()) ? "resolved" : "open",
+      date: shortDate(first.publishedDate),
+    });
+  }
+
+  return { pr, comments, unresolvedCount: comments.filter((c) => c.status === "open").length };
 }

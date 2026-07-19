@@ -15,6 +15,7 @@ const DEFAULTS = {
   rootRepo: clean(process.env.CLAUDE_ROOT_REPO ?? "C:\\repos"),
   defaultProject: clean(process.env.AZURE_DEVOPS_PROJECT ?? ""),
   sprint: clean(process.env.AZURE_DEVOPS_SPRINT ?? ""),
+  animatedBackground: true,
 };
 
 async function getOrCreate() {
@@ -40,10 +41,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const data: Record<string, string> = {};
+  const data: Record<string, string | boolean> = {};
   for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
+  if (typeof body.animatedBackground === "boolean") data.animatedBackground = body.animatedBackground;
   // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
   if (typeof body.pat === "string" && body.pat.length > 0) data.pat = encryptSecret(body.pat);
 
