@@ -25,6 +25,8 @@ export type Execution = {
   adoTicketId: string;
   projectName: string;
   skillName: string;
+  model?: string;
+  effort?: string;
   status: ExecStatus;
   command: string;
   logLines: LogLine[];

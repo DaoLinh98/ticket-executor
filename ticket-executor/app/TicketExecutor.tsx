@@ -7,9 +7,11 @@ import remarkGfm from "remark-gfm";
 import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
+import SelectMenu from "./SelectMenu";
 import SprintPicker, { type IterationOption } from "./SprintPicker";
 import type { ExecStatus, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
 import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
+import { CLAUDE_MODELS, CLAUDE_EFFORTS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, modelLabel, modelIdForLabel } from "@/lib/claudeOptions";
 import {
   COLORS,
   EXEC_COLOR,
@@ -32,6 +34,7 @@ import {
   statusPill,
   statusPillActive,
   tintedCard,
+  toastStyle,
   typeBadge,
 } from "@/lib/ui";
 
@@ -92,6 +95,8 @@ type SettingsView = {
   defaultProject: string;
   sprint: string;
   animatedBackground: boolean;
+  claudeModel: string;
+  claudeEffort: string;
 };
 
 // Heuristic: derive how many of the 7 steps a running log has reached.
@@ -128,6 +133,13 @@ function renderCommentBody(text: string) {
   ));
 }
 
+// Identifies a review summary's current state of activity — used to detect a
+// *new* comment even when the raw unresolved count happens to net out the same
+// (e.g. one thread got resolved while a fresh one landed).
+function reviewFingerprint(rv: ReviewSummaryEntry): string {
+  return `${rv.unresolvedCount}::${rv.latestAt}::${rv.latestComment}`;
+}
+
 // Format an ISO date as a short relative label ("2 days ago") for the PR overview.
 function timeAgo(iso: string): string {
   if (!iso) return "";
@@ -159,14 +171,15 @@ export default function TicketExecutor() {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [toast, setToast] = useState<{ msg: string } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [settingsError, setSettingsError] = useState("");
   const [connTest, setConnTest] = useState<{ status: "idle" | "testing" | "ok" | "fail"; message: string }>({ status: "idle", message: "" });
-  const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo", string>>>>({});
+  const [overrides, setOverrides] = useState<Record<string, Partial<Record<"area" | "skill" | "rootRepo" | "model" | "effort", string>>>>({});
+  const [savedOptions, setSavedOptions] = useState<Record<"rootRepo" | "project" | "skill", string[]>>({ rootRepo: [], project: [], skill: [] });
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
     org: "",
@@ -176,10 +189,12 @@ export default function TicketExecutor() {
     defaultProject: "",
     sprint: "",
     animatedBackground: true,
+    claudeModel: DEFAULT_CLAUDE_MODEL,
+    claudeEffort: DEFAULT_CLAUDE_EFFORT,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
-  const [reviewReadMap, setReviewReadMap] = useState<Record<string, { count: number; readAt: string }>>({});
+  const [reviewReadMap, setReviewReadMap] = useState<Record<string, { seen: string; readAt: string }>>({});
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
 
@@ -280,6 +295,19 @@ export default function TicketExecutor() {
         /* keep default SKILL_OPTIONS */
       }
     })();
+    (async () => {
+      try {
+        const r = await fetch("/api/options");
+        const data = await r.json();
+        setSavedOptions({
+          rootRepo: Array.isArray(data.rootRepo) ? data.rootRepo : [],
+          project: Array.isArray(data.project) ? data.project : [],
+          skill: Array.isArray(data.skill) ? data.skill : [],
+        });
+      } catch {
+        /* no saved options yet */
+      }
+    })();
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -354,7 +382,7 @@ export default function TicketExecutor() {
   // Mark a bell notification as read up to its current unresolved-comment count.
   const markReviewRead = useCallback((rv: ReviewSummaryEntry) => {
     setReviewReadMap((prev) => {
-      const next = { ...prev, [rv.ticketId]: { count: rv.unresolvedCount, readAt: new Date().toISOString() } };
+      const next = { ...prev, [rv.ticketId]: { seen: reviewFingerprint(rv), readAt: new Date().toISOString() } };
       try {
         localStorage.setItem("reviewReadMap", JSON.stringify(next));
       } catch {
@@ -444,8 +472,8 @@ export default function TicketExecutor() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [statusMenuOpen]);
 
-  const showToast = useCallback((msg: string, ms = 4000) => {
-    setToast({ msg });
+  const showToast = useCallback((msg: string, ms = 4000, kind: "success" | "error" = "success") => {
+    setToast({ msg, kind });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   }, []);
@@ -475,11 +503,70 @@ export default function TicketExecutor() {
     setStatusMenuOpen(false);
     showToast(`Status set to "${status}" — synced to Azure DevOps`, 3200);
   };
-  const getArea = (t: Ticket) => overrides[t.id]?.area || t.project || settings.defaultProject;
-  const getSkill = (t: Ticket) => overrides[t.id]?.skill || actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL;
-  const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo || settings.rootRepo || "C:\\repos";
-  const setOverrideValue = (ticketId: string, field: "area" | "skill" | "rootRepo", value: string) =>
+  // Note: use `??` (not `||`) against the override so that clearing a field to ""
+  // stays empty instead of instantly snapping back to the fallback default.
+  const getArea = (t: Ticket) => overrides[t.id]?.area ?? (t.project || settings.defaultProject);
+  const getSkill = (t: Ticket) => overrides[t.id]?.skill ?? (actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL);
+  const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? (settings.rootRepo || "C:\\repos");
+  const getModel = (t: Ticket) => overrides[t.id]?.model ?? (settings.claudeModel || DEFAULT_CLAUDE_MODEL);
+  const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? (settings.claudeEffort || DEFAULT_CLAUDE_EFFORT);
+  const setOverrideValue = (ticketId: string, field: "area" | "skill" | "rootRepo" | "model" | "effort", value: string) =>
     setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
+
+  // Remember a Root Repo / Project / Skill value in the DB so it shows up as a
+  // saved option next time (any ticket, any session) instead of only being a
+  // per-session suggestion.
+  const savedOptionKeys = useRef<Set<string>>(new Set());
+  const rememberOption = useCallback((kind: "rootRepo" | "project" | "skill", value: string) => {
+    if (!value) return;
+    const key = `${kind}:${value}`;
+    if (savedOptionKeys.current.has(key)) return;
+    savedOptionKeys.current.add(key);
+    setSavedOptions((s) => (s[kind].includes(value) ? s : { ...s, [kind]: [...s[kind], value] }));
+    fetch("/api/options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, value }),
+    }).catch(() => {
+      savedOptionKeys.current.delete(key); // allow a retry on the next run
+    });
+  }, []);
+
+  // When Project changes, auto-select the Root Repo it was last run with (if any) —
+  // unless the user already picked one explicitly for this ticket in this session.
+  const onProjectChange = useCallback(
+    (ticketId: string, value: string) => {
+      setOverrideValue(ticketId, "area", value);
+      if (overrides[ticketId]?.rootRepo || !value) return;
+      fetch(`/api/options/mapping?project=${encodeURIComponent(value)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.rootRepo) setOverrideValue(ticketId, "rootRepo", data.rootRepo);
+        })
+        .catch(() => {});
+    },
+    [overrides]
+  );
+
+  // Prefill a newly-selected ticket's Root Repo from its project's saved mapping
+  // (DB-backed) as soon as it's viewed, so Overview shows the last-used repo
+  // instead of falling back to the Settings default before the user edits anything.
+  const mappingFetchedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!selectedId) return;
+    if (overrides[selectedId]?.rootRepo) return;
+    if (mappingFetchedRef.current.has(selectedId)) return;
+    const t = tickets.find((x) => x.id === selectedId);
+    const project = t?.project;
+    if (!project) return;
+    mappingFetchedRef.current.add(selectedId);
+    fetch(`/api/options/mapping?project=${encodeURIComponent(project)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.rootRepo) setOverrideValue(selectedId, "rootRepo", data.rootRepo);
+      })
+      .catch(() => {});
+  }, [selectedId, tickets, overrides]);
 
   // Combobox option lists (values are suggestions; free text is still allowed).
   const overrideVals = Object.values(overrides);
@@ -487,6 +574,7 @@ export default function TicketExecutor() {
     new Set([
       ...tickets.map((x) => x.project),
       ...overrideVals.map((o) => o?.area),
+      ...savedOptions.project,
     ].filter(Boolean) as string[])
   );
   const rootRepoOptions = Array.from(
@@ -494,8 +582,10 @@ export default function TicketExecutor() {
       ...COMMON_ROOT_REPOS,
       settings.rootRepo,
       ...overrideVals.map((o) => o?.rootRepo),
+      ...savedOptions.rootRepo,
     ].filter(Boolean) as string[])
   );
+  const mergedSkillOptions = Array.from(new Set([...skillOptions, ...savedOptions.skill]));
 
   // ---- polling ----
   const startPolling = useCallback(
@@ -544,7 +634,7 @@ export default function TicketExecutor() {
                 notify("Ticket Executor", `#${ticketId} completed — result ready`);
               }
             } else {
-              showToast(`#${ticketId} failed`);
+              showToast(`#${ticketId} failed`, 4000, "error");
               notify("Ticket Executor", `#${ticketId} failed`);
             }
             // A fix-code-review-v2 run resolves PR threads itself — refetch
@@ -640,6 +730,20 @@ export default function TicketExecutor() {
       const skillName = skillOverride || getSkill(t);
       // Reflect a quick-action skill choice in the per-ticket override.
       if (skillOverride) setOverrides((s) => ({ ...s, [t.id]: { ...(s[t.id] || {}), skill: skillOverride } }));
+      const projectName = getArea(t);
+      const rootRepo = getRootRepo(t);
+      const model = getModel(t);
+      const effort = getEffort(t);
+      // Remember these values as saved options + the project→rootRepo mapping
+      // so the next ticket opened with the same project defaults sensibly.
+      rememberOption("rootRepo", rootRepo);
+      rememberOption("project", projectName);
+      rememberOption("skill", skillName);
+      fetch("/api/options/mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: projectName, rootRepo }),
+      }).catch(() => {});
       setTab("execution");
       setExecs((s) => ({
         ...s,
@@ -654,8 +758,10 @@ export default function TicketExecutor() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             skillName,
-            projectName: getArea(t),
-            rootRepo: getRootRepo(t),
+            projectName,
+            rootRepo,
+            model,
+            effort,
             title: t.title,
             provider: settings.provider,
             ...(prUrl ? { prUrl } : {}),
@@ -689,7 +795,7 @@ export default function TicketExecutor() {
         }));
       }
     },
-    [tickets, selectedId, execs, overrides, settings, fireBoltFromEvent, startPolling]
+    [tickets, selectedId, execs, overrides, settings, fireBoltFromEvent, startPolling, rememberOption]
   );
 
   const cancelImplement = useCallback(
@@ -778,23 +884,24 @@ export default function TicketExecutor() {
         body: JSON.stringify(settings),
       });
       const data = await r.json();
-      if (data.settings) setSettings(data.settings);
+      if (!r.ok || !data.settings) {
+        showToast(data.error || "Failed to save settings", 3200, "error");
+        return;
+      }
+      setSettings(data.settings);
       showToast("Settings saved", 3200);
       const provider = (data.settings?.provider as ProviderId) ?? settings.provider;
       await loadSprintOptions(provider);
       await reloadTickets(provider);
     } catch {
-      showToast("Failed to save settings", 3200);
+      showToast("Failed to save settings", 3200, "error");
     }
   };
 
   // ---- derived ----
   const execStatusOf = (id: string): ExecStatus => execs[id]?.status ?? "not started";
   const activeCount = Object.values(execs).filter((e) => e.status === "running").length;
-  const reviewBadgeCount = reviewSummary.reduce(
-    (sum, r) => sum + Math.max(0, r.unresolvedCount - (reviewReadMap[r.ticketId]?.count ?? 0)),
-    0
-  );
+  const reviewBadgeCount = reviewSummary.filter((r) => reviewReadMap[r.ticketId]?.seen !== reviewFingerprint(r)).length;
 
   const q = search.trim().toLowerCase();
   const statusOptions = Array.from(new Set(tickets.map((x) => getStatus(x)).filter(Boolean)));
@@ -809,13 +916,6 @@ export default function TicketExecutor() {
   });
   const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0);
   const clearFilters = () => { setFStatus(""); setFType(""); setFAssignee(""); };
-  // LED-wrapped filter dropdown styling: the border runs only when a value is selected.
-  const filterWrapStyle = (active: boolean): CSSProperties =>
-    active
-      ? { position: "relative", flex: 1, minWidth: 0, height: "32px", borderRadius: "9px", ...ringBorder({ fill: "#14171D", shape: "none", duration: 3.4 }) }
-      : { position: "relative", flex: 1, minWidth: 0, height: "32px", border: "1px solid #262B36", borderRadius: "9px", background: "#14171D" };
-  const filterSelStyle = (active: boolean): CSSProperties =>
-    ({ position: "absolute", inset: 0, width: "100%", height: "100%", padding: "0 26px 0 11px", border: "none", borderRadius: "9px", background: "transparent", color: active ? "#F3F5F9" : "#8A90A0", fontSize: "12px", fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", colorScheme: "dark" });
 
   const t = tickets.find((x) => x.id === selectedId);
   const effStatus = t ? getStatus(t) : "";
@@ -989,7 +1089,7 @@ export default function TicketExecutor() {
   const selProject = t ? getArea(t) : "";
   const selBranch = t ? branchOf(t.id, t.title) : "";
   const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
-  const selCdCommand = t ? `cd ${getRootRepo(t)} && claude` : "";
+  const selCdCommand = t ? `cd ${getRootRepo(t)} && claude --model ${getModel(t)} --effort ${getEffort(t)}` : "";
   const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),
@@ -1067,8 +1167,7 @@ export default function TicketExecutor() {
               )}
               {reviewSummary.map((rv) => {
                 const readEntry = reviewReadMap[rv.ticketId];
-                const unread = Math.max(0, rv.unresolvedCount - (readEntry?.count ?? 0));
-                const isUnread = unread > 0;
+                const isUnread = readEntry?.seen !== reviewFingerprint(rv);
                 return (
                   <button
                     key={rv.ticketId}
@@ -1117,17 +1216,21 @@ export default function TicketExecutor() {
               </button>
             </div>
             {filtersOpen && (
-              <div style={{ display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
                 {([
                   { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
                   { v: fType, set: setFType, label: "Type", opts: typeOptions },
                   { v: fAssignee, set: setFAssignee, label: "Assignee", opts: assigneeOptions },
                 ] as const).map((f) => (
-                  <div key={f.label} style={filterWrapStyle(!!f.v)}>
-                    <select value={f.v} onChange={(e) => f.set(e.target.value)} title={f.label} style={filterSelStyle(!!f.v)}>
-                      <option value="" style={{ background: "#14171D", color: "#8A90A0" }}>{f.label}: All</option>
-                      {f.opts.map((o) => (<option key={o} value={o} style={{ background: "#14171D", color: "#ECEEF3" }}>{o}</option>))}
-                    </select>
+                  <div key={f.label} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                    <SelectMenu
+                      value={f.v}
+                      onChange={f.set}
+                      options={f.opts}
+                      allLabel={`${f.label}: All`}
+                      ariaLabel={f.label}
+                      variant="filter"
+                    />
                   </div>
                 ))}
                 {activeFilters > 0 && (
@@ -1325,11 +1428,21 @@ export default function TicketExecutor() {
                         </div>
                       </section>
                     )}
-                    <section style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "10px" }}>
-                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
-                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => setOverrideValue(t.id, "area", v)} options={projectOptions} ariaLabel="Project" /></div>
-                      <div style={card()}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
-                      <div style={card({ padding: "13px 15px", border: COLORS.borderSubtle })}><div style={{ fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" }}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
+                    <section style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
+                      {(() => {
+                        const fieldLabel: CSSProperties = { fontSize: "10px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "5px" };
+                        const fieldCard = card({ padding: "9px 11px" });
+                        return (
+                          <>
+                            <div style={fieldCard}><div style={fieldLabel}>ROOT REPO</div><Combobox value={getRootRepo(t)} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
+                            <div style={fieldCard}><div style={fieldLabel}>PROJECT</div><Combobox value={getArea(t)} onChange={(v) => onProjectChange(t.id, v)} options={projectOptions} ariaLabel="Project" /></div>
+                            <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={getSkill(t)} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={mergedSkillOptions} ariaLabel="Skill" /></div>
+                            <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(getModel(t))} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v))} options={CLAUDE_MODELS.map((m) => m.label)} ariaLabel="Claude model" /></div>
+                            <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={getEffort(t)} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
+                            <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selBranch}</div></div>
+                          </>
+                        );
+                      })()}
                     </section>
                     <section>
                       <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: ".16em", color: "#5B6273" }}>COMMAND PREVIEW</h3>
@@ -1640,13 +1753,20 @@ export default function TicketExecutor() {
       )}
 
       {/* Toast */}
-      {toast && (
-        <div style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, display: "flex", alignItems: "center", gap: "11px", padding: "14px 18px", border: "1px solid #24382F", borderLeft: "3px solid #35D6A4", borderRadius: "11px", background: "#14171D", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#35D6A4" strokeWidth="2.6"><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .5s .1s ease forwards" }} /></svg>
-          <span style={{ fontSize: "13.5px", fontWeight: 600, color: "#ECEEF3" }}>{toast.msg}</span>
-          <span style={{ position: "absolute", left: 0, bottom: 0, height: "2px", width: "100%", background: "#35D6A4", opacity: 0.6, transformOrigin: "left", animation: "shrink 4s linear forwards" }} />
-        </div>
-      )}
+      {toast && (() => {
+        const tone = toastStyle(toast.kind);
+        return (
+          <div style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, display: "flex", alignItems: "center", gap: "11px", padding: "14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "#14171D", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}>
+            {toast.kind === "error" ? (
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={tone.accent} strokeWidth="2.6"><path d="M6 6l12 12M18 6L6 18" style={{ strokeDasharray: 34, strokeDashoffset: 34, animation: "draw .5s .1s ease forwards" }} /></svg>
+            ) : (
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={tone.accent} strokeWidth="2.6"><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .5s .1s ease forwards" }} /></svg>
+            )}
+            <span style={{ fontSize: "13.5px", fontWeight: 600, color: "#ECEEF3" }}>{toast.msg}</span>
+            <span style={{ position: "absolute", left: 0, bottom: 0, height: "2px", width: "100%", background: tone.accent, opacity: 0.6, transformOrigin: "left", animation: "shrink 4s linear forwards" }} />
+          </div>
+        );
+      })()}
     </div>
   );
 }

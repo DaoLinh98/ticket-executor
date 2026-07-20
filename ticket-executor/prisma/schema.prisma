@@ -17,6 +17,8 @@ model Setting {
   defaultProject String   @default("")
   sprint         String   @default("")
   animatedBackground Boolean @default(true)
+  claudeModel    String   @default("claude-sonnet-5")
+  claudeEffort   String   @default("medium")
   updatedAt      DateTime @updatedAt
 }
 
@@ -34,8 +36,31 @@ model Execution {
   currentStep  Int       @default(0)
   prUrl        String    @default("")
   branch       String    @default("")
+  model        String    @default("")
+  effort       String    @default("")
   startedAt    DateTime  @default(now())
   completedAt  DateTime?
 
   @@index([adoTicketId])
+}
+
+// Distinct values ever used for Root Repo / Project / Skill fields, so the
+// Overview tab's Combobox can offer them as saved options next time (any
+// project/session), not just the ones seen in the current tickets list.
+model SavedOption {
+  id        String   @id @default(cuid())
+  kind      String   // "rootRepo" | "project" | "skill"
+  value     String
+  createdAt DateTime @default(now())
+
+  @@unique([kind, value])
+}
+
+// Remembers which Root Repo a Project was last run with, so opening a
+// different ticket that shares the same Project auto-selects that Root Repo.
+model RootRepoProjectMap {
+  id        String   @id @default(cuid())
+  project   String   @unique
+  rootRepo  String
+  updatedAt DateTime @updatedAt
 }

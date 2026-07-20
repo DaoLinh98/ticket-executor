@@ -315,6 +315,14 @@ export function statusPillActive(status: string): CSSProperties {
   };
 }
 
+// Toast accent colors — success (default) vs error variant. Border/stroke/progress-bar
+// all key off the same tone so a failure toast reads unmistakably differently.
+export function toastStyle(kind: "success" | "error"): { border: string; accent: string } {
+  return kind === "error"
+    ? { border: "#4A2626", accent: COLORS.danger }
+    : { border: "#24382F", accent: COLORS.success };
+}
+
 export function hue(name: string): number {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;

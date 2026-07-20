@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ const DEFAULTS = {
   defaultProject: clean(process.env.AZURE_DEVOPS_PROJECT ?? ""),
   sprint: clean(process.env.AZURE_DEVOPS_SPRINT ?? ""),
   animatedBackground: true,
+  claudeModel: clean(process.env.CLAUDE_MODEL ?? DEFAULT_CLAUDE_MODEL),
+  claudeEffort: clean(process.env.CLAUDE_EFFORT ?? DEFAULT_CLAUDE_EFFORT),
 };
 
 async function getOrCreate() {
@@ -42,7 +45,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json();
   const data: Record<string, string | boolean> = {};
-  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint"] as const) {
+  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint", "claudeModel", "claudeEffort"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
   if (typeof body.animatedBackground === "boolean") data.animatedBackground = body.animatedBackground;

@@ -10,6 +10,8 @@ type Entry = {
   ticketId: string;
   project: string;
   skill: string;
+  model: string;
+  effort: string;
   command: string;
   status: ExecStatus;
   logLines: LogLine[];
@@ -108,6 +110,8 @@ export function getExecution(id: string) {
     adoTicketId: e.ticketId,
     projectName: e.project,
     skillName: e.skill,
+    model: e.model,
+    effort: e.effort,
     command: e.command,
     status: e.status,
     logLines: e.logLines,
@@ -141,6 +145,8 @@ export async function getPersistedExecution(id: string) {
     adoTicketId: r.adoTicketId,
     projectName: r.projectName,
     skillName: r.skillName,
+    model: r.model,
+    effort: r.effort,
     command: r.command,
     status: r.status as ExecStatus,
     logLines: safeParseLogs(r.logLines),
@@ -298,6 +304,8 @@ export async function startExecution(params: {
   rootRepo: string;
   prUrl?: string;
   provider?: string;
+  model?: string;
+  effort?: string;
 }): Promise<string> {
   const ticketId = cleanPath(params.ticketId);
   const skill = cleanPath(params.skill);
@@ -305,18 +313,21 @@ export async function startExecution(params: {
   const rootRepo = cleanPath(params.rootRepo);
   const prUrl = params.prUrl ? cleanPath(params.prUrl) : "";
   const provider = cleanPath(params.provider || "azure-devops");
+  const model = params.model ? cleanPath(params.model) : "";
+  const effort = params.effort ? cleanPath(params.effort) : "";
   const prompt = prUrl
     ? `/${skill} Provider: ${provider} - PR: ${prUrl} - Ticket ID: ${ticketId} - Project name: ${project}`
     : `/${skill} Provider: ${provider} - ID: ${ticketId} - Project name: ${project}`;
-  const command = `cd ${rootRepo} && claude -p "${prompt}"`;
+  const modelArgs = [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])];
+  const command = `cd ${rootRepo} && claude -p "${prompt}"${model ? ` --model ${model}` : ""}${effort ? ` --effort ${effort}` : ""}`;
 
   const row = await prisma.execution.create({
-    data: { adoTicketId: ticketId, projectName: project, skillName: skill, status: "running", command },
+    data: { adoTicketId: ticketId, projectName: project, skillName: skill, model, effort, status: "running", command },
   });
   const id = row.id;
 
   const entry: Entry = {
-    id, ticketId, project, skill, command,
+    id, ticketId, project, skill, model, effort, command,
     status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
     currentStep: 0, cwd: rootRepo, startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false,
@@ -375,7 +386,7 @@ export async function startExecution(params: {
   // Fire-and-forget single turn (Tier 2). The route returns immediately.
   // The skill itself now owns branch/commit/push/PR — no forced directive, no auto-continue.
   void (async () => {
-    const ts = await runTurn(entry, ["-p", prompt, ...commonArgs()]);
+    const ts = await runTurn(entry, ["-p", prompt, ...modelArgs, ...commonArgs()]);
     if (ts.resultText) entry.resultText = ts.resultText;
 
     if (entry.cancelled) await finish("failed", "Cancelled by user");
