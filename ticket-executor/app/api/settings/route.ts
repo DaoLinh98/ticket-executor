@@ -1,46 +1,35 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
+import { normalizeProvider } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
 const clean = (s: string) => s.replace(/[\r\n]+/g, "").trim();
 
-const DEFAULTS = {
-  provider: clean(process.env.TICKET_PROVIDER ?? "azure-devops"),
-  org: process.env.AZURE_DEVOPS_ORG
-    ? `https://dev.azure.com/${process.env.AZURE_DEVOPS_ORG}`
-    : "",
-  pat: "",
-  rootRepo: clean(process.env.CLAUDE_ROOT_REPO ?? "C:\\repos"),
-  defaultProject: clean(process.env.AZURE_DEVOPS_PROJECT ?? ""),
-  sprint: clean(process.env.AZURE_DEVOPS_SPRINT ?? ""),
-  animatedBackground: true,
-  claudeModel: clean(process.env.CLAUDE_MODEL ?? DEFAULT_CLAUDE_MODEL),
-  claudeEffort: clean(process.env.CLAUDE_EFFORT ?? DEFAULT_CLAUDE_EFFORT),
-  scope: "team",
-  personalAccount: "",
-  concurrentRuns: 2,
-};
-
 async function getOrCreate() {
-  const existing = await prisma.setting.findUnique({ where: { id: "default" } });
+  const existing = await prisma.setting.findUnique({
+    where: { id: "default" },
+  });
   if (existing) return existing;
-  return prisma.setting.create({ data: { id: "default", ...DEFAULTS } });
+  return prisma.setting.create({ data: { id: "default" } });
 }
 
-export async function GET() {
+// GET /api/settings — full settings, credentials for the currently-selected provider.
+// GET /api/settings?provider=github — same non-credential fields, but credentials
+// (org/hasPat) for the requested provider instead — used when the UI switches the
+// provider dropdown without having saved yet.
+export async function GET(req: Request) {
   const s = await getOrCreate();
-  // Never leak the stored PAT to the client; expose only whether one is set.
+  const { searchParams } = new URL(req.url);
+  const provider = normalizeProvider(searchParams.get("provider") ?? s.provider);
+  const cred = await prisma.providerCredential.findUnique({ where: { provider } });
   return NextResponse.json({
     settings: {
       ...s,
-      rootRepo: clean(s.rootRepo),
-      defaultProject: clean(s.defaultProject),
-      sprint: clean(s.sprint),
+      org: cred?.org ?? "",
       pat: "",
-      hasPat: s.pat.length > 0,
+      hasPat: !!cred && cred.pat.length > 0,
     },
   });
 }
@@ -48,22 +37,41 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json();
   const data: Record<string, string | boolean | number> = {};
-  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint", "claudeModel", "claudeEffort", "scope", "personalAccount"] as const) {
+  for (const k of ["provider", "scope", "personalAccount"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
-  if (typeof body.animatedBackground === "boolean") data.animatedBackground = body.animatedBackground;
-  if (typeof body.concurrentRuns === "number" && Number.isFinite(body.concurrentRuns)) {
-    data.concurrentRuns = Math.max(1, Math.min(20, Math.round(body.concurrentRuns)));
+  if (typeof body.animatedBackground === "boolean")
+    data.animatedBackground = body.animatedBackground;
+  if (
+    typeof body.concurrentRuns === "number" &&
+    Number.isFinite(body.concurrentRuns)
+  ) {
+    data.concurrentRuns = Math.max(
+      1,
+      Math.min(20, Math.round(body.concurrentRuns)),
+    );
   }
-  // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
-  if (typeof body.pat === "string" && body.pat.length > 0) data.pat = encryptSecret(body.pat);
 
   const s = await prisma.setting.upsert({
     where: { id: "default" },
-    create: { id: "default", ...DEFAULTS, ...data },
+    create: { id: "default", ...data },
     update: data,
   });
+
+  // Credentials are stored per-provider, keyed by the provider being saved for.
+  const provider = normalizeProvider(typeof body.provider === "string" ? body.provider : s.provider);
+  const credData: { org?: string; pat?: string } = {};
+  if (typeof body.org === "string") credData.org = clean(body.org);
+  // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
+  if (typeof body.pat === "string" && body.pat.length > 0)
+    credData.pat = encryptSecret(body.pat);
+  const cred = await prisma.providerCredential.upsert({
+    where: { provider },
+    create: { provider, org: "", pat: "", ...credData },
+    update: credData,
+  });
+
   return NextResponse.json({
-    settings: { ...s, pat: "", hasPat: s.pat.length > 0 },
+    settings: { ...s, org: cred.org, pat: "", hasPat: cred.pat.length > 0 },
   });
 }

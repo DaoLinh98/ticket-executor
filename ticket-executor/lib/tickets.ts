@@ -1,5 +1,5 @@
 import type { Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
-import { getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState } from "./ado";
+import { adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState } from "./ado";
 import { getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus } from "./github";
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
@@ -45,6 +45,14 @@ export async function loadTickets(
 ): Promise<TicketLoadResult> {
   switch (provider) {
     case "azure-devops": {
+      if (!(await adoCreds())) {
+        return {
+          tickets: [],
+          sprint: "",
+          connected: false,
+          notice: "Azure DevOps is not configured — set the project URL and a personal access token in Settings.",
+        };
+      }
       const { tickets, sprintName } = await getSprintTickets(sprintOverride);
       return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true };
     }
@@ -100,9 +108,9 @@ async function loadGithubReview(ticketId: string): Promise<ReviewData> {
 }
 
 async function githubCreds(): Promise<{ url: string; token: string } | null> {
-  const s = await prisma.setting.findUnique({ where: { id: "default" } });
-  const url = (s?.org ?? "").trim();
-  const token = decryptSecret(s?.pat);
+  const c = await prisma.providerCredential.findUnique({ where: { provider: "github" } });
+  const url = (c?.org ?? "").trim();
+  const token = decryptSecret(c?.pat);
   return url && token ? { url, token } : null;
 }
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/crypto";
 import { normalizeProvider } from "@/lib/tickets";
+import { parseAdoUrl } from "@/lib/ado";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,13 +28,26 @@ async function withTimeout(url: string, init: RequestInit): Promise<Response> {
 }
 
 async function testAdo(url: string, token: string): Promise<Result> {
-  const base = url.replace(/\/+$/, "");
+  const { org, project } = parseAdoUrl(url);
+  if (!org || !project) {
+    return {
+      ok: false,
+      message: "Enter the full project URL, e.g. https://dev.azure.com/your-org/your-project.",
+    };
+  }
   const auth = "Basic " + Buffer.from(":" + token).toString("base64");
-  const r = await withTimeout(`${base}/_apis/projects?api-version=7.0&$top=1`, {
-    headers: { Authorization: auth },
-  });
-  if (r.ok) return { ok: true, message: "Connected to Azure DevOps." };
-  return { ok: false, message: `Azure DevOps returned ${r.status} ${r.statusText}. Check the organization URL and token scope.` };
+  // Hit the project itself — this validates the org, the project and the token
+  // in one call (an org-level probe would pass even for a wrong project).
+  const r = await withTimeout(
+    `https://dev.azure.com/${org}/_apis/projects/${encodeURIComponent(project)}?api-version=7.0`,
+    { headers: { Authorization: auth } }
+  );
+  if (r.ok) return { ok: true, message: `Connected to Azure DevOps — ${org}/${project}.` };
+  if (r.status === 404)
+    return { ok: false, message: `Project "${project}" not found in organization "${org}". Check the project URL.` };
+  if (r.status === 401 || r.status === 203)
+    return { ok: false, message: "Azure DevOps rejected the token. Check the PAT and its scopes (Work Items: Read, Code: Read)." };
+  return { ok: false, message: `Azure DevOps returned ${r.status} ${r.statusText}.` };
 }
 
 async function testGithub(token: string): Promise<Result> {
@@ -63,11 +77,12 @@ export async function POST(req: Request) {
   const provider = normalizeProvider(body.provider);
   const url = typeof body.org === "string" ? body.org.trim() : "";
 
-  // Use the token from the form if supplied; otherwise the stored (decrypted) one.
+  // Use the token from the form if supplied; otherwise the stored (decrypted) one
+  // for this specific provider.
   let token = typeof body.pat === "string" ? body.pat.trim() : "";
   if (!token) {
-    const s = await prisma.setting.findUnique({ where: { id: "default" } });
-    token = decryptSecret(s?.pat);
+    const c = await prisma.providerCredential.findUnique({ where: { provider } });
+    token = decryptSecret(c?.pat);
   }
   if (!url) return NextResponse.json({ ok: false, message: "URL is required." });
   if (!token) return NextResponse.json({ ok: false, message: "Access token is required." });

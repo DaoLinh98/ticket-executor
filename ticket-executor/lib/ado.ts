@@ -1,11 +1,78 @@
 import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview } from "./types";
+import { prisma } from "./prisma";
+import { decryptSecret } from "./crypto";
 
-const ORG = process.env.AZURE_DEVOPS_ORG ?? "";
-const PROJECT = process.env.AZURE_DEVOPS_PROJECT ?? "";
-const TEAM = process.env.AZURE_DEVOPS_TEAM ?? "";
-const SPRINT = process.env.AZURE_DEVOPS_SPRINT ?? "";
-const PAT = process.env.AZURE_DEVOPS_TOKEN ?? "";
 const API = "api-version=7.0";
+
+// Org / project / PAT are per-provider DB-backed credentials (Settings modal),
+// not env vars. Re-fetched at the top of every exported function below.
+let ORG = "";
+let PROJECT = "";
+let PAT = "";
+
+export type AdoCreds = { org: string; project: string; pat: string };
+
+/**
+ * Parse whatever the user pasted into the Settings URL field into org + project.
+ * Accepts the full project URL (the normal case), an org-only URL, the legacy
+ * `org.visualstudio.com` host, and bare `org/project` text. Path segments are
+ * URL-decoded, so "Application%20Support" becomes "Application Support".
+ */
+export function parseAdoUrl(raw: string | null | undefined): { org: string; project: string } {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return { org: "", project: "" };
+
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let host = "";
+  let segments: string[] = [];
+  try {
+    const u = new URL(withScheme);
+    host = u.hostname.toLowerCase();
+    segments = u.pathname.split("/").filter(Boolean);
+  } catch {
+    segments = trimmed.split("/").filter(Boolean);
+  }
+
+  // Legacy host form: https://{org}.visualstudio.com/{project}
+  const legacy = host.match(/^([^.]+)\.visualstudio\.com$/);
+  if (legacy) {
+    return { org: legacy[1], project: decodeSegment(segments[0]) };
+  }
+
+  // dev.azure.com may include a "/tfs"-style collection prefix; ignore anything
+  // that isn't part of {org}/{project}.
+  const [org, project] = segments;
+  return { org: decodeSegment(org), project: decodeSegment(project) };
+}
+
+function decodeSegment(s: string | undefined): string {
+  if (!s) return "";
+  try {
+    return decodeURIComponent(s).trim();
+  } catch {
+    return s.trim();
+  }
+}
+
+/** Saved Azure DevOps credentials, or null when the connection isn't configured yet. */
+export async function adoCreds(): Promise<AdoCreds | null> {
+  const c = await prisma.providerCredential.findUnique({ where: { provider: "azure-devops" } });
+  const { org, project } = parseAdoUrl(c?.org);
+  const pat = decryptSecret(c?.pat);
+  return org && project && pat ? { org, project, pat } : null;
+}
+
+async function loadCreds(): Promise<void> {
+  const c = await adoCreds();
+  if (!c) {
+    throw new Error(
+      "Azure DevOps is not configured — set the project URL (e.g. https://dev.azure.com/your-org/your-project) and a personal access token in Settings."
+    );
+  }
+  ORG = c.org;
+  PROJECT = c.project;
+  PAT = c.pat;
+}
 
 function authHeader(): Record<string, string> {
   const b64 = Buffer.from(":" + PAT).toString("base64");
@@ -80,11 +147,14 @@ type RawIteration = {
   attributes?: { startDate?: string; finishDate?: string; timeFrame?: "past" | "current" | "future" };
 };
 
-/** All team iterations (used to resolve the current sprint and to populate the sprint picker). */
+/** Iterations for the project's default team (used to resolve the current sprint and to populate the sprint picker). */
 export async function listIterations(): Promise<IterationInfo[]> {
+  await loadCreds();
+  // No team segment: ADO falls back to the project's default team, so the user
+  // only has to configure the project URL.
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
-  )}/${encodeURIComponent(TEAM)}/_apis/work/teamsettings/iterations?${API}`;
+  )}/_apis/work/teamsettings/iterations?${API}`;
   const data = await adoGet<{ value: RawIteration[] }>(url);
   return data.value.map((i) => ({
     id: i.id,
@@ -95,7 +165,7 @@ export async function listIterations(): Promise<IterationInfo[]> {
   }));
 }
 
-/** Resolve which iteration to load: an explicit override name, else ADO's current iteration, else the env-configured fallback. */
+/** Resolve which iteration to load: an explicit override name, else ADO's current iteration. */
 async function resolveIteration(sprintOverride?: string): Promise<IterationInfo> {
   const iterations = await listIterations();
   const requested = sprintOverride?.trim();
@@ -106,9 +176,7 @@ async function resolveIteration(sprintOverride?: string): Promise<IterationInfo>
   }
   const current = iterations.find((i) => i.timeFrame === "current");
   if (current) return current;
-  const fallback = iterations.find((i) => i.name === SPRINT);
-  if (!fallback) throw new Error("No current sprint found among team iterations");
-  return fallback;
+  throw new Error("No current sprint found among team iterations");
 }
 
 type WorkItemRelations = { workItemRelations: { target?: { id: number } }[] };
@@ -122,12 +190,11 @@ type WorkItemDetail = {
 export async function getSprintTickets(
   sprintOverride?: string
 ): Promise<{ tickets: Ticket[]; sprintName: string }> {
+  await loadCreds();
   const iteration = await resolveIteration(sprintOverride);
 
   const wiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
-  )}/${encodeURIComponent(
-    TEAM
   )}/_apis/work/teamsettings/iterations/${iteration.id}/workitems?${API}`;
   const rel = await adoGet<WorkItemRelations>(wiUrl);
   const ids = Array.from(
@@ -184,6 +251,7 @@ type RawWorkItemState = { name: string };
 
 /** Real workflow states for a work item type (e.g. "Bug", "User Story"), as configured by this project's process template — not a hard-coded guess. */
 export async function getWorkItemTypeStates(type: string): Promise<string[]> {
+  await loadCreds();
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
   )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
@@ -193,6 +261,7 @@ export async function getWorkItemTypeStates(type: string): Promise<string[]> {
 
 /** Write the work item's State field back to Azure DevOps. */
 export async function updateWorkItemState(id: string, state: string): Promise<void> {
+  await loadCreds();
   const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(id)}?${API}`;
   await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json");
 }
@@ -213,6 +282,7 @@ function shortDate(iso?: string): string {
 
 /** Fetch the discussion comments for a single work item, oldest first. */
 export async function getWorkItemComments(id: string): Promise<TicketComment[]> {
+  await loadCreds();
   // Comments live behind a preview API version.
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
@@ -289,6 +359,7 @@ const RESOLVED_THREAD_STATUSES = new Set(["fixed", "closed", "wontfix"]);
 
 /** Fetch the PR (if any) linked to a work item, plus its review-comment threads. */
 export async function getPullRequestReview(ticketId: string): Promise<ReviewData> {
+  await loadCreds();
   const ref = await getLinkedPullRequestRef(ticketId);
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
 

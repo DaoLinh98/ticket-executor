@@ -11,18 +11,21 @@ datasource db {
 model Setting {
   id             String   @id @default("default")
   provider       String   @default("azure-devops") // azure-devops | github | jira | gitlab
-  org            String   @default("")
-  pat            String   @default("")
-  rootRepo       String   @default("C:\\repos")
-  defaultProject String   @default("")
-  sprint         String   @default("")
   animatedBackground Boolean @default(true)
-  claudeModel    String   @default("claude-sonnet-5")
-  claudeEffort   String   @default("medium")
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
   concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
   updatedAt      DateTime @updatedAt
+}
+
+// Per-provider connection credentials (org/repo URL + PAT, encrypted at rest).
+// Keyed by ProviderId so switching providers in Settings remembers each one's
+// own saved values instead of overwriting a single shared pair.
+model ProviderCredential {
+  provider  String   @id // azure-devops | github | jira | gitlab
+  org       String   @default("")
+  pat       String   @default("")
+  updatedAt DateTime @updatedAt
 }
 
 // One run of Claude CLI against a ticket. Mirrors the Execution data model.

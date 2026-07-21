@@ -72,7 +72,7 @@ export default function SelectMenu({
         };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative", flex: variant === "field" ? 1 : undefined, minWidth: 0 }}>
       <button type="button" aria-label={ariaLabel} onClick={() => setOpen((o) => !o)} style={buttonStyle}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
           {value ? value : allLabel ?? ""}
