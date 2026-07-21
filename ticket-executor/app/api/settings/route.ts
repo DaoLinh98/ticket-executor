@@ -19,6 +19,9 @@ const DEFAULTS = {
   animatedBackground: true,
   claudeModel: clean(process.env.CLAUDE_MODEL ?? DEFAULT_CLAUDE_MODEL),
   claudeEffort: clean(process.env.CLAUDE_EFFORT ?? DEFAULT_CLAUDE_EFFORT),
+  scope: "team",
+  personalAccount: "",
+  concurrentRuns: 2,
 };
 
 async function getOrCreate() {
@@ -44,11 +47,14 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const data: Record<string, string | boolean> = {};
-  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint", "claudeModel", "claudeEffort"] as const) {
+  const data: Record<string, string | boolean | number> = {};
+  for (const k of ["provider", "org", "rootRepo", "defaultProject", "sprint", "claudeModel", "claudeEffort", "scope", "personalAccount"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
   if (typeof body.animatedBackground === "boolean") data.animatedBackground = body.animatedBackground;
+  if (typeof body.concurrentRuns === "number" && Number.isFinite(body.concurrentRuns)) {
+    data.concurrentRuns = Math.max(1, Math.min(20, Math.round(body.concurrentRuns)));
+  }
   // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
   if (typeof body.pat === "string" && body.pat.length > 0) data.pat = encryptSecret(body.pat);
 

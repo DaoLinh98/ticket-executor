@@ -9,14 +9,13 @@ import { BoltLayer, useBolts } from "./Bolts";
 import Combobox from "./Combobox";
 import SelectMenu from "./SelectMenu";
 import SprintPicker, { type IterationOption } from "./SprintPicker";
-import type { ExecStatus, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
-import { PROVIDERS, providerMeta, type ProviderId } from "@/lib/providers";
+import type { ExecStatus, FileChange, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
+import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { CLAUDE_MODELS, CLAUDE_EFFORTS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, modelLabel, modelIdForLabel } from "@/lib/claudeOptions";
 import {
   COLORS,
   EXEC_COLOR,
   EXEC_LABEL,
-  STATUS_ALL,
   STEPS,
   actionInfoFor,
   avatar,
@@ -68,7 +67,6 @@ type ExecView = {
   skillName?: string;
   logLines: LogLine[];
   resultText: string;
-  resultsBySkill?: Record<string, string>;
   error: string;
   prUrl?: string;
   branch?: string;
@@ -84,6 +82,8 @@ type RunSummary = {
   branch: string;
   startedAt: string;
   duration?: string;
+  resultText?: string;
+  filesChanged?: FileChange[];
 };
 
 type SettingsView = {
@@ -97,6 +97,9 @@ type SettingsView = {
   animatedBackground: boolean;
   claudeModel: string;
   claudeEffort: string;
+  scope: "team" | "personal";
+  personalAccount: string;
+  concurrentRuns: number;
 };
 
 // Heuristic: derive how many of the 7 steps a running log has reached.
@@ -168,12 +171,18 @@ export default function TicketExecutor() {
   const [fType, setFType] = useState("");
   const [fAssignee, setFAssignee] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [statusMenuOptions, setStatusMenuOptions] = useState<string[]>([]);
+  const [statusMenuLoading, setStatusMenuLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
+  const [diffFile, setDiffFile] = useState<FileChange | null>(null);
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [settingsError, setSettingsError] = useState("");
@@ -191,6 +200,9 @@ export default function TicketExecutor() {
     animatedBackground: true,
     claudeModel: DEFAULT_CLAUDE_MODEL,
     claudeEffort: DEFAULT_CLAUDE_EFFORT,
+    scope: "team",
+    personalAccount: "",
+    concurrentRuns: 2,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
@@ -204,6 +216,11 @@ export default function TicketExecutor() {
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingCoreRef = useRef<HTMLDivElement>(null);
+  // Batch "Run selected" scheduler: tickets waiting for a free slot, and
+  // tickets currently occupying one — capped by settings.concurrentRuns.
+  const batchQueueRef = useRef<string[]>([]);
+  const batchRunningRef = useRef<Set<string>>(new Set());
+  const tryStartNextQueuedRef = useRef<() => void>(() => {});
 
   // While the sprint list is (re)loading, crackle small bolts around the energy core.
   useEffect(() => {
@@ -443,7 +460,6 @@ export default function TicketExecutor() {
           skillName: ex.skillName,
           logLines: ex.logLines ?? [],
           resultText: ex.resultText ?? "",
-          resultsBySkill: ex.resultText ? { [ex.skillName || "implement-ticket-v2"]: ex.resultText } : {},
           error: ex.errorMessage ?? "",
           prUrl: ex.prUrl ?? "",
           branch: ex.branch ?? "",
@@ -495,13 +511,68 @@ export default function TicketExecutor() {
   }, []);
 
   // ---- per-ticket resolved config ----
-  // Effective status: a locally-applied override (simulated ADO sync) wins over the ADO state.
+  // Effective status: a locally-applied override (confirmed by the provider write below) wins over the fetched state.
   const getStatus = (t: Ticket) => statusOverrides[t.id] || t.status;
-  const selectStatus = (ticketId: string, status: string, e?: MouseEvent) => {
+
+  // Real per-ticket status options, fetched from the ticket's provider (see
+  // lib/tickets.ts#getStatusOptions) — replaces the old hard-coded STATUS_ALL list.
+  // Cached in localStorage per ticket+provider so subsequent opens of the dropdown
+  // render instantly from cache instead of re-hitting the provider API; a background
+  // refetch still runs to keep the cache from going stale.
+  const statusOptionsCacheKey = (ticket: Ticket) => `te.statusOptions.${settings.provider}.${ticket.id}`;
+
+  const loadStatusMenuOptions = async (ticket: Ticket) => {
+    const cacheKey = statusOptionsCacheKey(ticket);
+    let hadCache = false;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          setStatusMenuOptions(parsed);
+          hadCache = true;
+        }
+      }
+    } catch {}
+    if (!hadCache) setStatusMenuLoading(true);
+    try {
+      const r = await fetch(`/api/tickets/${ticket.id}/status?provider=${settings.provider}&type=${encodeURIComponent(ticket.type)}`);
+      const data = await r.json();
+      const options = Array.isArray(data.options) ? data.options : [];
+      setStatusMenuOptions(options);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(options));
+      } catch {}
+    } catch {
+      if (!hadCache) setStatusMenuOptions([]);
+    } finally {
+      setStatusMenuLoading(false);
+    }
+  };
+
+  const selectStatus = async (ticketId: string, status: string, e?: MouseEvent) => {
     fireBoltFromEvent(e, { color: "#35D6A4" });
-    setStatusOverrides((s) => ({ ...s, [ticketId]: status }));
     setStatusMenuOpen(false);
-    showToast(`Status set to "${status}" — synced to Azure DevOps`, 3200);
+    const prev = statusOverrides[ticketId];
+    setStatusOverrides((s) => ({ ...s, [ticketId]: status })); // optimistic
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: settings.provider, status }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed to update status");
+      showToast(`Status set to "${status}" — synced to ${providerMeta(settings.provider).name}`, 3200);
+    } catch (err) {
+      setStatusOverrides((s) => {
+        const next = { ...s };
+        if (prev === undefined) delete next[ticketId];
+        else next[ticketId] = prev;
+        return next;
+      });
+      showToast(err instanceof Error ? err.message : "Failed to sync status to the provider", 4200, "error");
+    }
   };
   // Note: use `??` (not `||`) against the override so that clearing a field to ""
   // stays empty instead of instantly snapping back to the fallback default.
@@ -605,10 +676,6 @@ export default function TicketExecutor() {
               skillName: ex.skillName ?? s[ticketId]?.skillName,
               logLines: ex.logLines ?? [],
               resultText: ex.resultText ?? "",
-              // Keep prior runs' results; index the new one by the skill that produced it.
-              resultsBySkill: ex.resultText
-                ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket-v2"]: ex.resultText }
-                : s[ticketId]?.resultsBySkill,
               error: ex.errorMessage ?? "",
               prUrl: ex.prUrl ?? "",
               branch: ex.branch ?? "",
@@ -623,12 +690,23 @@ export default function TicketExecutor() {
               window.__reactor?.setMode(ex.status === "completed" ? "completed" : "idle");
             } catch { }
             if (ex.status === "completed") {
-              // Simulated ADO sync: advance the ticket status based on the skill that ran.
+              // Advance the ticket status based on the skill that ran, and sync it to the
+              // real provider (ADO work item state / GitHub status label) — not just locally.
               const next = nextStatusAfter(ex.skillName ?? "", "");
               if (next) {
                 setStatusOverrides((so) => ({ ...so, [ticketId]: next }));
-                showToast(`#${ticketId} completed — status synced to "${next}"`);
-                notify("Ticket Executor", `#${ticketId} completed — status synced to "${next}"`);
+                showToast(`#${ticketId} completed — status set to "${next}"`);
+                notify("Ticket Executor", `#${ticketId} completed — status set to "${next}"`);
+                try {
+                  const sr = await fetch(`/api/tickets/${ticketId}/status`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ provider: settings.provider, status: next }),
+                  });
+                  if (!sr.ok) throw new Error((await sr.json().catch(() => ({}))).error || "sync failed");
+                } catch {
+                  showToast(`#${ticketId} status sync to the provider failed — update it manually`, 4200, "error");
+                }
               } else {
                 showToast(`#${ticketId} completed — result ready`);
                 notify("Ticket Executor", `#${ticketId} completed — result ready`);
@@ -646,6 +724,9 @@ export default function TicketExecutor() {
               });
             }
             loadHistory(ticketId);
+            // Free this ticket's batch-queue slot (no-op if it wasn't batch-started)
+            // and let the next queued ticket, if any, take its place.
+            if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
           }
         } catch {
           /* keep polling */
@@ -654,7 +735,7 @@ export default function TicketExecutor() {
       pollTimers.current[executionId] = setInterval(poll, 1200);
       poll();
     },
-    [showToast, loadHistory, notify]
+    [showToast, loadHistory, notify, settings.provider]
   );
 
   // Rehydrate a ticket's exec state from its most recent execution row —
@@ -675,9 +756,6 @@ export default function TicketExecutor() {
             skillName: ex.skillName ?? skillNameHint,
             logLines: ex.logLines ?? [],
             resultText: ex.resultText ?? "",
-            resultsBySkill: ex.resultText
-              ? { ...(s[ticketId]?.resultsBySkill || {}), [ex.skillName || "implement-ticket-v2"]: ex.resultText }
-              : s[ticketId]?.resultsBySkill,
             error: ex.errorMessage ?? "",
             prUrl: ex.prUrl ?? "",
             branch: ex.branch ?? "",
@@ -713,18 +791,22 @@ export default function TicketExecutor() {
     if (target) hydrateExecution(selectedId, target.id, target.skillName);
   }, [selectedId, history, execs, hydrateExecution]);
 
-  const startImplement = useCallback(
-    async (e?: MouseEvent, skillOverride?: string, prUrl?: string) => {
-      fireBoltFromEvent(e, { big: true });
-      const t = tickets.find((x) => x.id === selectedId);
-      if (!t) return;
+  // Core "start a run for this ticket" logic, usable both for the selected
+  // ticket's CTA button and for batch runs kicked off from multi-select
+  // (which may target tickets other than the one currently in view).
+  // `isActive` gates the UI side-effects (tab switch, reactor mode, gate
+  // toast) that only make sense for the ticket the user is actively looking at.
+  // Resolves to whether the run actually started.
+  const runTicket = useCallback(
+    async (t: Ticket, opts?: { skillOverride?: string; prUrl?: string; isActive?: boolean }): Promise<boolean> => {
+      const { skillOverride, prUrl, isActive = t.id === selectedId } = opts ?? {};
       const cur = execs[t.id];
-      if (cur && cur.status === "running") return;
+      if (cur && cur.status === "running") return false;
       // Guard: only statuses with a runnable action can start a run.
       const status0 = getStatus(t);
       if (!skillOverride && !actionInfoFor(status0)) {
-        showToast(`Ticket status "${status0}" has no runnable action yet.`);
-        return;
+        if (isActive) showToast(`Ticket status "${status0}" has no runnable action yet.`);
+        return false;
       }
       requestNotify();
       const skillName = skillOverride || getSkill(t);
@@ -744,14 +826,16 @@ export default function TicketExecutor() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: projectName, rootRepo }),
       }).catch(() => {});
-      setTab("execution");
+      if (isActive) setTab("execution");
       setExecs((s) => ({
         ...s,
-        [t.id]: { status: "running", logLines: [], resultText: "", resultsBySkill: s[t.id]?.resultsBySkill || {}, error: "" },
+        [t.id]: { status: "running", logLines: [], resultText: "", error: "" },
       }));
-      try {
-        window.__reactor?.setMode("running");
-      } catch { }
+      if (isActive) {
+        try {
+          window.__reactor?.setMode("running");
+        } catch { }
+      }
       try {
         const r = await fetch(`/api/tickets/${t.id}/implement`, {
           method: "POST",
@@ -778,11 +862,12 @@ export default function TicketExecutor() {
               error: data.error || "Failed to start execution",
             },
           }));
-          window.__reactor?.setMode("idle");
-          return;
+          if (isActive) window.__reactor?.setMode("idle");
+          return false;
         }
         setExecs((s) => ({ ...s, [t.id]: { ...s[t.id], executionId: data.executionId } }));
         startPolling(t.id, data.executionId);
+        return true;
       } catch (err) {
         setExecs((s) => ({
           ...s,
@@ -793,10 +878,71 @@ export default function TicketExecutor() {
             error: err instanceof Error ? err.message : String(err),
           },
         }));
+        return false;
       }
     },
-    [tickets, selectedId, execs, overrides, settings, fireBoltFromEvent, startPolling, rememberOption]
+    [selectedId, execs, overrides, settings, startPolling, rememberOption]
   );
+
+  const startImplement = useCallback(
+    (e?: MouseEvent, skillOverride?: string, prUrl?: string) => {
+      fireBoltFromEvent(e, { big: true });
+      const t = tickets.find((x) => x.id === selectedId);
+      if (!t) return;
+      void runTicket(t, { skillOverride, prUrl, isActive: true });
+    },
+    [tickets, selectedId, runTicket, fireBoltFromEvent]
+  );
+
+  // Pull queued batch tickets in as slots free up, capped by settings.concurrentRuns.
+  // Exposed via a ref (tryStartNextQueuedRef) so the startPolling completion
+  // handler — memoized separately — always calls the current version.
+  const tryStartNextQueued = useCallback(() => {
+    const cap = Math.max(1, settings.concurrentRuns || 2);
+    while (batchRunningRef.current.size < cap && batchQueueRef.current.length > 0) {
+      const nextId = batchQueueRef.current.shift()!;
+      setQueuedIds((s) => {
+        const n = new Set(s);
+        n.delete(nextId);
+        return n;
+      });
+      const nt = tickets.find((x) => x.id === nextId);
+      if (!nt) continue;
+      batchRunningRef.current.add(nextId);
+      void runTicket(nt, { isActive: nextId === selectedId }).then((started) => {
+        if (!started) {
+          batchRunningRef.current.delete(nextId);
+          tryStartNextQueuedRef.current();
+        }
+      });
+    }
+  }, [settings.concurrentRuns, tickets, selectedId, runTicket]);
+  tryStartNextQueuedRef.current = tryStartNextQueued;
+
+  // "Run selected" — start up to the concurrency cap immediately, queue the rest.
+  const runSelected = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const cap = Math.max(1, settings.concurrentRuns || 2);
+    const toStartNow = ids.slice(0, cap);
+    const toQueue = ids.slice(cap);
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setQueuedIds(new Set(toQueue));
+    batchQueueRef.current = toQueue;
+    toStartNow.forEach((id) => {
+      const nt = tickets.find((x) => x.id === id);
+      if (!nt) return;
+      batchRunningRef.current.add(id);
+      void runTicket(nt, { isActive: id === selectedId }).then((started) => {
+        if (!started) {
+          batchRunningRef.current.delete(id);
+          tryStartNextQueuedRef.current();
+        }
+      });
+    });
+    showToast(`Started ${toStartNow.length} run${toStartNow.length === 1 ? "" : "s"}${toQueue.length ? `, ${toQueue.length} queued` : ""}`);
+  }, [selectedIds, settings.concurrentRuns, tickets, selectedId, runTicket, showToast]);
 
   const cancelImplement = useCallback(
     async (e?: MouseEvent) => {
@@ -847,8 +993,8 @@ export default function TicketExecutor() {
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
   // Switching provider immediately reloads the sprint/tickets for that provider.
-  const onProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const provider = e.target.value as ProviderId;
+  const onProviderChange = (label: string) => {
+    const provider = PROVIDERS.find((p) => p.name === label)?.id ?? DEFAULT_PROVIDER;
     setSettings((s) => ({ ...s, provider }));
     setConnTest({ status: "idle", message: "" });
     loadSprintOptions(provider);
@@ -1093,16 +1239,24 @@ export default function TicketExecutor() {
   const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),
-  // keeping the results of every run this ticket has been through.
-  const resultsBySkill: Record<string, string> =
-    ex?.resultsBySkill && Object.keys(ex.resultsBySkill).length
-      ? ex.resultsBySkill
-      : ex?.resultText
-        ? { "implement-ticket-v2": ex.resultText }
-        : {};
-  const resultSections = Object.keys(resultsBySkill)
-    .sort((a, b) => RESULT_SKILL_ORDER.indexOf(a) - RESULT_SKILL_ORDER.indexOf(b))
-    .map((sk) => ({ key: sk, title: RESULT_SKILL_TITLE[sk] || sk, markdown: resultsBySkill[sk] }));
+  // one section per completed run this ticket has been through (not just the
+  // latest of each skill) — sourced from history so it survives page reloads.
+  const completedRuns = (t ? history[t.id] : undefined)?.filter((r) => r.status === "completed" && r.resultText) ?? [];
+  const runsPerSkill = completedRuns.reduce<Record<string, number>>((acc, r) => {
+    acc[r.skillName] = (acc[r.skillName] ?? 0) + 1;
+    return acc;
+  }, {});
+  const resultSections = completedRuns
+    .map((r) => ({
+      key: r.id,
+      skill: r.skillName,
+      title: runsPerSkill[r.skillName] > 1
+        ? `${RESULT_SKILL_TITLE[r.skillName] || r.skillName} — ${new Date(r.startedAt).toLocaleString()}`
+        : RESULT_SKILL_TITLE[r.skillName] || r.skillName,
+      markdown: r.resultText!,
+      filesChanged: r.filesChanged ?? [],
+    }))
+    .sort((a, b) => RESULT_SKILL_ORDER.indexOf(a.skill) - RESULT_SKILL_ORDER.indexOf(b.skill));
 
   const EMPTY_REVIEW: ReviewData = { pr: null, comments: [], unresolvedCount: 0 };
   const ticketReview: ReviewData = t ? reviews[t.id] ?? EMPTY_REVIEW : EMPTY_REVIEW;
@@ -1206,17 +1360,42 @@ export default function TicketExecutor() {
               <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
-              </div>
-              <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
-                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
+              {selectMode ? (
+                <>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: "13px", fontWeight: 600, color: "#C7CCD8", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
+                    {selectedIds.size} selected
+                  </div>
+                  <button onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }} style={{ ...ctaButtonStyle("outline"), height: "36px" }}>Cancel</button>
+                  <button
+                    onClick={runSelected}
+                    disabled={selectedIds.size === 0}
+                    style={{ ...ctaButtonStyle("primary"), height: "36px", opacity: selectedIds.size === 0 ? 0.5 : 1, cursor: selectedIds.size === 0 ? "not-allowed" : "pointer" }}
+                  >
+                    Run selected
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
+                  </div>
+                  <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+                    {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
+                title="Select multiple tickets"
+                style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
               </button>
             </div>
-            {filtersOpen && (
-              <div style={{ display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
+            {!selectMode && filtersOpen && (
+              <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
                 {([
                   { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
                   { v: fType, set: setFType, label: "Type", opts: typeOptions },
@@ -1293,14 +1472,17 @@ export default function TicketExecutor() {
             {!loading && filtered.map((tk, i) => {
               const sel = tk.id === selectedId;
               const est = execStatusOf(tk.id);
+              const checked = selectedIds.has(tk.id);
+              const queued = queuedIds.has(tk.id);
+              const highlighted = selectMode ? checked : sel;
               const rowStyle: CSSProperties = {
                 position: "relative", overflow: "hidden", flexShrink: 0, display: "flex", flexDirection: "column",
                 gap: "6px", padding: "12px 13px 12px 15px", borderRadius: "11px", cursor: "pointer", textAlign: "left",
                 transition: "transform .22s cubic-bezier(.2,.8,.2,1), border-color .2s, background .2s, box-shadow .22s",
                 animation: "fadeUp .45s both", animationDelay: i * 45 + "ms",
-                border: sel ? "1px solid " + ACCENT : "1px solid #1A1E25",
-                background: sel ? "rgba(251,114,80,.07)" : "#111419",
-                boxShadow: sel ? "0 10px 34px -18px " + ACCENT : "none",
+                border: highlighted ? "1px solid " + ACCENT : "1px solid #1A1E25",
+                background: highlighted ? "rgba(251,114,80,.07)" : "#111419",
+                boxShadow: highlighted ? "0 10px 34px -18px " + ACCENT : "none",
               };
               const railStyle: CSSProperties = {
                 position: "absolute", left: "0", top: "9px", bottom: "9px", width: "3px", borderRadius: "0 3px 3px 0",
@@ -1309,14 +1491,46 @@ export default function TicketExecutor() {
                 transition: "transform .3s cubic-bezier(.2,.8,.2,1)",
               };
               return (
-                <button key={tk.id} onClick={(e) => selectTicket(tk.id, e)} style={rowStyle}>
+                <button
+                  key={tk.id}
+                  onClick={(e) => {
+                    if (selectMode) {
+                      setSelectedIds((s) => {
+                        const n = new Set(s);
+                        if (n.has(tk.id)) n.delete(tk.id); else n.add(tk.id);
+                        return n;
+                      });
+                    } else {
+                      selectTicket(tk.id, e);
+                    }
+                  }}
+                  style={rowStyle}
+                >
                   <span style={railStyle} />
-                  {sel && <span style={{ position: "absolute", inset: 0, borderRadius: "11px", padding: "1.6px", background: "conic-gradient(from var(--angle),transparent 0deg,var(--accent) 55deg,#ffd2c2 92deg,var(--accent) 128deg,transparent 185deg,transparent 360deg)", WebkitMask: "linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0)", WebkitMaskComposite: "xor", maskComposite: "exclude", animation: "spinAngle 2.8s linear infinite", pointerEvents: "none", zIndex: 2 }} />}
+                  {highlighted && <span style={{ position: "absolute", inset: 0, borderRadius: "11px", padding: "1.6px", background: "conic-gradient(from var(--angle),transparent 0deg,var(--accent) 55deg,#ffd2c2 92deg,var(--accent) 128deg,transparent 185deg,transparent 360deg)", WebkitMask: "linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0)", WebkitMaskComposite: "xor", maskComposite: "exclude", animation: "spinAngle 2.8s linear infinite", pointerEvents: "none", zIndex: 2 }} />}
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {selectMode && (
+                      <span style={{ width: "16px", height: "16px", borderRadius: "4px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", border: checked ? "none" : "1.5px solid #3A4150", background: checked ? "var(--accent)" : "transparent" }}>
+                        {checked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0B0C10" strokeWidth="3.2"><path d="M5 13l4 4L19 7" /></svg>}
+                      </span>
+                    )}
                     <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", fontWeight: 600, color: "var(--accent)" }}>#{tk.id}</span>
                     <span style={typeBadge(tk.type)}>{tk.type}</span>
                     <div style={{ flex: 1 }} />
-                    <span style={{ ...execDot(est) }} />
+                    {queued ? (
+                      <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.1)", border: COLORS.warning + "55", size: "xs", weight: 700 })}>Queued</span>
+                    ) : est === "running" ? (
+                      <span
+                        title="Running"
+                        style={{
+                          width: "12px", height: "12px", borderRadius: "50%", flex: "0 0 auto",
+                          border: `1.6px solid ${EXEC_COLOR.running}33`, borderTopColor: EXEC_COLOR.running,
+                          animation: "spin .8s linear infinite",
+                        }}
+                      />
+                    ) : (
+                      <span style={{ ...execDot(est) }} />
+                    )}
                   </div>
                   <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "1px" }}>
@@ -1342,15 +1556,28 @@ export default function TicketExecutor() {
                   <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
                   <span style={typeBadge(t.type)}>{t.type}</span>
                   <div ref={statusMenuRef} style={{ position: "relative" }}>
-                    <button onClick={() => setStatusMenuOpen((o) => !o)} style={statusPillActive(effStatus)}>
+                    <button
+                      onClick={() => {
+                        const next = !statusMenuOpen;
+                        setStatusMenuOpen(next);
+                        if (next) loadStatusMenuOptions(t);
+                      }}
+                      style={statusPillActive(effStatus)}
+                    >
                       {effStatus}
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: statusMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
                     </button>
                     {statusMenuOpen && (
                       <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "190px", maxHeight: "280px" }) }}>
-                        {STATUS_ALL.map((s) => (
-                          <button key={s} onClick={(e) => selectStatus(t.id, s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: "12.5px", fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
-                        ))}
+                        {statusMenuLoading ? (
+                          <div style={{ padding: "8px 10px", fontSize: "12px", color: "#5B6273" }}>Loading…</div>
+                        ) : statusMenuOptions.length === 0 ? (
+                          <div style={{ padding: "8px 10px", fontSize: "12px", color: "#5B6273", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
+                        ) : (
+                          statusMenuOptions.map((s) => (
+                            <button key={s} onClick={(e) => selectStatus(t.id, s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: "12.5px", fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
+                          ))
+                        )}
                       </div>
                     )}
                   </div>
@@ -1360,6 +1587,18 @@ export default function TicketExecutor() {
                   <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
                   <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{selProject}</span></span>
                   <span style={selExecPillStyle}><span style={{ ...execDot(st), width: "7px", height: "7px" }} />{EXEC_LABEL[st]}</span>
+                  {t.url && (
+                    <a
+                      href={t.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => fireBoltFromEvent(e as unknown as MouseEvent)}
+                      style={{ display: "flex", alignItems: "center", gap: "6px", color: COLORS.indigo, textDecoration: "none", fontWeight: 600 }}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>
+                      Open Ticket
+                    </a>
+                  )}
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
@@ -1676,6 +1915,29 @@ export default function TicketExecutor() {
                         <div className="md-body">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{rs.markdown}</ReactMarkdown>
                         </div>
+                        {rs.filesChanged.length > 0 && (
+                          <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <div style={{ fontSize: "11px", letterSpacing: ".08em", fontWeight: 700, color: "#5B6273", textTransform: "uppercase" }}>
+                              Files changed ({rs.filesChanged.length})
+                            </div>
+                            {rs.filesChanged.map((fc) => (
+                              <button
+                                key={fc.path}
+                                onClick={() => setDiffFile(fc)}
+                                style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 11px", borderRadius: "9px", cursor: "pointer", ...ringBorder({ fill: "#111419", duration: 4.5, cornerPx: 7 }) }}
+                              >
+                                <span style={{
+                                  fontFamily: "var(--font-mono), monospace", fontSize: "10.5px", fontWeight: 700, flex: "0 0 auto", width: "16px", textAlign: "center",
+                                  color: fc.changeType === "added" ? "#35D6A4" : fc.changeType === "deleted" ? "#FF6B6B" : fc.changeType === "renamed" ? "#9BA6E8" : "#F5B341",
+                                }}>
+                                  {fc.changeType === "added" ? "A" : fc.changeType === "deleted" ? "D" : fc.changeType === "renamed" ? "R" : "M"}
+                                </span>
+                                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#C7CCD8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{fc.path}</span>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2" style={{ flex: "0 0 auto" }}><path d="M9 6l6 6-6 6" /></svg>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1689,15 +1951,50 @@ export default function TicketExecutor() {
       {/* Settings modal */}
       {settingsOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={closeSettings}>
-          <div style={{ width: "540px", maxWidth: "100%", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 22px", borderBottom: "1px solid #1E232C" }}>
-              <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "16px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Connect your work-tracking provider &amp; execution defaults</div></div>
-              <button onClick={closeSettings} style={{ width: "26px", height: "26px", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+          <div style={{ width: "600px", maxWidth: "100%", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 28px", borderBottom: "1px solid #1E232C" }}>
+              <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "17px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12.5px", color: "#6B7283", marginTop: "3px" }}>Connect your work-tracking provider &amp; execution defaults</div></div>
+              <button onClick={closeSettings} style={{ width: "28px", height: "28px", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             </div>
-            <div style={{ padding: "22px", display: "flex", flexDirection: "column", gap: "16px" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>PROVIDER</span><select value={settings.provider} onChange={onProviderChange} style={{ ...fieldInputStyle, fontFamily: "var(--font-hanken), sans-serif", cursor: "pointer", appearance: "none", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A90A0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>{PROVIDERS.map((p) => (<option key={p.id} value={p.id} style={{ background: "#14171D" }}>{p.name}</option>))}</select></label>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
-              <label style={{ display: "flex", flexDirection: "column", gap: "7px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
+            <div style={{ padding: "26px 28px", display: "flex", flexDirection: "column", gap: "20px" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabelStyle}>PROVIDER</span>
+                <div style={{ ...card({ padding: "0 13px", background: "#0E1015" }), height: "40px", display: "flex", alignItems: "center" }}>
+                  <SelectMenu value={pm.name} onChange={onProviderChange} options={PROVIDERS.map((p) => p.name)} ariaLabel="Provider" />
+                </div>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabelStyle}>SCOPE</span>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  {(["team", "personal"] as const).map((sc) => {
+                    const active = settings.scope === sc;
+                    return (
+                      <button
+                        key={sc}
+                        onClick={() => setSettings((s) => ({ ...s, scope: sc }))}
+                        style={{
+                          flex: 1, height: "40px", fontSize: "13px", fontWeight: 700, cursor: "pointer",
+                          textTransform: "capitalize", color: active ? "#F3F5F9" : "#8A90A0",
+                          ...(active
+                            ? ringBorder({ fill: "#171A21", duration: 3.4, cornerPx: 7 })
+                            : { border: "1.5px solid #262B36", background: "#0E1015", clipPath: clipCorner(7) }),
+                        }}
+                      >
+                        {sc}
+                      </button>
+                    );
+                  })}
+                </div>
+              </label>
+              {settings.scope === "personal" && (
+                <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <span style={fieldLabelStyle}>YOUR {pm.name.toUpperCase()} ACCOUNT</span>
+                  <input value={settings.personalAccount} onChange={setField("personalAccount")} placeholder="you@company.com or display name" style={fieldInputStyle} />
+                  <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Only tickets assigned to this account and PR review notifications it authored will be shown.</span>
+                </label>
+              )}
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
               <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
                 <button onClick={testConnection} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)" }}>
                   {connTest.status === "testing" ? <span style={{ width: "13px", height: "13px", borderRadius: "50%", border: "2px solid rgba(199,204,216,.3)", borderTopColor: "#C7CCD8", display: "inline-block", animation: "spin .7s linear infinite" }} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
@@ -1711,6 +2008,19 @@ export default function TicketExecutor() {
                 )}
               </div>
               <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Root repo, project and skill are set per ticket on the Overview tab. The current sprint is loaded automatically from the selected provider.</span>
+              <div style={{ height: "1px", background: "#1E232C" }} />
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabelStyle}>CONCURRENT RUNS</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={settings.concurrentRuns}
+                  onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))}
+                  style={{ ...fieldInputStyle, width: "120px" }}
+                />
+                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Runs beyond this limit wait in a queue until a slot frees up.</span>
+              </label>
               <div style={{ height: "1px", background: "#1E232C" }} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
                 <div>
@@ -1744,9 +2054,47 @@ export default function TicketExecutor() {
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "18px 22px", borderTop: "1px solid #1E232C", background: "#101318" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "20px 28px", borderTop: "1px solid #1E232C", background: "#101318" }}>
               <button onClick={closeSettings} style={{ height: "32px", padding: "0 16px", border: "1.5px solid #2A2F3A", background: "transparent", color: "#C7CCD8", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", transition: "border-color .15s,color .15s,transform .12s" }}>Cancel</button>
               <button onClick={saveSettings} style={{ height: "32px", padding: "0 18px", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File diff popup */}
+      {diffFile && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 55, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={() => setDiffFile(null)}>
+          <div style={{ width: "820px", maxWidth: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #1E232C", flex: "0 0 auto" }}>
+              <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", fontWeight: 700, color: "#F3F5F9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{diffFile.path}</span>
+              <button onClick={() => setDiffFile(null)} style={{ width: "26px", height: "26px", flex: "0 0 auto", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+            </div>
+            <div className="te-scroll" style={{ flex: 1, overflow: "auto", padding: "14px 0", fontFamily: "var(--font-mono), monospace", fontSize: "12px", lineHeight: 1.6 }}>
+              {diffFile.diff.trim() ? (
+                diffFile.diff.split(/\r?\n/).map((line, i) => {
+                  const isAdd = line.startsWith("+") && !line.startsWith("+++");
+                  const isDel = line.startsWith("-") && !line.startsWith("---");
+                  const isHunk = line.startsWith("@@");
+                  const isMeta = line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("+++") || line.startsWith("---");
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        padding: "1px 20px",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        color: isAdd ? "#5BE8B8" : isDel ? "#FF8F8F" : isHunk ? "#9BA6E8" : isMeta ? "#5B6273" : "#C7CCD8",
+                        background: isAdd ? "rgba(53,214,164,.08)" : isDel ? "rgba(255,107,107,.08)" : "transparent",
+                      }}
+                    >
+                      {line || " "}
+                    </div>
+                  );
+                })
+              ) : (
+                <div style={{ padding: "0 20px", color: "#5B6273" }}>No diff content available for this file.</div>
+              )}
             </div>
           </div>
         </div>
