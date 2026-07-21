@@ -32,3 +32,6 @@
 
 # playwright mcp local output
 .playwright-mcp/
+
+# design reference prototype (not part of the app)
+Ticket-Executor project/
