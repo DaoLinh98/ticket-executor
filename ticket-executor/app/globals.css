@@ -46,20 +46,28 @@ input{font-family:inherit;}
 @property --angle{syntax:'<angle>';initial-value:0deg;inherits:false;}
 @keyframes spinAngle{to{--angle:360deg;}}
 
-/* markdown (Result tab) — inherits prototype palette */
+/* markdown (Result tab, Plan tab) — inherits prototype palette */
 .md-body{font-size:14.5px;line-height:1.75;color:#B8BDC9;}
-.md-body h1,.md-body h2,.md-body h3{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:22px 0 10px;line-height:1.25;}
-.md-body h1{font-size:20px;}.md-body h2{font-size:17px;}.md-body h3{font-size:15px;}
+.md-body>*:first-child{margin-top:0;}
+.md-body h1,.md-body h2,.md-body h3{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:26px 0 12px;line-height:1.25;}
+.md-body h1{font-size:20px;}
+.md-body h2{font-size:15.5px;letter-spacing:.02em;text-transform:uppercase;padding-left:11px;border-left:3px solid var(--accent);}
+.md-body h3{font-size:14.5px;color:#DEE1E9;}
 .md-body p{margin:0 0 12px;}
 .md-body ul,.md-body ol{margin:0 0 12px;padding-left:22px;}
-.md-body li{margin:4px 0;}
+.md-body li{margin:5px 0;}
+.md-body li::marker{color:#5B6273;}
+.md-body hr{border:none;border-top:1px solid #1E232C;margin:22px 0;}
+.md-body blockquote{margin:0 0 12px;padding:9px 14px;border-left:3px solid #2A2F3A;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:#8A90A0;}
 .md-body a{color:#9BA6E8;}
 .md-body code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:#0A0B0E;border:1px solid #23272F;border-radius:5px;padding:1px 5px;color:#C7CCD8;}
 .md-body pre{background:#0A0B0E;border:1px solid #23272F;border-radius:12px;padding:15px 17px;overflow-x:auto;margin:0 0 14px;}
 .md-body pre code{border:none;background:none;padding:0;}
 .md-body strong{color:#E4E7EE;}
-.md-body table{border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;}
-.md-body th,.md-body td{border:1px solid #1E232C;padding:7px 11px;text-align:left;}
+.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:13px;border-radius:9px;overflow:hidden;border:1px solid #1E232C;}
+.md-body th,.md-body td{border:1px solid #1E232C;padding:8px 12px;text-align:left;}
+.md-body th{background:#151922;color:#C7CCD8;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+.md-body tbody tr:nth-child(even){background:rgba(255,255,255,.015);}
 
 /* Global interaction feedback — every button/link across the app gets the
    same lively hover lift + energetic press-down, so no clickable element

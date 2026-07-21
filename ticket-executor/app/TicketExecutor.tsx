@@ -6,14 +6,17 @@ import Reactor from "./Reactor";
 import { BoltLayer, useBolts } from "./Bolts";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
+import CommitFilesModal from "./ticket-executor/CommitFilesModal";
 import DiffModal from "./ticket-executor/DiffModal";
 import LoadingRing from "./ticket-executor/LoadingRing";
 import SettingsModal from "./ticket-executor/SettingsModal";
 import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
 import Toast from "./ticket-executor/Toast";
+import CommitsTab from "./ticket-executor/tabs/CommitsTab";
 import ExecutionTab from "./ticket-executor/tabs/ExecutionTab";
 import OverviewTab from "./ticket-executor/tabs/OverviewTab";
+import PlanTab from "./ticket-executor/tabs/PlanTab";
 import ResolveReviewTab from "./ticket-executor/tabs/ResolveReviewTab";
 import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
@@ -23,7 +26,7 @@ import { deriveStep, reviewFingerprint } from "./ticket-executor/helpers";
 import type {
   Action, ConnTest, ExecView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
-import type { ExecStatus, FileChange, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
+import type { CommitFile, CommitSummary, ExecStatus, FileChange, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import {
@@ -81,15 +84,26 @@ export default function TicketExecutor() {
     pat: "",
     hasPat: false,
     animatedBackground: true,
+    autoImplement: true,
     scope: "team",
     personalAccount: "",
     concurrentRuns: 2,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
+  const [commits, setCommits] = useState<Record<string, CommitSummary[]>>({});
+  const [openCommit, setOpenCommit] = useState<CommitSummary | null>(null);
+  const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
   const [reviewReadMap, setReviewReadMap] = useState<Record<string, { seen: string; readAt: string }>>({});
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
+  // Mirror of selectedId for use inside stable callbacks (SSE handlers) without
+  // re-memoizing them on every selection change.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  // Per-ticket "resolving the plan" flag — disables the Plan tab's buttons while
+  // the approve/revise/cancel POST is in flight.
+  const [planBusy, setPlanBusy] = useState<Record<string, boolean>>({});
 
   const { bolts, flashes, fireBolt, fireBoltFromEvent } = useBolts();
   const logRef = useRef<HTMLDivElement>(null);
@@ -277,6 +291,36 @@ export default function TicketExecutor() {
     if (selectedId && tab === "resolve-review") loadReview(selectedId, settings.provider);
   }, [selectedId, tab, settings.provider, loadReview]);
 
+  // Fetch the linked PR's commit list — refetched every time the Commits tab
+  // is (re)opened, same freshness policy as Resolve Review.
+  const loadCommits = useCallback(async (ticketId: string, provider: ProviderId) => {
+    if (!ticketId) return;
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/commits?provider=${provider}`);
+      const data = await r.json();
+      setCommits((s) => ({ ...s, [ticketId]: Array.isArray(data.commits) ? data.commits : [] }));
+    } catch {
+      setCommits((s) => ({ ...s, [ticketId]: [] }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedId && tab === "commits") loadCommits(selectedId, settings.provider);
+  }, [selectedId, tab, settings.provider, loadCommits]);
+
+  // Open the commit-files popup for one commit, lazily fetching its per-file diffs.
+  const openCommitFiles = useCallback(async (ticketId: string, provider: ProviderId, commit: CommitSummary) => {
+    setOpenCommit(commit);
+    setCommitFiles(null);
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/commits/${commit.sha}?provider=${provider}`);
+      const data = await r.json();
+      setCommitFiles(Array.isArray(data.files) ? data.files : []);
+    } catch {
+      setCommitFiles([]);
+    }
+  }, []);
+
   // Load the bell's read/unread bookkeeping (persisted across reloads).
   useEffect(() => {
     try {
@@ -356,9 +400,12 @@ export default function TicketExecutor() {
           branch: ex.branch ?? "",
           duration: ex.duration,
           currentStep: ex.currentStep,
+          phase: ex.phase,
+          planStatus: ex.planStatus,
+          planMarkdown: ex.planMarkdown,
         },
       }));
-      setTab(ex.status === "completed" ? "result" : "execution");
+      setTab(ex.status === "completed" ? "result" : ex.status === "awaiting-approval" ? "plan" : "execution");
     } catch {
       /* ignore */
     }
@@ -468,7 +515,15 @@ export default function TicketExecutor() {
   // Note: use `??` (not `||`) against the override so that clearing a field to ""
   // stays empty instead of instantly snapping back to the fallback default.
   const getArea = (t: Ticket) => overrides[t.id]?.area ?? t.project;
-  const getSkill = (t: Ticket) => overrides[t.id]?.skill ?? (actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL);
+  // The Implement action maps to implement-ticket-v3 (plan-review flow) by default;
+  // the "Auto-implementation" setting flips it back to the original one-shot v2 flow.
+  // An explicit per-ticket skill override always wins over both.
+  const getSkill = (t: Ticket) => {
+    if (overrides[t.id]?.skill) return overrides[t.id]!.skill!;
+    const resolved = actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL;
+    if (resolved === "implement-ticket-v3" && settings.autoImplement) return "implement-ticket-v2";
+    return resolved;
+  };
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "C:\\repos";
   const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
@@ -581,8 +636,25 @@ export default function TicketExecutor() {
           branch: (ex.branch as string) ?? "",
           duration: ex.duration as string | undefined,
           currentStep: ex.currentStep as number,
+          phase: ex.phase as ExecView["phase"],
+          planStatus: ex.planStatus as ExecView["planStatus"],
+          planMarkdown: (ex.planMarkdown as string) ?? s[ticketId]?.planMarkdown,
         },
       }));
+
+      // Plan gate: the run parked itself with no live process. Stop the stream,
+      // free any batch slot, surface the plan for review — but run none of the
+      // completion side effects (status sync, PR toast, history reload).
+      if (status === "awaiting-approval") {
+        stopTracking(executionId);
+        try { window.__reactor?.setMode("idle"); } catch { }
+        if (ticketId === selectedIdRef.current) setTab("plan");
+        showToast(`#${ticketId} — plan ready for review`);
+        notify("Ticket Executor", `#${ticketId} plan is ready for your review`);
+        if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
+        return true;
+      }
+
       if (status !== "completed" && status !== "failed") return false;
 
       stopTracking(executionId);
@@ -703,6 +775,9 @@ export default function TicketExecutor() {
             branch: ex.branch ?? "",
             duration: ex.duration,
             currentStep: ex.currentStep,
+            phase: ex.phase,
+            planStatus: ex.planStatus,
+            planMarkdown: ex.planMarkdown,
           },
         }));
         if (ex.status === "running") {
@@ -727,7 +802,7 @@ export default function TicketExecutor() {
     if (!selectedId) return;
     const list = history[selectedId];
     if (!list || execs[selectedId]) return;
-    const running = list.find((r) => r.status === "running");
+    const running = list.find((r) => r.status === "running" || r.status === "awaiting-approval");
     const completedWithPr = list.find((r) => r.status === "completed" && r.prUrl);
     const target = running ?? completedWithPr ?? list[0];
     if (target) hydrateExecution(selectedId, target.id, target.skillName);
@@ -743,7 +818,7 @@ export default function TicketExecutor() {
     async (t: Ticket, opts?: { skillOverride?: string; prUrl?: string; isActive?: boolean }): Promise<boolean> => {
       const { skillOverride, prUrl, isActive = t.id === selectedId } = opts ?? {};
       const cur = execs[t.id];
-      if (cur && cur.status === "running") return false;
+      if (cur && (cur.status === "running" || cur.status === "awaiting-approval")) return false;
       // Guard: only statuses with a runnable action can start a run.
       const status0 = getStatus(t);
       if (!skillOverride && !actionInfoFor(status0)) {
@@ -901,6 +976,45 @@ export default function TicketExecutor() {
     [tickets, selectedId, execs, fireBoltFromEvent]
   );
 
+  // Resolve a run parked at the plan gate. On approve/revise the run resumes,
+  // so we flip it back to "running" locally and re-attach the live stream; on
+  // cancel it becomes a failed run. `plan` is the (possibly edited) markdown.
+  const resolvePlan = useCallback(
+    async (ticketId: string, action: "approve" | "revise" | "cancel", plan?: string, feedback?: string) => {
+      const execId = execs[ticketId]?.executionId;
+      if (!execId) return;
+      setPlanBusy((b) => ({ ...b, [ticketId]: true }));
+      try {
+        const r = await fetch(`/api/executions/${execId}/plan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, plan, feedback }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          showToast(data.error || "Failed to resolve the plan", 3600, "error");
+          return;
+        }
+        if (action === "cancel") {
+          setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], status: "failed", error: "Plan rejected — run cancelled." } }));
+          showToast(`#${ticketId} run cancelled`);
+          loadHistory(ticketId);
+          return;
+        }
+        // Approve or revise → the run is live again; resume tracking it.
+        setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], status: "running", planStatus: action === "approve" ? "approved" : "rejected" } }));
+        if (ticketId === selectedIdRef.current) {
+          setTab(action === "approve" ? "execution" : "plan");
+          try { window.__reactor?.setMode("running"); } catch { }
+        }
+        startPolling(ticketId, execId);
+      } finally {
+        setPlanBusy((b) => ({ ...b, [ticketId]: false }));
+      }
+    },
+    [execs, showToast, loadHistory, startPolling]
+  );
+
   const selectTicket = (id: string, e?: MouseEvent) => {
     fireBoltFromEvent(e);
     const ex = execs[id];
@@ -1003,7 +1117,7 @@ export default function TicketExecutor() {
 
   // ---- derived ----
   const execStatusOf = (id: string): ExecStatus => execs[id]?.status ?? "not started";
-  const activeCount = Object.values(execs).filter((e) => e.status === "running").length;
+  const activeCount = Object.values(execs).filter((e) => e.status === "running" || e.status === "awaiting-approval").length;
   const reviewBadgeCount = reviewSummary.filter((r) => reviewReadMap[r.ticketId]?.seen !== reviewFingerprint(r)).length;
 
   const q = search.trim().toLowerCase();
@@ -1027,6 +1141,10 @@ export default function TicketExecutor() {
   const st: ExecStatus = ex ? ex.status : "not started";
   const execEnabled = st !== "not started";
   const resultEnabled = st === "completed";
+  // The Plan tab exists only for a two-phase run that has produced (or is
+  // producing) a plan — i.e. once a v3 run is underway.
+  const planEnabled = !!ex?.planMarkdown || st === "awaiting-approval" || (ex?.phase === "plan" && st === "running");
+  const planBusyForSel = t ? !!planBusy[t.id] : false;
 
   const tabStyle = (name: string, enabled: boolean): CSSProperties => {
     const active = tab === name;
@@ -1063,6 +1181,12 @@ export default function TicketExecutor() {
       playIcon: false,
       onClick: cancelImplement,
       style: ctaButtonStyle("warning"),
+    };
+  else if (st === "awaiting-approval")
+    action = {
+      label: "Review Plan", spinner: false, playIcon: false,
+      onClick: (e) => { fireBoltFromEvent(e); setTab("plan"); },
+      style: ctaButtonStyle("ghost"),
     };
   else if (st === "completed")
     action = {
@@ -1141,7 +1265,7 @@ export default function TicketExecutor() {
     let sst: "pending" | "active" | "done" | "failed" = "pending";
     if (st === "completed") sst = "done";
     else if (st === "failed") sst = i < cur ? "done" : i === cur ? "failed" : "pending";
-    else if (st === "running") sst = i < cur ? "done" : i === cur ? "active" : "pending";
+    else if (st === "running" || st === "awaiting-approval") sst = i < cur ? "done" : i === cur ? "active" : "pending";
     const last = i === STEPS.length - 1;
     const db: CSSProperties = {
       position: "relative", width: "24px", height: "24px", borderRadius: "50%",
@@ -1179,7 +1303,7 @@ export default function TicketExecutor() {
     } as CSSProperties,
   }));
   const logStatusMap: Record<ExecStatus, [string, string]> = {
-    running: ["running", "#F5B341"], completed: ["done", "#35D6A4"], failed: ["failed", "#FF6B6B"], "not started": ["idle", "#5B6273"],
+    running: ["running", "#F5B341"], "awaiting-approval": ["plan review", "#9BA6E8"], completed: ["done", "#35D6A4"], failed: ["failed", "#FF6B6B"], "not started": ["idle", "#5B6273"],
   };
   const [lsl, lsc] = logStatusMap[st];
   const logStatusStyle: CSSProperties = {
@@ -1319,6 +1443,8 @@ export default function TicketExecutor() {
                 setTab={setTab}
                 tabStyle={tabStyle}
                 execEnabled={execEnabled}
+                planEnabled={planEnabled}
+                planNeedsReview={st === "awaiting-approval"}
                 resultEnabled={resultEnabled}
                 unresolvedCount={ticketReview.unresolvedCount}
                 action={action}
@@ -1369,12 +1495,31 @@ export default function TicketExecutor() {
                   />
                 )}
 
+                {tab === "plan" && ex && (
+                  <PlanTab
+                    plan={ex.planMarkdown ?? ""}
+                    awaiting={st === "awaiting-approval"}
+                    busy={planBusyForSel}
+                    onApprove={(plan) => resolvePlan(t.id, "approve", plan)}
+                    onRevise={(plan, feedback) => resolvePlan(t.id, "revise", plan, feedback)}
+                    onCancel={() => resolvePlan(t.id, "cancel")}
+                  />
+                )}
+
                 {tab === "resolve-review" && (
                   <ResolveReviewTab
                     review={ticketReview}
                     fixReviewRunning={fixReviewRunning}
                     fixReviewDisabled={fixReviewDisabled}
                     onFixReview={(e, prUrl) => startImplement(e, "fix-code-review-v2", prUrl)}
+                  />
+                )}
+
+                {tab === "commits" && (
+                  <CommitsTab
+                    pr={ticketReview.pr}
+                    commits={commits[t.id] ?? null}
+                    onOpenCommit={(commit) => openCommitFiles(t.id, settings.provider, commit)}
                   />
                 )}
 
@@ -1409,6 +1554,14 @@ export default function TicketExecutor() {
       )}
 
       {diffFile && <DiffModal file={diffFile} onClose={() => setDiffFile(null)} />}
+
+      {openCommit && (
+        <CommitFilesModal
+          commit={openCommit}
+          files={commitFiles}
+          onClose={() => { setOpenCommit(null); setCommitFiles(null); }}
+        />
+      )}
 
       {toast && <Toast toast={toast} />}
     </div>

@@ -109,6 +109,35 @@ export default function SettingsModal({
           <div style={{ height: "1px", background: "#1E232C" }} />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
             <div>
+              <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Auto-implementation</div>
+              <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                On: run to a PR in one shot (<span style={{ fontFamily: "var(--font-mono), monospace" }}>implement-ticket-v2</span>).<br />
+                Off: draft a plan and wait for your review before coding (<span style={{ fontFamily: "var(--font-mono), monospace" }}>implement-ticket-v3</span>).
+              </div>
+            </div>
+            <button
+              onClick={() => setSettings((s) => ({ ...s, autoImplement: !s.autoImplement }))}
+              aria-pressed={settings.autoImplement}
+              title="Toggle auto-implementation mode"
+              style={{
+                position: "relative", flex: "0 0 auto", width: "42px", height: "24px", borderRadius: "999px",
+                border: "none", cursor: "pointer",
+                background: settings.autoImplement ? "var(--accent)" : "#2A2F3A",
+                transition: "background .18s",
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute", top: "3px", left: settings.autoImplement ? "21px" : "3px",
+                  width: "18px", height: "18px", borderRadius: "50%", background: "#0B0C10",
+                  transition: "left .18s",
+                }}
+              />
+            </button>
+          </div>
+          <div style={{ height: "1px", background: "#1E232C" }} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+            <div>
               <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Animated background</div>
               <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Turn off to freeze the 3D reactor backdrop.</div>
             </div>

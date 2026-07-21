@@ -1,5 +1,5 @@
 import { prisma } from "../prisma";
-import type { ExecStatus, FileChange } from "../types";
+import type { ExecPhase, ExecStatus, FileChange, PlanStatus } from "../types";
 import { fmtDuration, safeParseJson, safeParseLogs } from "./format";
 import { store } from "./store";
 
@@ -23,6 +23,9 @@ export function getExecution(id: string) {
     branch: e.branch,
     currentStep: e.currentStep,
     filesChanged: e.filesChanged,
+    phase: e.phase,
+    planStatus: e.planStatus,
+    planMarkdown: e.planMarkdown,
     duration: e.completedAt ? fmtDuration(e.completedAt - e.startedAt) : undefined,
     startedAt: new Date(e.startedAt).toISOString(),
     completedAt: e.completedAt ? new Date(e.completedAt).toISOString() : null,
@@ -50,6 +53,9 @@ export async function getPersistedExecution(id: string) {
     branch: r.branch,
     currentStep: r.currentStep,
     filesChanged: safeParseJson<FileChange[]>(r.filesChanged, []),
+    phase: r.phase as ExecPhase,
+    planStatus: r.planStatus as PlanStatus,
+    planMarkdown: r.planMarkdown,
     duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
     startedAt: r.startedAt.toISOString(),
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,

@@ -12,6 +12,10 @@ model Setting {
   id             String   @id @default("default")
   provider       String   @default("azure-devops") // azure-devops | github | jira | gitlab
   animatedBackground Boolean @default(true)
+  // Auto-implementation mode. true → the original one-shot flow (implement-ticket-v2,
+  // runs to a PR without stopping). false → the two-phase plan-review flow
+  // (implement-ticket-v3, parks for plan approval before touching code).
+  autoImplement  Boolean  @default(true)
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
   concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
@@ -34,8 +38,16 @@ model Execution {
   adoTicketId  String
   projectName  String
   skillName    String
-  status       String    @default("running") // running | completed | failed
+  status       String    @default("running") // running | awaiting-approval | completed | failed
   command      String
+  // Two-phase (implement-ticket-v3) run state. sessionId + worktreePath are what
+  // let an approval resume the same Claude session after a server restart, when
+  // the in-memory entry is gone.
+  sessionId    String    @default("")
+  worktreePath String    @default("")
+  phase        String    @default("implement") // plan | implement
+  planStatus   String    @default("none") // none | pending | approved | rejected
+  planMarkdown String    @default("")
   resultText   String    @default("")
   errorMessage String    @default("")
   logLines     String    @default("[]") // JSON-encoded LogLine[]

@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEvent } from "react";
-import type { ExecStatus, FileChange, LogLine } from "@/lib/types";
+import type { ExecPhase, ExecStatus, FileChange, LogLine, PlanStatus } from "@/lib/types";
 import type { ProviderId } from "@/lib/providers";
 
 // What the UI knows about the run currently attached to a ticket.
@@ -14,6 +14,10 @@ export type ExecView = {
   branch?: string;
   duration?: string;
   currentStep?: number;
+  // Two-phase (implement-ticket-v3) run state — drives the Plan tab.
+  phase?: ExecPhase;
+  planStatus?: PlanStatus;
+  planMarkdown?: string;
 };
 
 // One row of a ticket's run history (from the DB).
@@ -36,13 +40,14 @@ export type SettingsView = {
   pat: string;
   hasPat: boolean;
   animatedBackground: boolean;
+  autoImplement: boolean;
   scope: "team" | "personal";
   personalAccount: string;
   concurrentRuns: number;
 };
 
-// The four detail-pane tabs.
-export type TabId = "overview" | "execution" | "resolve-review" | "result";
+// The detail-pane tabs.
+export type TabId = "overview" | "execution" | "plan" | "resolve-review" | "commits" | "result";
 
 // Per-ticket Overview overrides.
 export type OverrideField = "area" | "skill" | "rootRepo" | "model" | "effort";

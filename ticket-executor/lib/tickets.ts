@@ -1,6 +1,12 @@
-import type { Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
-import { adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState } from "./ado";
-import { getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus } from "./github";
+import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
+import {
+  adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  getPullRequestCommits, getCommitFileChanges,
+} from "./ado";
+import {
+  getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
+  getGithubPullRequestCommits, getGithubCommitFiles,
+} from "./github";
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
@@ -98,13 +104,18 @@ export async function loadReview(provider: ProviderId, ticketId: string): Promis
 async function loadGithubReview(ticketId: string): Promise<ReviewData> {
   const creds = await githubCreds();
   if (!creds) return { pr: null, comments: [], unresolvedCount: 0 };
+  const prUrl = await githubPrUrlForTicket(ticketId);
+  if (!prUrl) return { pr: null, comments: [], unresolvedCount: 0 };
+  return getGithubPullRequestReview(prUrl, creds.token);
+}
+
+async function githubPrUrlForTicket(ticketId: string): Promise<string | null> {
   const exec = await prisma.execution.findFirst({
     where: { adoTicketId: ticketId, NOT: { prUrl: "" } },
     orderBy: { startedAt: "desc" },
     select: { prUrl: true },
   });
-  if (!exec?.prUrl) return { pr: null, comments: [], unresolvedCount: 0 };
-  return getGithubPullRequestReview(exec.prUrl, creds.token);
+  return exec?.prUrl || null;
 }
 
 async function githubCreds(): Promise<{ url: string; token: string } | null> {
@@ -112,6 +123,33 @@ async function githubCreds(): Promise<{ url: string; token: string } | null> {
   const url = (c?.org ?? "").trim();
   const token = decryptSecret(c?.pat);
   return url && token ? { url, token } : null;
+}
+
+// Load every commit on the ticket's linked PR source branch. Azure DevOps and
+// GitHub are wired; other providers report no commits (Commits tab stays empty).
+export async function loadPullRequestCommits(provider: ProviderId, ticketId: string): Promise<CommitSummary[]> {
+  if (provider === "azure-devops") return getPullRequestCommits(ticketId);
+  if (provider === "github") {
+    const creds = await githubCreds();
+    if (!creds) return [];
+    const prUrl = await githubPrUrlForTicket(ticketId);
+    if (!prUrl) return [];
+    return getGithubPullRequestCommits(prUrl, creds.token);
+  }
+  return [];
+}
+
+// Load the file changes (each with a unified diff) for a single commit.
+export async function loadCommitFileChanges(provider: ProviderId, ticketId: string, sha: string): Promise<CommitFile[]> {
+  if (provider === "azure-devops") return getCommitFileChanges(ticketId, sha);
+  if (provider === "github") {
+    const creds = await githubCreds();
+    if (!creds) return [];
+    const prUrl = await githubPrUrlForTicket(ticketId);
+    if (!prUrl) return [];
+    return getGithubCommitFiles(prUrl, sha, creds.token);
+  }
+  return [];
 }
 
 // Real, per-provider workflow states for a ticket's status dropdown — never a

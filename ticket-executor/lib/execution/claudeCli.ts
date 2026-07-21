@@ -28,8 +28,12 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
 
   if (type === "system" && obj.subtype === "init") {
     const model = (obj as { model?: string }).model ?? "";
+    const sid = (obj as { session_id?: string }).session_id ?? "";
+    // Trust the CLI's own id over the one we pre-assigned — --resume must use
+    // exactly what the session was actually recorded under.
+    if (sid) entry.sessionId = sid;
     entry.logLines.push({ text: `● Session started${model ? " — " + model : ""}`, kind: "step" });
-    bump(entry, 0);
+    if (entry.phase === "plan") bump(entry, 0);
     return;
   }
   if (type === "assistant") {
@@ -44,7 +48,7 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
       } else if (block.type === "tool_use") {
         const name = String(block.name ?? "");
         const input = (block.input ?? {}) as Record<string, unknown>;
-        const step = stepForTool(name, input);
+        const step = stepForTool(name, input, entry.phase);
         bump(entry, step);
         let label = `✎ ${name}`;
         if (name.toLowerCase() === "bash" && typeof input.command === "string") {

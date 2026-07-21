@@ -11,7 +11,7 @@ export async function POST(
   const { id } = await params;
   try {
     const body = await req.json().catch(() => ({}));
-    const skill = String(body.skillName || "implement-ticket-v2");
+    const skill = String(body.skillName || "implement-ticket-v3");
     const project = String(body.projectName || "");
     const rootRepo = String(body.rootRepo || process.env.CLAUDE_ROOT_REPO || "C:\\repos");
     const prUrl = typeof body.prUrl === "string" ? body.prUrl : undefined;

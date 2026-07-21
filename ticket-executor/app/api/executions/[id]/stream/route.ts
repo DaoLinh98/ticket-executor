@@ -39,7 +39,10 @@ export async function GET(
           return;
         }
         send(execution);
-        if (execution.status === "completed" || execution.status === "failed") {
+        // "awaiting-approval" is terminal for the stream too: no child process is
+        // running, and the run only moves again once the user resolves the plan
+        // (the client reopens the stream after that).
+        if (execution.status === "completed" || execution.status === "failed" || execution.status === "awaiting-approval") {
           controller.close();
           closed = true;
           return;

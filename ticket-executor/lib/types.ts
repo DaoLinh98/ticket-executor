@@ -18,7 +18,14 @@ export type TicketComment = {
   text: string; // plain text (may contain @mentions and newlines)
 };
 
-export type ExecStatus = "not started" | "running" | "completed" | "failed";
+// "awaiting-approval": the plan phase finished and the run is parked, holding no
+// child process, until the user accepts / asks for changes / cancels the plan.
+export type ExecStatus = "not started" | "running" | "awaiting-approval" | "completed" | "failed";
+
+// Which half of a two-phase (implement-ticket-v3) run the entry is in.
+export type ExecPhase = "plan" | "implement";
+
+export type PlanStatus = "none" | "pending" | "approved" | "rejected";
 
 export type LogLine = { text: string; kind: string };
 
@@ -75,6 +82,20 @@ export type ReviewData = {
   comments: ReviewComment[];
   unresolvedCount: number;
 };
+
+// One commit on a PR's source branch — powers the Commits tab's list.
+export type CommitSummary = {
+  sha: string;
+  shortSha: string;
+  message: string;
+  author: string;
+  date: string; // ISO
+  url?: string;
+};
+
+// One file changed by a single commit, with its unified diff — powers the
+// Commits tab's per-commit file-changes popup.
+export type CommitFile = FileChange & { additions: number; deletions: number };
 
 export type ReviewSummaryEntry = {
   ticketId: string;

@@ -3,15 +3,25 @@ import type { ExecStatus } from "./types";
 
 // ---- Ported verbatim from the prototype's renderVals() ----
 
+// The workflow timeline. Index 4 ("Awaiting your review") is the plan gate: a
+// two-phase implement-ticket-v3 run parks there until the user resolves the plan.
+// Steps 0-3 belong to the plan phase, 5-9 to the implement phase — keep this in
+// sync with stepForTool() in lib/execution/steps.ts, which maps by index.
 export const STEPS = [
-  "Resolve project root",
-  "Read ticket · ADO MCP",
+  "Prepare workspace",
+  "Read ticket",
+  "Analyze codebase",
+  "Draft plan",
+  "Awaiting your review",
   "Create branch",
   "Implement changes",
   "Run verification",
-  "Commit changes",
+  "Commit & push",
   "Open pull request",
 ];
+
+// Index of the plan-review gate within STEPS.
+export const PLAN_GATE_STEP = 4;
 
 const TYPES: Record<string, { c: string; bg: string }> = {
   Feature: { c: "#9B8CFF", bg: "rgba(155,140,255,.13)" },
@@ -77,14 +87,14 @@ export type ActionInfo = { label: string; skill: string };
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
   if (IMPLEMENTABLE_STATES.has(s))
-    return { label: "Implement Ticket", skill: "implement-ticket-v2" };
+    return { label: "Implement Ticket", skill: "implement-ticket-v3" };
   // if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
   return null;
 }
 
 // The status a ticket moves to once a given skill's run completes (simulated ADO sync).
 export function nextStatusAfter(skill: string, current: string): string {
-  if (skill === "implement-ticket-v2") return "Code Review";
+  if (skill === "implement-ticket-v2" || skill === "implement-ticket-v3") return "Code Review";
   // if (skill === "senior-code-review") return "Ready for QA";
   return current;
 }
@@ -92,6 +102,7 @@ export function nextStatusAfter(skill: string, current: string): string {
 export const EXEC_COLOR: Record<ExecStatus, string> = {
   "not started": "#5B6273",
   running: "#F5B341",
+  "awaiting-approval": "#9BA6E8",
   completed: "#35D6A4",
   failed: "#FF6B6B",
 };
@@ -99,6 +110,7 @@ export const EXEC_COLOR: Record<ExecStatus, string> = {
 export const EXEC_LABEL: Record<ExecStatus, string> = {
   "not started": "Not started",
   running: "Running",
+  "awaiting-approval": "Plan ready for review",
   completed: "Completed",
   failed: "Failed",
 };
@@ -289,7 +301,7 @@ export function pill(opts: {
 // Action-button factory — the accent-filled primary CTA, the success/warning
 // state buttons, and the outline/ghost secondary buttons all come from here.
 export function ctaButtonStyle(
-  variant: "primary" | "success" | "warning" | "outline" | "ghost",
+  variant: "primary" | "success" | "warning" | "danger" | "outline" | "ghost",
   opts?: { height?: string; cornerPx?: 6 | 7 | 8 },
 ): CSSProperties {
   const height = opts?.height ?? "32px";
@@ -338,6 +350,18 @@ export function ctaButtonStyle(
         ring: COLORS.warning,
         highlight: COLORS.warning,
         duration: 1.6,
+        cornerPx,
+      }),
+    };
+  if (variant === "danger")
+    return {
+      ...base,
+      color: "#FFB3AD",
+      ...ringBorder({
+        fill: "#2E1A1C",
+        ring: COLORS.danger,
+        highlight: "#ffd3ce",
+        duration: 4.2,
         cornerPx,
       }),
     };

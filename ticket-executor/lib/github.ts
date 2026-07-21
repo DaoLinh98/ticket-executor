@@ -1,4 +1,6 @@
 import type {
+  CommitFile,
+  CommitSummary,
   PullRequestOverview,
   ReviewComment,
   ReviewData,
@@ -247,6 +249,75 @@ export async function getGithubPullRequestReview(
     comments,
     unresolvedCount: comments.filter((c) => c.status === "open").length,
   };
+}
+
+type GhCommitListNode = {
+  sha: string;
+  html_url: string;
+  commit: { message: string; author?: { name?: string; date?: string } };
+  author?: { login?: string } | null;
+};
+
+// ---- Commits tab ----
+
+/** List every commit on the PR's source branch, oldest first (as GitHub returns them). */
+export async function getGithubPullRequestCommits(
+  prUrl: string,
+  token: string,
+): Promise<CommitSummary[]> {
+  const ref = parsePrUrl(prUrl);
+  if (!ref) return [];
+  const res = await fetch(
+    `https://api.github.com/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/commits?per_page=100`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as GhCommitListNode[];
+  return data.map((c) => ({
+    sha: c.sha,
+    shortSha: c.sha.slice(0, 7),
+    message: c.commit.message.split(/\r?\n/)[0],
+    author: c.commit.author?.name ?? c.author?.login ?? "Unknown",
+    date: c.commit.author?.date ?? "",
+    url: c.html_url,
+  }));
+}
+
+type GhCommitFileNode = {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch?: string;
+};
+
+const GH_CHANGE_TYPE: Record<string, CommitFile["changeType"]> = {
+  added: "added",
+  removed: "deleted",
+  renamed: "renamed",
+};
+
+/** Per-file changes for one commit — GitHub's commit API already returns a text patch per file. */
+export async function getGithubCommitFiles(
+  prUrl: string,
+  sha: string,
+  token: string,
+): Promise<CommitFile[]> {
+  const ref = parsePrUrl(prUrl);
+  if (!ref) return [];
+  const res = await fetch(
+    `https://api.github.com/repos/${ref.owner}/${ref.repo}/commits/${sha}`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { files?: GhCommitFileNode[] };
+  return (data.files ?? []).map((f) => ({
+    path: f.filename,
+    changeType: GH_CHANGE_TYPE[f.status] ?? "modified",
+    diff: f.patch ? `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch}` : "",
+    additions: f.additions,
+    deletions: f.deletions,
+  }));
 }
 
 export async function getGithubIssues(

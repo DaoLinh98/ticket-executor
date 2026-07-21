@@ -24,6 +24,8 @@ type Props = {
   setTab: (tab: TabId) => void;
   tabStyle: (name: string, enabled: boolean) => CSSProperties;
   execEnabled: boolean;
+  planEnabled: boolean;
+  planNeedsReview: boolean;
   resultEnabled: boolean;
   unresolvedCount: number;
   // CTA
@@ -37,7 +39,7 @@ type Props = {
 export default function TicketDetailHeader({
   ticket: t, effStatus, projectName, status: st, execPillStyle, onOpenTicketLink,
   statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus,
-  tab, setTab, tabStyle, execEnabled, resultEnabled, unresolvedCount, action, gated, secondaryAction,
+  tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
   return (
     <div style={{ position: "relative", zIndex: 1, flex: "0 0 auto", padding: "20px 28px 0" }}>
@@ -101,12 +103,19 @@ export default function TicketDetailHeader({
       <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
         <button onClick={() => setTab("overview")} style={tabStyle("overview", true)}>Overview</button>
         <button onClick={() => execEnabled && setTab("execution")} style={tabStyle("execution", execEnabled)}>Execution</button>
+        {planEnabled && (
+          <button onClick={() => setTab("plan")} style={{ ...tabStyle("plan", true), display: "flex", alignItems: "center", gap: "6px" }}>
+            Plan
+            {planNeedsReview && <span style={{ ...pill({ color: "#0B0C10", background: COLORS.indigo, size: "xs", weight: 700 }), padding: "1px 6px" }}>review</span>}
+          </button>
+        )}
         <button onClick={() => setTab("resolve-review")} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
           Resolve Review
           {unresolvedCount > 0 && (
             <span style={{ ...pill({ color: "#0B0C10", background: "var(--accent)", size: "xs", weight: 700 }), padding: "1px 6px" }}>{unresolvedCount}</span>
           )}
         </button>
+        <button onClick={() => setTab("commits")} style={tabStyle("commits", true)}>Commits</button>
         <button onClick={() => resultEnabled && setTab("result")} style={tabStyle("result", resultEnabled)}>Result</button>
         <div style={{ flex: 1 }} />
         <div style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>

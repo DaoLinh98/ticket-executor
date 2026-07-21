@@ -7,6 +7,6 @@
 //   steps.ts      — tool-call → workflow-step inference (STEPS in lib/ui.ts)
 //   claudeCli.ts  — CLI args and the NDJSON stream-json turn runner
 //   queries.ts    — read models (in-memory, persisted, history)
-//   runner.ts     — worktree isolation, run lifecycle, cancellation
+//   runner.ts     — worktree isolation, run lifecycle, plan gate, cancellation
 export { getExecution, getPersistedExecution, listExecutions } from "./execution/queries";
-export { cancelExecution, startExecution } from "./execution/runner";
+export { cancelExecution, isTwoPhaseSkill, resolvePlan, startExecution, type PlanAction } from "./execution/runner";

@@ -1,6 +1,7 @@
-import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview } from "./types";
+import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview, CommitSummary, CommitFile } from "./types";
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
+import { buildUnifiedDiff } from "./diffText";
 
 const API = "api-version=7.0";
 
@@ -403,4 +404,93 @@ export async function getPullRequestReview(ticketId: string): Promise<ReviewData
   }
 
   return { pr, comments, unresolvedCount: comments.filter((c) => c.status === "open").length };
+}
+
+// ---- Commits tab ----
+
+type RawCommitRef = {
+  commitId: string;
+  comment?: string;
+  author?: { name?: string; date?: string };
+};
+
+/** List every commit on the PR's source branch, newest first (as ADO returns them). */
+export async function getPullRequestCommits(ticketId: string): Promise<CommitSummary[]> {
+  await loadCreds();
+  const ref = await getLinkedPullRequestRef(ticketId);
+  if (!ref) return [];
+
+  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}/commits?${API}`;
+  const data = await adoGet<{ value?: RawCommitRef[] }>(url);
+  return (data.value ?? []).map((c) => ({
+    sha: c.commitId,
+    shortSha: c.commitId.slice(0, 7),
+    message: (c.comment ?? "").split(/\r?\n/)[0],
+    author: c.author?.name ?? "Unknown",
+    date: c.author?.date ?? "",
+    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
+  }));
+}
+
+type RawCommitChange = { item?: { path?: string; isFolder?: boolean }; changeType?: string };
+type RawCommitDetail = { parents?: string[] };
+
+const COMMIT_CHANGE_TYPE: Record<string, CommitFile["changeType"]> = {
+  add: "added",
+  delete: "deleted",
+};
+
+function commitChangeType(raw: string): CommitFile["changeType"] {
+  if (COMMIT_CHANGE_TYPE[raw]) return COMMIT_CHANGE_TYPE[raw];
+  if (raw.toLowerCase().includes("rename")) return "renamed";
+  return "modified";
+}
+
+/** Fetch raw file content at a given commit, or null if the path didn't exist there. */
+async function adoGetItemText(repositoryId: string, path: string, sha: string): Promise<string | null> {
+  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/git/repositories/${repositoryId}/items?path=${encodeURIComponent(
+    path
+  )}&versionDescriptor.version=${sha}&versionDescriptor.versionType=commit&${API}&$format=text`;
+  const res = await fetch(url, { headers: authHeader(), cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`ADO ${res.status} ${res.statusText} — ${url}`);
+  return res.text();
+}
+
+const MAX_COMMIT_FILES = 60; // guard against pathological commits touching hundreds of files
+
+/** Per-file changes for one commit, each with a unified diff built from before/after content. */
+export async function getCommitFileChanges(ticketId: string, sha: string): Promise<CommitFile[]> {
+  await loadCreds();
+  const ref = await getLinkedPullRequestRef(ticketId);
+  if (!ref) return [];
+  const { repositoryId } = ref;
+
+  const [changesData, detail] = await Promise.all([
+    adoGet<{ changes?: RawCommitChange[] }>(
+      `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_apis/git/repositories/${repositoryId}/commits/${sha}/changes?${API}`
+    ),
+    adoGet<RawCommitDetail>(
+      `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_apis/git/repositories/${repositoryId}/commits/${sha}?${API}`
+    ),
+  ]);
+  const parentSha = detail.parents?.[0];
+
+  const files = (changesData.changes ?? []).filter((c) => c.item?.path && !c.item.isFolder).slice(0, MAX_COMMIT_FILES);
+  const results: CommitFile[] = [];
+  for (const c of files) {
+    const path = c.item!.path!;
+    const changeType = commitChangeType(c.changeType ?? "edit");
+    const [oldContent, newContent] = await Promise.all([
+      changeType === "added" || !parentSha ? Promise.resolve(null) : adoGetItemText(repositoryId, path, parentSha).catch(() => null),
+      changeType === "deleted" ? Promise.resolve(null) : adoGetItemText(repositoryId, path, sha).catch(() => null),
+    ]);
+    const { diff, additions, deletions } = buildUnifiedDiff(path, oldContent, newContent);
+    results.push({ path, changeType, diff, additions, deletions });
+  }
+  return results;
 }
