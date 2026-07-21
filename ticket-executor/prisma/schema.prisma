@@ -19,6 +19,9 @@ model Setting {
   animatedBackground Boolean @default(true)
   claudeModel    String   @default("claude-sonnet-5")
   claudeEffort   String   @default("medium")
+  scope          String   @default("team") // team | personal
+  personalAccount String  @default("") // email or display name to filter by when scope = "personal"
+  concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
   updatedAt      DateTime @updatedAt
 }
 
@@ -38,6 +41,7 @@ model Execution {
   branch       String    @default("")
   model        String    @default("")
   effort       String    @default("")
+  filesChanged String    @default("[]") // JSON-encoded FileChange[]
   startedAt    DateTime  @default(now())
   completedAt  DateTime?
 

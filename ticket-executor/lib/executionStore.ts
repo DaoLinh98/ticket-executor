@@ -2,7 +2,7 @@ import { spawn, execSync, type ChildProcess } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
 import { prisma } from "./prisma";
-import type { ExecStatus, LogLine } from "./types";
+import type { ExecStatus, FileChange, LogLine } from "./types";
 import { STEPS } from "./ui";
 
 type Entry = {
@@ -21,6 +21,8 @@ type Entry = {
   branch: string;
   currentStep: number;
   cwd: string;
+  baseSha: string;
+  filesChanged: FileChange[];
   startedAt: number;
   completedAt: number | null;
   child: ChildProcess | null;
@@ -61,11 +63,42 @@ function fmtDuration(ms: number): string {
   return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
+const CHANGE_TYPE: Record<string, FileChange["changeType"]> = {
+  A: "added", D: "deleted", M: "modified", R: "renamed",
+};
+const MAX_DIFF_CHARS = 20000; // per-file cap so one huge generated file doesn't bloat the DB row
+
+// Diffs the worktree's current HEAD (after the skill's own commit(s)) against the commit
+// the worktree branched from, so the Result tab can show exactly what this run changed.
+function collectFileChanges(cwd: string, baseSha: string): FileChange[] {
+  try {
+    const nameStatus = execSync(`git -C "${cwd}" diff --name-status "${baseSha}" HEAD`, { encoding: "utf8" });
+    const files: FileChange[] = [];
+    for (const line of nameStatus.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const parts = line.split("\t");
+      const code = parts[0][0];
+      const filePath = parts[0].startsWith("R") ? parts[2] : parts[1];
+      if (!filePath) continue;
+      let diff = "";
+      try {
+        diff = execSync(`git -C "${cwd}" diff "${baseSha}" HEAD -- "${filePath}"`, { encoding: "utf8", maxBuffer: 1024 * 1024 * 10 });
+      } catch {
+        diff = "";
+      }
+      if (diff.length > MAX_DIFF_CHARS) diff = diff.slice(0, MAX_DIFF_CHARS) + "\n… (diff truncated)";
+      files.push({ path: filePath, changeType: CHANGE_TYPE[code] ?? "modified", diff });
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 // ---- optional guardrails via env ----
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MCP_CONFIG = process.env.CLAUDE_MCP_CONFIG || ""; // path to MCP json; empty = inherit
 const MAX_BUDGET = process.env.CLAUDE_MAX_BUDGET_USD || ""; // e.g. "5"
-const USE_WORKTREE = process.env.CLAUDE_USE_WORKTREE === "1";
 const EXTRA = (process.env.CLAUDE_EXTRA_ARGS ?? "").split(" ").filter(Boolean);
 
 function commonArgs(): string[] {
@@ -120,10 +153,20 @@ export function getExecution(id: string) {
     prUrl: e.prUrl,
     branch: e.branch,
     currentStep: e.currentStep,
+    filesChanged: e.filesChanged,
     duration: e.completedAt ? fmtDuration(e.completedAt - e.startedAt) : undefined,
     startedAt: new Date(e.startedAt).toISOString(),
     completedAt: e.completedAt ? new Date(e.completedAt).toISOString() : null,
   };
+}
+
+function safeParseJson<T>(s: string, fallback: T): T {
+  try {
+    const v = JSON.parse(s);
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function safeParseLogs(s: string): LogLine[] {
@@ -155,6 +198,7 @@ export async function getPersistedExecution(id: string) {
     prUrl: r.prUrl,
     branch: r.branch,
     currentStep: r.currentStep,
+    filesChanged: safeParseJson<FileChange[]>(r.filesChanged, []),
     duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
     startedAt: r.startedAt.toISOString(),
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,
@@ -169,7 +213,7 @@ export async function listExecutions(ticketId: string) {
     take: 20,
     select: {
       id: true, status: true, skillName: true, prUrl: true, branch: true,
-      startedAt: true, completedAt: true,
+      resultText: true, filesChanged: true, startedAt: true, completedAt: true,
     },
   });
   return rows.map((r) => ({
@@ -178,6 +222,8 @@ export async function listExecutions(ticketId: string) {
     skillName: r.skillName,
     prUrl: r.prUrl,
     branch: r.branch,
+    resultText: r.resultText,
+    filesChanged: safeParseJson<FileChange[]>(r.filesChanged, []),
     startedAt: r.startedAt.toISOString(),
     duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
   }));
@@ -329,7 +375,7 @@ export async function startExecution(params: {
   const entry: Entry = {
     id, ticketId, project, skill, model, effort, command,
     status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
-    currentStep: 0, cwd: rootRepo, startedAt: Date.now(), completedAt: null,
+    currentStep: 0, cwd: rootRepo, baseSha: "", filesChanged: [], startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false,
   };
   store.set(id, entry);
@@ -340,6 +386,7 @@ export async function startExecution(params: {
     entry.error = error;
     entry.completedAt = Date.now();
     if (status === "completed") entry.currentStep = STEPS.length;
+    if (status === "completed" && entry.baseSha) entry.filesChanged = collectFileChanges(entry.cwd, entry.baseSha);
     entry.logLines.push({
       text: status === "completed" ? `✔ Completed in ${fmtDuration(entry.completedAt - entry.startedAt)}` : `✖ ${error || "Execution failed"}`,
       kind: status === "completed" ? "done" : "fail",
@@ -355,6 +402,7 @@ export async function startExecution(params: {
           currentStep: entry.currentStep,
           prUrl: entry.prUrl,
           branch: entry.branch,
+          filesChanged: JSON.stringify(entry.filesChanged),
           completedAt: new Date(entry.completedAt),
         },
       });
@@ -368,19 +416,20 @@ export async function startExecution(params: {
     return id;
   }
 
-  // Optional Tier 3: isolate the run in a fresh git worktree so concurrent executions against the
-  // same rootRepo/project don't race on one shared working tree. Checked out detached (no branch
+  // Always isolate the run in a fresh git worktree so concurrent executions against the same
+  // rootRepo/project never share one working tree, git index, or HEAD (which previously let one
+  // execution's uncommitted changes leak into another's commit). Checked out detached (no branch
   // of its own) — the skill's own "create a branch" step creates the one real branch, from inside
   // this worktree.
-  if (USE_WORKTREE) {
-    try {
-      const wt = path.join(rootRepo, `.te-worktrees`, `${project}-${id}`);
-      execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
-      entry.cwd = wt;
-      entry.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
-    } catch (e) {
-      entry.logLines.push({ text: `⚠ worktree setup failed, running in repo: ${e instanceof Error ? e.message : e}`, kind: "muted" });
-    }
+  try {
+    const wt = path.join(rootRepo, `.te-worktrees`, `${project}-${id}`);
+    entry.baseSha = execSync(`git -C "${rootRepo}" rev-parse HEAD`).toString().trim();
+    execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
+    entry.cwd = wt;
+    entry.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
+  } catch (e) {
+    await finish("failed", `Failed to set up isolated git worktree: ${e instanceof Error ? e.message : e}. Concurrent executions require worktree isolation to avoid commit leakage between tickets.`);
+    return id;
   }
 
   // Fire-and-forget single turn (Tier 2). The route returns immediately.

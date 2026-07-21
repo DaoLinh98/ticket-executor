@@ -60,3 +60,16 @@ input{font-family:inherit;}
 .md-body strong{color:#E4E7EE;}
 .md-body table{border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;}
 .md-body th,.md-body td{border:1px solid #1E232C;padding:7px 11px;text-align:left;}
+
+/* Global interaction feedback — every button/link across the app gets the
+   same lively hover lift + energetic press-down, so no clickable element
+   ever feels inert. Pseudo-classes only (no JS mouse handlers needed):
+   inline per-element "transition"/"transform" styles still win where set,
+   this just guarantees a consistent baseline everywhere else. */
+button:not(:disabled),a[href]{transition:transform .18s cubic-bezier(.34,1.56,.64,1),filter .18s ease,box-shadow .2s ease;}
+button:not(:disabled):hover,a[href]:hover{transform:translateY(-1px) scale(1.025);filter:brightness(1.12);}
+button:not(:disabled):active,a[href]:active{transform:scale(.94);transition-duration:.08s;filter:brightness(.95);}
+button:disabled{cursor:not-allowed;}
+@media (prefers-reduced-motion: reduce){
+  button:not(:disabled):hover,a[href]:hover,button:not(:disabled):active,a[href]:active{transform:none;}
+}

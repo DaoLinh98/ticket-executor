@@ -21,6 +21,18 @@ async function adoGet<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function adoSend(url: string, method: string, body: unknown, contentType: string): Promise<void> {
+  const res = await fetch(url, {
+    method,
+    headers: { ...authHeader(), "Content-Type": contentType },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ADO ${res.status} ${res.statusText} — ${url}\n${text.slice(0, 300)}`);
+  }
+}
+
 /** Convert ADO rich-text (HTML) to readable plain text. */
 function htmlToText(html: string): string {
   if (!html) return "";
@@ -145,25 +157,44 @@ export async function getSprintTickets(
     for (const w of det.value) {
       const f = w.fields;
       const area = (f["System.AreaPath"] as string) ?? "";
-      const assignedTo = f["System.AssignedTo"] as { displayName?: string } | undefined;
+      const assignedTo = f["System.AssignedTo"] as { displayName?: string; uniqueName?: string } | undefined;
       tickets.push({
         id: String(f["System.Id"]),
         title: (f["System.Title"] as string) ?? "",
         type: (f["System.WorkItemType"] as string) ?? "Task",
         status: (f["System.State"] as string) ?? "New",
         assignee: assignedTo?.displayName ?? "Unassigned",
+        assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
         project: lastAreaSegment(area) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
         description: htmlToText((f["System.Description"] as string) ?? ""),
         criteria: htmlToLines(
           (f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""
         ),
+        url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_workitems/edit/${f["System.Id"]}`,
       });
     }
   }
 
   // Keep ADO's board order roughly stable by id.
   return { tickets, sprintName: iteration.name };
+}
+
+type RawWorkItemState = { name: string };
+
+/** Real workflow states for a work item type (e.g. "Bug", "User Story"), as configured by this project's process template — not a hard-coded guess. */
+export async function getWorkItemTypeStates(type: string): Promise<string[]> {
+  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
+    PROJECT
+  )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
+  const data = await adoGet<{ value: RawWorkItemState[] }>(url);
+  return data.value.map((s) => s.name);
+}
+
+/** Write the work item's State field back to Azure DevOps. */
+export async function updateWorkItemState(id: string, state: string): Promise<void> {
+  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(id)}?${API}`;
+  await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json");
 }
 
 type RawComment = {

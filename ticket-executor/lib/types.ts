@@ -4,10 +4,12 @@ export type Ticket = {
   type: string; // User Story | Bug | Task | Feature | ...
   status: string; // ADO state, e.g. "In Progress"
   assignee: string;
+  assigneeEmail?: string; // used to match Settings' personalAccount in "personal" scope
   project: string; // last segment of area path, or default project
   areaPath: string;
   description: string; // plain text
   criteria: string[]; // acceptance criteria, one line each
+  url: string; // deep link to the ticket in ADO/GitHub
 };
 
 export type TicketComment = {
@@ -19,6 +21,14 @@ export type TicketComment = {
 export type ExecStatus = "not started" | "running" | "completed" | "failed";
 
 export type LogLine = { text: string; kind: string };
+
+// One file touched by a run, with its unified diff against the base commit the
+// worktree started from — powers the Result tab's file-change diff popup.
+export type FileChange = {
+  path: string;
+  changeType: "added" | "modified" | "deleted" | "renamed";
+  diff: string;
+};
 
 export type Execution = {
   id: string;
@@ -32,6 +42,7 @@ export type Execution = {
   logLines: LogLine[];
   resultText: string;
   errorMessage: string;
+  filesChanged?: FileChange[];
   startedAt: string;
   completedAt: string | null;
 };

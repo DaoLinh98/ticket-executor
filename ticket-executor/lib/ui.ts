@@ -58,6 +58,8 @@ const IMPLEMENTABLE_STATES = new Set([
   "ready for development",
   "in progress",
   "active",
+  "todo",
+  "in progress",
 ]);
 
 export function canImplement(status: string): boolean {
@@ -74,7 +76,8 @@ export type ActionInfo = { label: string; skill: string };
 // Returns null when no action applies for that status (button is gated).
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
-  if (IMPLEMENTABLE_STATES.has(s)) return { label: "Implement Ticket", skill: "implement-ticket-v2" };
+  if (IMPLEMENTABLE_STATES.has(s))
+    return { label: "Implement Ticket", skill: "implement-ticket-v2" };
   // if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
   return null;
 }
@@ -85,18 +88,6 @@ export function nextStatusAfter(skill: string, current: string): string {
   // if (skill === "senior-code-review") return "Ready for QA";
   return current;
 }
-
-// Statuses offered in the detail-header status dropdown.
-export const STATUS_ALL = [
-  "New",
-  "Ready for Dev",
-  "Active",
-  "In Progress",
-  "Code Review",
-  "Ready for QA",
-  "Resolved",
-  "Done",
-];
 
 export const EXEC_COLOR: Record<ExecStatus, string> = {
   "not started": "#5B6273",
@@ -162,8 +153,16 @@ type RingOpts = {
 // app (buttons, tabs, pills, panels). Always compose new ring elements through
 // this helper instead of re-typing the gradient stops.
 export function ringBorder(opts: RingOpts): CSSProperties {
-  const { fill, variant = "outline", ring = "var(--accent)", duration = 3.2, shape = "clip", cornerPx = 8 } = opts;
-  const highlight = opts.highlight ?? (variant === "filled" ? "#ffe4d8" : "#ffd8c9");
+  const {
+    fill,
+    variant = "outline",
+    ring = "var(--accent)",
+    duration = 3.2,
+    shape = "clip",
+    cornerPx = 8,
+  } = opts;
+  const highlight =
+    opts.highlight ?? (variant === "filled" ? "#ffe4d8" : "#ffd8c9");
   const conic =
     variant === "filled"
       ? `conic-gradient(from var(--angle), transparent, ${highlight}, transparent 70%)`
@@ -180,28 +179,65 @@ export function ringBorder(opts: RingOpts): CSSProperties {
 
 // Neutral bordered container — the "card" used for meta tiles, comment
 // bubbles, acceptance-criteria rows, past-run rows, etc.
-export function card(opts?: { padding?: string; radius?: string; border?: string; background?: string }): CSSProperties {
-  const { padding = "11px 13px", radius = "10px", border = COLORS.border, background = COLORS.panelBg } = opts || {};
-  return { padding, borderRadius: radius, border: `1px solid ${border}`, background };
+export function card(opts?: {
+  padding?: string;
+  radius?: string;
+  border?: string;
+  background?: string;
+}): CSSProperties {
+  const {
+    padding = "11px 13px",
+    radius = "10px",
+    border = COLORS.border,
+    background = COLORS.panelBg,
+  } = opts || {};
+  return {
+    padding,
+    borderRadius: radius,
+    border: `1px solid ${border}`,
+    background,
+  };
 }
 
 // Color-tinted banner card (success/danger/warning/accent) — result banners,
 // error/notice boxes, the "ready to implement" CTA strip.
-const TINT: Record<"success" | "danger" | "warning" | "accent", { border: string; background: string }> = {
-  success: { border: "#24382F", background: "linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02))" },
+const TINT: Record<
+  "success" | "danger" | "warning" | "accent",
+  { border: string; background: string }
+> = {
+  success: {
+    border: "#24382F",
+    background:
+      "linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02))",
+  },
   danger: { border: "#4A2626", background: "rgba(255,107,107,.06)" },
   warning: { border: "#3A2F22", background: "rgba(245,179,65,.06)" },
-  accent: { border: "#2A2018", background: "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))" },
+  accent: {
+    border: "#2A2018",
+    background:
+      "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))",
+  },
 };
-export function tintedCard(tone: keyof typeof TINT, opts?: { padding?: string; radius?: string }): CSSProperties {
+export function tintedCard(
+  tone: keyof typeof TINT,
+  opts?: { padding?: string; radius?: string },
+): CSSProperties {
   const t = TINT[tone];
   const { padding = "15px 18px", radius = "12px" } = opts || {};
-  return { padding, borderRadius: radius, border: `1px solid ${t.border}`, background: t.background };
+  return {
+    padding,
+    borderRadius: radius,
+    border: `1px solid ${t.border}`,
+    background: t.background,
+  };
 }
 
 // Dropdown/menu panel chrome shared by SprintPicker, Combobox, and the inline
 // status menu in TicketExecutor.tsx.
-export function dropdownPanelStyle(opts?: { minWidth?: string; maxHeight?: string }): CSSProperties {
+export function dropdownPanelStyle(opts?: {
+  minWidth?: string;
+  maxHeight?: string;
+}): CSSProperties {
   return {
     border: `1px solid ${COLORS.border}`,
     borderRadius: "11px",
@@ -209,7 +245,9 @@ export function dropdownPanelStyle(opts?: { minWidth?: string; maxHeight?: strin
     boxShadow: "0 22px 54px -24px #000",
     padding: "5px",
     ...(opts?.minWidth ? { minWidth: opts.minWidth } : {}),
-    ...(opts?.maxHeight ? { maxHeight: opts.maxHeight, overflowY: "auto" } : {}),
+    ...(opts?.maxHeight
+      ? { maxHeight: opts.maxHeight, overflowY: "auto" }
+      : {}),
   };
 }
 
@@ -223,7 +261,13 @@ export function pill(opts: {
   size?: "xs" | "sm" | "md";
   weight?: number;
 }): CSSProperties {
-  const { color, background = "rgba(255,255,255,.04)", border, size = "sm", weight = 600 } = opts;
+  const {
+    color,
+    background = "rgba(255,255,255,.04)",
+    border,
+    size = "sm",
+    weight = 600,
+  } = opts;
   const sizes: Record<"xs" | "sm" | "md", CSSProperties> = {
     xs: { fontSize: "10.5px", padding: "2px 7px" },
     sm: { fontSize: "11px", padding: "2px 9px" },
@@ -246,7 +290,7 @@ export function pill(opts: {
 // state buttons, and the outline/ghost secondary buttons all come from here.
 export function ctaButtonStyle(
   variant: "primary" | "success" | "warning" | "outline" | "ghost",
-  opts?: { height?: string; cornerPx?: 6 | 7 | 8 }
+  opts?: { height?: string; cornerPx?: 6 | 7 | 8 },
 ): CSSProperties {
   const height = opts?.height ?? "32px";
   const cornerPx = opts?.cornerPx ?? 8;
@@ -264,7 +308,12 @@ export function ctaButtonStyle(
     transition: "filter .18s, transform .12s, box-shadow .25s",
   };
   if (variant === "primary")
-    return { ...base, color: "#0B0C10", ...ringBorder({ fill: COLORS.accent, variant: "filled", cornerPx }), animation: undefined };
+    return {
+      ...base,
+      color: "#0B0C10",
+      ...ringBorder({ fill: COLORS.accent, variant: "filled", cornerPx }),
+      animation: undefined,
+    };
   if (variant === "success")
     return {
       ...base,
@@ -272,13 +321,25 @@ export function ctaButtonStyle(
       // Opaque fill (not the translucent rgba used for static success tints) — ringBorder's
       // mask only hides the spinning conic-gradient inside the padding-box when that layer
       // is fully opaque; a translucent fill lets the sweep bleed through the whole button.
-      ...ringBorder({ fill: "#162F2C", ring: COLORS.success, highlight: "#baf5e3", duration: 3, cornerPx }),
+      ...ringBorder({
+        fill: "#162F2C",
+        ring: COLORS.success,
+        highlight: "#baf5e3",
+        duration: 3,
+        cornerPx,
+      }),
     };
   if (variant === "warning")
     return {
       ...base,
       color: "#C7CCD8",
-      ...ringBorder({ fill: "#2A2E38", ring: COLORS.warning, highlight: COLORS.warning, duration: 1.6, cornerPx }),
+      ...ringBorder({
+        fill: "#2A2E38",
+        ring: COLORS.warning,
+        highlight: COLORS.warning,
+        duration: 1.6,
+        cornerPx,
+      }),
     };
   if (variant === "outline")
     return {
@@ -291,12 +352,20 @@ export function ctaButtonStyle(
       animation: undefined,
     };
   // ghost — dark fill + accent ring (the "secondary next action" button)
-  return { ...base, color: "#ECEEF3", ...ringBorder({ fill: "#1A1E25", duration: 3.2, cornerPx }) };
+  return {
+    ...base,
+    color: "#ECEEF3",
+    ...ringBorder({ fill: "#1A1E25", duration: 3.2, cornerPx }),
+  };
 }
 
 export function typeBadge(type: string): CSSProperties {
   const c = TYPES[type] || TYPES.Task;
-  return { ...pill({ color: c.c, background: c.bg, size: "xs", weight: 700 }), borderRadius: "6px", letterSpacing: ".04em" };
+  return {
+    ...pill({ color: c.c, background: c.bg, size: "xs", weight: 700 }),
+    borderRadius: "6px",
+    letterSpacing: ".04em",
+  };
 }
 
 export function statusPill(status: string): CSSProperties {
@@ -317,7 +386,10 @@ export function statusPillActive(status: string): CSSProperties {
 
 // Toast accent colors — success (default) vs error variant. Border/stroke/progress-bar
 // all key off the same tone so a failure toast reads unmistakably differently.
-export function toastStyle(kind: "success" | "error"): { border: string; accent: string } {
+export function toastStyle(kind: "success" | "error"): {
+  border: string;
+  accent: string;
+} {
   return kind === "error"
     ? { border: "#4A2626", accent: COLORS.danger }
     : { border: "#24382F", accent: COLORS.success };
@@ -354,9 +426,17 @@ export function execDot(st: ExecStatus): CSSProperties {
     flex: "0 0 auto",
   };
   if (st === "not started")
-    return { ...base, border: "1.5px solid #3A4150", background: "transparent" };
+    return {
+      ...base,
+      border: "1.5px solid #3A4150",
+      background: "transparent",
+    };
   const c = EXEC_COLOR[st];
-  const o: CSSProperties = { ...base, background: c, boxShadow: "0 0 8px " + c };
+  const o: CSSProperties = {
+    ...base,
+    background: c,
+    boxShadow: "0 0 8px " + c,
+  };
   if (st === "running") o.animation = "pulseDot 1.1s ease-in-out infinite";
   return o;
 }
