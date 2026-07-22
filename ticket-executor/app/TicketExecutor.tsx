@@ -37,6 +37,7 @@ import {
   branchOf,
   clipCorner,
   ctaButtonStyle,
+  isFixReviewSkill,
   nextStatusAfter,
   pill,
   ringBorder,
@@ -85,9 +86,11 @@ export default function TicketExecutor() {
     hasPat: false,
     animatedBackground: true,
     autoImplement: true,
+    autoResolveCodeReview: true,
     scope: "team",
     personalAccount: "",
     concurrentRuns: 2,
+    multiTicketMode: true,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   const [commits, setCommits] = useState<Record<string, CommitSummary[]>>({});
@@ -416,6 +419,15 @@ export default function TicketExecutor() {
     if (tab === "execution" && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   });
 
+  // Multi-select only makes sense in multi-ticket mode — drop out of it if the
+  // setting is turned off while a selection is in progress.
+  useEffect(() => {
+    if (!settings.multiTicketMode && selectMode) {
+      setSelectMode(false);
+      setSelectedIds(new Set());
+    }
+  }, [settings.multiTicketMode, selectMode]);
+
   // Close the status dropdown on outside click.
   useEffect(() => {
     if (!statusMenuOpen) return;
@@ -524,6 +536,10 @@ export default function TicketExecutor() {
     if (resolved === "implement-ticket-v3" && settings.autoImplement) return "implement-ticket-v2";
     return resolved;
   };
+  // Same on/off split as getSkill, for the Resolve Review flow: the
+  // "Auto resolve code review" setting picks the one-shot v2 vs the
+  // plan-review-gated v3.
+  const getReviewSkill = () => (settings.autoResolveCodeReview ? "fix-code-review-v2" : "fix-code-review-v3");
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "C:\\repos";
   const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
@@ -666,18 +682,21 @@ export default function TicketExecutor() {
         // real provider (ADO work item state / GitHub status label) — not just locally.
         const next = nextStatusAfter((ex.skillName as string) ?? "", "");
         if (next) {
-          setStatusOverrides((so) => ({ ...so, [ticketId]: next }));
-          showToast(`#${ticketId} completed — status set to "${next}"`);
-          notify("Ticket Executor", `#${ticketId} completed — status set to "${next}"`);
           try {
             const sr = await fetch(`/api/tickets/${ticketId}/status`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ provider: settings.provider, status: next }),
             });
-            if (!sr.ok) throw new Error((await sr.json().catch(() => ({}))).error || "sync failed");
-          } catch {
-            showToast(`#${ticketId} status sync to the provider failed — update it manually`, 4200, "error");
+            const data = await sr.json().catch(() => ({}));
+            if (!sr.ok) throw new Error(data.error || "sync failed");
+            const applied = (data.status as string) || next;
+            setStatusOverrides((so) => ({ ...so, [ticketId]: applied }));
+            showToast(`#${ticketId} completed — status set to "${applied}"`);
+            notify("Ticket Executor", `#${ticketId} completed — status set to "${applied}"`);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "";
+            showToast(`#${ticketId} status sync to the provider failed${message ? ` — ${message}` : ""}`, 4200, "error");
           }
         } else {
           showToast(`#${ticketId} completed — result ready`);
@@ -687,9 +706,9 @@ export default function TicketExecutor() {
         showToast(`#${ticketId} failed`, 4000, "error");
         notify("Ticket Executor", `#${ticketId} failed`);
       }
-      // A fix-code-review-v2 run resolves PR threads itself — refetch
+      // A fix-code-review run (v2 or v3) resolves PR threads itself — refetch
       // the Resolve Review data so the tab reflects the new state.
-      if (ex.skillName === "fix-code-review-v2") {
+      if (isFixReviewSkill(ex.skillName as string)) {
         setReviews((s) => {
           const { [ticketId]: _drop, ...rest } = s;
           return rest;
@@ -819,6 +838,18 @@ export default function TicketExecutor() {
       const { skillOverride, prUrl, isActive = t.id === selectedId } = opts ?? {};
       const cur = execs[t.id];
       if (cur && (cur.status === "running" || cur.status === "awaiting-approval")) return false;
+      // Single-ticket mode: refuse to start a second run while another ticket
+      // occupies the one slot (mirrors the CTA's disabled state; guards the
+      // batch-run path too, which bypasses that button).
+      if (!settings.multiTicketMode) {
+        const busyId = Object.entries(execs).find(
+          ([id, e]) => id !== t.id && (e.status === "running" || e.status === "awaiting-approval")
+        )?.[0];
+        if (busyId) {
+          if (isActive) showToast(`Ticket #${busyId} is currently running. Multi-ticket mode is off — finish or cancel it first.`);
+          return false;
+        }
+      }
       // Guard: only statuses with a runnable action can start a run.
       const status0 = getStatus(t);
       if (!skillOverride && !actionInfoFor(status0)) {
@@ -1146,6 +1177,14 @@ export default function TicketExecutor() {
   const planEnabled = !!ex?.planMarkdown || st === "awaiting-approval" || (ex?.phase === "plan" && st === "running");
   const planBusyForSel = t ? !!planBusy[t.id] : false;
 
+  // Single-ticket mode: only one run at a time. Find any other ticket currently
+  // occupying the one slot, so this ticket's CTA can be blocked while it does.
+  const busyOtherTicketId = !settings.multiTicketMode
+    ? Object.entries(execs).find(
+        ([id, e]) => id !== selectedId && (e.status === "running" || e.status === "awaiting-approval")
+      )?.[0]
+    : undefined;
+
   const tabStyle = (name: string, enabled: boolean): CSSProperties => {
     const active = tab === name;
     const base: CSSProperties = {
@@ -1194,12 +1233,12 @@ export default function TicketExecutor() {
       onClick: (e) => { fireBoltFromEvent(e); setTab("result"); },
       style: ctaButtonStyle("success"),
     };
-  else if (st === "failed" && ex?.skillName === "fix-code-review-v2")
+  else if (st === "failed" && isFixReviewSkill(ex?.skillName))
     action = {
       label: "Retry Fix Code Review",
       spinner: false,
       playIcon: true,
-      onClick: (e) => startImplement(e, "fix-code-review-v2", t ? reviews[t.id]?.pr?.url : undefined),
+      onClick: (e) => startImplement(e, getReviewSkill(), t ? reviews[t.id]?.pr?.url : undefined),
       style: ctaButtonStyle("primary"),
     };
   else if (st === "failed")
@@ -1219,13 +1258,18 @@ export default function TicketExecutor() {
     action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
   // Gate: a run can only start when the effective status maps to an action.
-  // Exception: retrying a failed fix-code-review-v2 run is always valid — it
-  // isn't driven by ticket status, so it must bypass the status-based gate.
-  const isFixReviewRetry = st === "failed" && ex?.skillName === "fix-code-review-v2";
+  // Exception: retrying a failed fix-code-review run (v2 or v3) is always valid —
+  // it isn't driven by ticket status, so it must bypass the status-based gate.
+  const isFixReviewRetry = st === "failed" && isFixReviewSkill(ex?.skillName);
   const startsNewRun = st === "not started" || st === "failed";
-  const gated = !!t && startsNewRun && !actionInfo && !isFixReviewRetry;
+  // In single-ticket mode, a run already occupying the one slot blocks every
+  // other ticket's CTA, regardless of what action it would otherwise show.
+  const blockedBySingleMode = !!t && !!busyOtherTicketId && (startsNewRun || isFixReviewRetry);
+  const gated = !!t && ((startsNewRun && !actionInfo && !isFixReviewRetry) || blockedBySingleMode);
   if (gated) {
-    const reason = `Ticket status "${effStatus}" has no runnable action yet.`;
+    const reason = blockedBySingleMode
+      ? `Ticket #${busyOtherTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.`
+      : `Ticket status "${effStatus}" has no runnable action yet.`;
     action.onClick = (e) => {
       fireBoltFromEvent(e);
       showToast(reason);
@@ -1250,9 +1294,10 @@ export default function TicketExecutor() {
   const secondaryCtaButtonStyle: CSSProperties = { ...ctaButtonStyle("ghost", { height: "38px" }), padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
 
   const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
-  const ctaTitle = gated ? "No action for this status" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
+  const ctaTitle = blockedBySingleMode ? "Another ticket is running" : gated ? "No action for this status" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
-    ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
+    ? blockedBySingleMode ? `Ticket #${busyOtherTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.`
+      : gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
       : st === "completed" ? "Open the Result tab to review what Claude changed."
         : st === "failed" ? "Fix the blocker below, then retry the run."
           : st === "running" ? "Watch the execution stream on the Execution tab."
@@ -1340,7 +1385,7 @@ export default function TicketExecutor() {
 
   const EMPTY_REVIEW: ReviewData = { pr: null, comments: [], unresolvedCount: 0 };
   const ticketReview: ReviewData = t ? reviews[t.id] ?? EMPTY_REVIEW : EMPTY_REVIEW;
-  const fixReviewRunning = st === "running" && ex?.skillName === "fix-code-review-v2";
+  const fixReviewRunning = (st === "running" || st === "awaiting-approval") && isFixReviewSkill(ex?.skillName);
   const fixReviewDisabled = ticketReview.unresolvedCount === 0 || (st === "running" && !fixReviewRunning);
   const showResultSectionHeader = resultSections.length > 1;
   const showResult = tab === "result" && resultSections.length > 0;
@@ -1399,6 +1444,7 @@ export default function TicketExecutor() {
           statusOptions={statusOptions}
           typeOptions={typeOptions}
           assigneeOptions={assigneeOptions}
+          multiTicketMode={settings.multiTicketMode}
           selectMode={selectMode}
           onToggleSelectMode={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
           onCancelSelect={() => { setSelectMode(false); setSelectedIds(new Set()); }}
@@ -1511,7 +1557,7 @@ export default function TicketExecutor() {
                     review={ticketReview}
                     fixReviewRunning={fixReviewRunning}
                     fixReviewDisabled={fixReviewDisabled}
-                    onFixReview={(e, prUrl) => startImplement(e, "fix-code-review-v2", prUrl)}
+                    onFixReview={(e, prUrl) => startImplement(e, getReviewSkill(), prUrl)}
                   />
                 )}
 

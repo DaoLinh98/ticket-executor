@@ -32,6 +32,7 @@ type Props = {
   statusOptions: string[];
   typeOptions: string[];
   assigneeOptions: string[];
+  multiTicketMode: boolean;
   selectMode: boolean;
   onToggleSelectMode: () => void;
   onCancelSelect: () => void;
@@ -51,7 +52,7 @@ export default function TicketSidebar({
   search, setSearch, filtersOpen, setFiltersOpen, activeFilters, clearFilters,
   fStatus, setFStatus, fType, setFType, fAssignee, setFAssignee,
   statusOptions, typeOptions, assigneeOptions,
-  selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
+  multiTicketMode, selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
   queuedIds, onRunSelected, selectedId, execStatusOf, getStatus, onSelectTicket,
 }: Props) {
   const q = search.trim().toLowerCase();
@@ -89,13 +90,15 @@ export default function TicketSidebar({
               </button>
             </>
           )}
-          <button
-            onClick={onToggleSelectMode}
-            title="Select multiple tickets"
-            style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
-          </button>
+          {multiTicketMode && (
+            <button
+              onClick={onToggleSelectMode}
+              title="Select multiple tickets"
+              style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
+            </button>
+          )}
         </div>
         {!selectMode && filtersOpen && (
           <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>

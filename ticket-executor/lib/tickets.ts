@@ -1,7 +1,7 @@
 import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
   adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
-  getPullRequestCommits, getCommitFileChanges,
+  getPullRequestCommits, getCommitFileChanges, resolveWorkItemState,
 } from "./ado";
 import {
   getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
@@ -94,7 +94,7 @@ export async function loadTicketComments(provider: ProviderId, id: string): Prom
 // GitHub are wired; other providers report no linked PR (Resolve Review tab
 // stays empty).
 export async function loadReview(provider: ProviderId, ticketId: string): Promise<ReviewData> {
-  if (provider === "azure-devops") return getPullRequestReview(ticketId);
+  if (provider === "azure-devops") return getPullRequestReview(ticketId, await latestPrUrlForTicket(ticketId));
   if (provider === "github") return loadGithubReview(ticketId);
   return { pr: null, comments: [], unresolvedCount: 0 };
 }
@@ -104,12 +104,16 @@ export async function loadReview(provider: ProviderId, ticketId: string): Promis
 async function loadGithubReview(ticketId: string): Promise<ReviewData> {
   const creds = await githubCreds();
   if (!creds) return { pr: null, comments: [], unresolvedCount: 0 };
-  const prUrl = await githubPrUrlForTicket(ticketId);
+  const prUrl = await latestPrUrlForTicket(ticketId);
   if (!prUrl) return { pr: null, comments: [], unresolvedCount: 0 };
   return getGithubPullRequestReview(prUrl, creds.token);
 }
 
-async function githubPrUrlForTicket(ticketId: string): Promise<string | null> {
+// The most recent PR URL recorded against a ticket's executions. ADO uses this
+// as a fallback when the work item has no server-side ArtifactLink relation
+// yet (e.g. PR wasn't explicitly linked); GitHub has no link API at all and
+// relies on this exclusively.
+async function latestPrUrlForTicket(ticketId: string): Promise<string | null> {
   const exec = await prisma.execution.findFirst({
     where: { adoTicketId: ticketId, NOT: { prUrl: "" } },
     orderBy: { startedAt: "desc" },
@@ -128,11 +132,11 @@ async function githubCreds(): Promise<{ url: string; token: string } | null> {
 // Load every commit on the ticket's linked PR source branch. Azure DevOps and
 // GitHub are wired; other providers report no commits (Commits tab stays empty).
 export async function loadPullRequestCommits(provider: ProviderId, ticketId: string): Promise<CommitSummary[]> {
-  if (provider === "azure-devops") return getPullRequestCommits(ticketId);
+  if (provider === "azure-devops") return getPullRequestCommits(ticketId, await latestPrUrlForTicket(ticketId));
   if (provider === "github") {
     const creds = await githubCreds();
     if (!creds) return [];
-    const prUrl = await githubPrUrlForTicket(ticketId);
+    const prUrl = await latestPrUrlForTicket(ticketId);
     if (!prUrl) return [];
     return getGithubPullRequestCommits(prUrl, creds.token);
   }
@@ -141,11 +145,11 @@ export async function loadPullRequestCommits(provider: ProviderId, ticketId: str
 
 // Load the file changes (each with a unified diff) for a single commit.
 export async function loadCommitFileChanges(provider: ProviderId, ticketId: string, sha: string): Promise<CommitFile[]> {
-  if (provider === "azure-devops") return getCommitFileChanges(ticketId, sha);
+  if (provider === "azure-devops") return getCommitFileChanges(ticketId, sha, await latestPrUrlForTicket(ticketId));
   if (provider === "github") {
     const creds = await githubCreds();
     if (!creds) return [];
-    const prUrl = await githubPrUrlForTicket(ticketId);
+    const prUrl = await latestPrUrlForTicket(ticketId);
     if (!prUrl) return [];
     return getGithubCommitFiles(prUrl, sha, creds.token);
   }
@@ -164,6 +168,20 @@ export async function getStatusOptions(provider: ProviderId, ticketId: string, t
     return creds ? getGithubStatusOptions(creds.url, creds.token, ticketId) : [];
   }
   return [];
+}
+
+// Map a desired status label onto a real state the ticket's provider actually
+// supports. Azure DevOps' workflow states vary per work item type/process
+// template, so a caller-supplied label like "Code Review" often doesn't exist
+// verbatim — this finds the closest real match (or null if none fits).
+// Other providers pass the label through unchanged (unaffected by this fix).
+export async function resolveStatusForUpdate(
+  provider: ProviderId,
+  ticketId: string,
+  desired: string
+): Promise<string | null> {
+  if (provider === "azure-devops") return resolveWorkItemState(ticketId, desired);
+  return desired;
 }
 
 // Write a ticket's status back to its provider — the counterpart to getStatusOptions.

@@ -41,9 +41,11 @@ export type SettingsView = {
   hasPat: boolean;
   animatedBackground: boolean;
   autoImplement: boolean;
+  autoResolveCodeReview: boolean;
   scope: "team" | "personal";
   personalAccount: string;
   concurrentRuns: number;
+  multiTicketMode: boolean;
 };
 
 // The detail-pane tabs.

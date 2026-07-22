@@ -14,7 +14,7 @@ import type { Entry } from "./types";
 // Skills that run in two phases with a human plan-review gate in between.
 // Everything else (implement-ticket-v2, fix-code-review-v2, …) keeps the old
 // single-turn behaviour.
-const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3"]);
+const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
 export const isTwoPhaseSkill = (skill: string) => TWO_PHASE_SKILLS.has(skill);
 
 // Where the plan phase leaves its deliverable, relative to the run's worktree.
@@ -52,6 +52,7 @@ async function persist(entry: Entry) {
         filesChanged: JSON.stringify(entry.filesChanged),
         sessionId: entry.sessionId,
         worktreePath: entry.cwd,
+        rootRepo: entry.rootRepo,
         phase: entry.phase,
         planStatus: entry.planStatus,
         planMarkdown: entry.planMarkdown,
@@ -74,6 +75,21 @@ async function finish(entry: Entry, status: ExecStatus, error: string) {
     kind: status === "completed" ? "done" : "fail",
   });
   await persist(entry);
+  removeWorktree(entry);
+}
+
+// A finished (completed/failed) isolated run no longer needs its worktree: the
+// Result/Commits tabs read the persisted filesChanged, and the branch/commits
+// it created live in the real repo (removing the worktree does not touch them).
+// Best-effort — a lingering file lock on Windows can block removal; leaving the
+// folder is harmless. Never touches rootRepo (single-ticket mode ran there).
+function removeWorktree(entry: Entry) {
+  if (!entry.cwd || entry.cwd === entry.rootRepo || !entry.rootRepo) return;
+  try {
+    execSync(`git -C "${entry.rootRepo}" worktree remove --force "${entry.cwd}"`, { stdio: "ignore" });
+  } catch {
+    /* leave the worktree if git can't remove it right now */
+  }
 }
 
 // Park the run at the plan gate: no child process is alive, and the entry waits
@@ -131,6 +147,10 @@ export async function startExecution(params: {
   provider?: string;
   model?: string;
   effort?: string;
+  // true (default) → isolate the run in its own git worktree, so it can run
+  // concurrently with other tickets. false (single-ticket mode) → run
+  // directly in rootRepo; the caller guarantees no other run is in flight.
+  isolate?: boolean;
 }): Promise<string> {
   const ticketId = cleanPath(params.ticketId);
   const skill = cleanPath(params.skill);
@@ -140,6 +160,7 @@ export async function startExecution(params: {
   const provider = cleanPath(params.provider || "azure-devops");
   const model = params.model ? cleanPath(params.model) : "";
   const effort = params.effort ? cleanPath(params.effort) : "";
+  const isolate = params.isolate ?? true;
 
   const twoPhase = isTwoPhaseSkill(skill);
   const sessionId = randomUUID();
@@ -174,20 +195,30 @@ export async function startExecution(params: {
     return id;
   }
 
-  // Always isolate the run in a fresh git worktree so concurrent executions against the same
-  // rootRepo/project never share one working tree, git index, or HEAD (which previously let one
-  // execution's uncommitted changes leak into another's commit). Checked out detached (no branch
-  // of its own) — the skill's own "create a branch" step creates the one real branch, from inside
-  // this worktree.
-  try {
-    const wt = path.join(rootRepo, `.te-worktrees`, `${project}-${id}`);
-    entry.baseSha = execSync(`git -C "${rootRepo}" rev-parse HEAD`).toString().trim();
-    execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
-    entry.cwd = wt;
-    entry.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
-  } catch (e) {
-    await finish(entry, "failed", `Failed to set up isolated git worktree: ${e instanceof Error ? e.message : e}. Concurrent executions require worktree isolation to avoid commit leakage between tickets.`);
-    return id;
+  if (isolate) {
+    // Isolate the run in a fresh git worktree so concurrent executions against the same
+    // rootRepo/project never share one working tree, git index, or HEAD (which would otherwise let
+    // one execution's uncommitted changes leak into another's commit). Checked out detached (no
+    // branch of its own) — the skill's own "create a branch" step creates the one real branch, from
+    // inside this worktree.
+    try {
+      const wt = path.join(rootRepo, `.te-worktrees`, `${project}-${id}`);
+      entry.baseSha = execSync(`git -C "${rootRepo}" rev-parse HEAD`).toString().trim();
+      execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
+      entry.cwd = wt;
+      entry.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
+    } catch (e) {
+      await finish(entry, "failed", `Failed to set up isolated git worktree: ${e instanceof Error ? e.message : e}. Concurrent executions require worktree isolation to avoid commit leakage between tickets.`);
+      return id;
+    }
+  } else {
+    // Single-ticket mode: no other run is in flight (enforced by the caller), so
+    // run directly in rootRepo — skip the worktree entirely.
+    try {
+      entry.baseSha = execSync(`git -C "${rootRepo}" rev-parse HEAD`).toString().trim();
+    } catch {
+      /* not a git repo, or no commits yet — diffs for the Result tab will just be empty */
+    }
   }
 
   // Fire-and-forget. The route returns immediately; the turn either finishes the
@@ -242,8 +273,9 @@ async function rehydrate(id: string): Promise<Entry | null> {
     child: null, cancelled: false,
     sessionId: r.sessionId, phase: r.phase as ExecPhase, planStatus: r.planStatus as PlanStatus,
     planMarkdown: r.planMarkdown,
-    // The worktree lives at <rootRepo>/.te-worktrees/<name>, so its repo is two levels up.
-    rootRepo: path.dirname(path.dirname(r.worktreePath)),
+    // Rows from before the rootRepo column existed isolated every run, so the
+    // worktree's repo is two levels up from it; fall back to that derivation only then.
+    rootRepo: r.rootRepo || path.dirname(path.dirname(r.worktreePath)),
     provider: "",
   };
   try {

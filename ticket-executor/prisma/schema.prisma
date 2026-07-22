@@ -16,9 +16,18 @@ model Setting {
   // runs to a PR without stopping). false → the two-phase plan-review flow
   // (implement-ticket-v3, parks for plan approval before touching code).
   autoImplement  Boolean  @default(true)
+  // Auto-resolve-code-review mode — same on/off split as autoImplement, but for
+  // the Resolve Review flow. true → the original one-shot flow (fix-code-review-v2,
+  // resolves all threads without stopping). false → the two-phase plan-review flow
+  // (fix-code-review-v3, parks for plan approval before touching code).
+  autoResolveCodeReview Boolean @default(true)
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
   concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
+  // true → multi-ticket mode: multi-select/batch runs allowed, each execution
+  // isolated in its own git worktree. false → single-ticket mode: only one
+  // ticket may run at a time, and it runs directly in rootRepo (no worktree).
+  multiTicketMode Boolean @default(true)
   updatedAt      DateTime @updatedAt
 }
 
@@ -45,6 +54,10 @@ model Execution {
   // the in-memory entry is gone.
   sessionId    String    @default("")
   worktreePath String    @default("")
+  // The project's real working copy. Equal to worktreePath when the run was
+  // not isolated (single-ticket mode) — kept as its own column since it can't
+  // be derived back out of worktreePath in that case.
+  rootRepo     String    @default("")
   phase        String    @default("implement") // plan | implement
   planStatus   String    @default("none") // none | pending | approved | rejected
   planMarkdown String    @default("")

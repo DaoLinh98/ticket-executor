@@ -267,6 +267,36 @@ export async function updateWorkItemState(id: string, state: string): Promise<vo
   await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json");
 }
 
+/**
+ * Map a desired state label (e.g. "Code Review") onto one of the work item
+ * type's real configured states — process templates vary (Agile: New/Active/
+ * Resolved/Closed; Scrum: New/Approved/Committed/Done; Basic: To Do/Doing/
+ * Done), so the literal label the caller wants often doesn't exist. Returns
+ * null when nothing reasonable matches, so the caller can skip the write
+ * instead of sending a PATCH that ADO will reject.
+ */
+export async function resolveWorkItemState(id: string, desired: string): Promise<string | null> {
+  await loadCreds();
+  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
+    id
+  )}?fields=System.WorkItemType&${API}`;
+  const data = await adoGet<{ fields?: { "System.WorkItemType"?: string } }>(url);
+  const type = data.fields?.["System.WorkItemType"];
+  if (!type) return null;
+  const states = await getWorkItemTypeStates(type);
+
+  const want = desired.trim().toLowerCase();
+  const exact = states.find((s) => s.toLowerCase() === want);
+  if (exact) return exact;
+
+  const wantWords = want.split(/\s+/).filter(Boolean);
+  const byWord = states.find((s) => {
+    const sw = s.toLowerCase();
+    return wantWords.some((w) => sw.includes(w));
+  });
+  return byWord ?? null;
+}
+
 type RawComment = {
   text?: string;
   createdBy?: { displayName?: string };
@@ -302,18 +332,69 @@ export async function getWorkItemComments(id: string): Promise<TicketComment[]> 
 
 type ArtifactRelation = { rel?: string; url?: string };
 
-/** Resolve the PR linked to a work item via its "Pull Request" artifact link relation. */
-async function getLinkedPullRequestRef(
-  ticketId: string
-): Promise<{ repositoryId: string; prId: string } | null> {
+type PrRef = { repositoryId: string; prId: string; project?: string };
+
+/**
+ * Base `.../repositories/{repositoryId}` URL for a ref. When the ref carries
+ * no project (the artifact-link/GUID case), the project segment is omitted —
+ * ADO resolves a repository GUID org-wide, which matters because the work
+ * item's own repo can live in a different project than the one configured in
+ * Settings (a single Settings connection only names one project, but tickets
+ * fetched by ID are not restricted to it).
+ */
+function repoBaseUrl(ref: { repositoryId: string; project?: string }): string {
+  const projectSegment = ref.project ? `${encodeURIComponent(ref.project)}/` : "";
+  return `https://dev.azure.com/${ORG}/${projectSegment}_apis/git/repositories/${encodeURIComponent(ref.repositoryId)}`;
+}
+
+/** The repo's own project name, if the ref resolves to an accessible repo. */
+async function resolveRepositoryProject(ref: { repositoryId: string; project?: string }): Promise<string | null> {
+  const res = await fetch(`${repoBaseUrl(ref)}?${API}`, { headers: authHeader(), cache: "no-store" });
+  if (!res.ok) return null;
+  const repo = (await res.json()) as { project?: { name?: string } };
+  return repo.project?.name ?? ref.project ?? null;
+}
+
+/**
+ * Resolve the PR linked to a work item via its "Pull Request" artifact link
+ * relation. ADO only creates that relation when the PR was explicitly linked
+ * (e.g. `AB#<id>` in the PR description) — a PR opened by the execution
+ * engine isn't guaranteed to have it. When it's missing, fall back to
+ * parsing the repo/PR id out of the PR URL recorded on the ticket's most
+ * recent execution.
+ *
+ * Each candidate ref is verified against the repositories API before use,
+ * preferring the artifact link but falling through to the recorded PR URL
+ * when it doesn't resolve — the artifact link's repository id can go stale
+ * (repo renamed/recreated, or the id belongs to a repo the current PAT can't
+ * see), which otherwise 404s every review/commit call for the ticket. The
+ * fallback candidate also carries the project parsed out of its own URL
+ * (rather than the globally configured PROJECT), since the ticket's repo may
+ * not live in the project Settings happens to be connected to.
+ */
+async function getLinkedPullRequestRef(ticketId: string, fallbackPrUrl?: string | null): Promise<PrRef | null> {
   const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
     ticketId
   )}?$expand=relations&${API}`;
   const data = await adoGet<{ relations?: ArtifactRelation[] }>(url);
+  const candidates: PrRef[] = [];
   for (const r of data.relations ?? []) {
     if (r.rel !== "ArtifactLink" || !r.url) continue;
     const m = r.url.match(/vstfs:\/\/\/Git\/PullRequestId\/[^%]+%2F([^%]+)%2F(\d+)/i);
-    if (m) return { repositoryId: m[1], prId: m[2] };
+    if (m) candidates.push({ repositoryId: m[1], prId: m[2] });
+  }
+  if (fallbackPrUrl) {
+    const withProject = fallbackPrUrl.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+    if (withProject) {
+      candidates.push({ repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) });
+    } else {
+      const m = fallbackPrUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+      if (m) candidates.push({ repositoryId: decodeURIComponent(m[1]), prId: m[2], project: PROJECT });
+    }
+  }
+  for (const ref of candidates) {
+    const project = await resolveRepositoryProject(ref);
+    if (project) return { ...ref, project };
   }
   return null;
 }
@@ -359,18 +440,15 @@ type RawThread = {
 const RESOLVED_THREAD_STATUSES = new Set(["fixed", "closed", "wontfix"]);
 
 /** Fetch the PR (if any) linked to a work item, plus its review-comment threads. */
-export async function getPullRequestReview(ticketId: string): Promise<ReviewData> {
+export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: string | null): Promise<ReviewData> {
   await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId);
+  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
 
-  const prApiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
-  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}?${API}`;
-  const raw = await adoGet<RawPullRequest>(prApiUrl);
+  const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}?${API}`);
   const pr: PullRequestOverview = {
     id: String(raw.pullRequestId),
-    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_git/${encodeURIComponent(
+    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(ref.project ?? PROJECT)}/_git/${encodeURIComponent(
       raw.repository?.name ?? ""
     )}/pullrequest/${raw.pullRequestId}`,
     title: raw.title ?? "",
@@ -382,10 +460,7 @@ export async function getPullRequestReview(ticketId: string): Promise<ReviewData
     createdAt: raw.creationDate ?? "",
   };
 
-  const threadsUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
-  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}/threads?${API}`;
-  const threadsData = await adoGet<{ value?: RawThread[] }>(threadsUrl);
+  const threadsData = await adoGet<{ value?: RawThread[] }>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}/threads?${API}`);
   const comments: ReviewComment[] = [];
   for (const th of threadsData.value ?? []) {
     if (!th.threadContext) continue; // skip system threads (status/vote updates)
@@ -415,22 +490,19 @@ type RawCommitRef = {
 };
 
 /** List every commit on the PR's source branch, newest first (as ADO returns them). */
-export async function getPullRequestCommits(ticketId: string): Promise<CommitSummary[]> {
+export async function getPullRequestCommits(ticketId: string, fallbackPrUrl?: string | null): Promise<CommitSummary[]> {
   await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId);
+  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
   if (!ref) return [];
 
-  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
-  )}/_apis/git/repositories/${ref.repositoryId}/pullrequests/${ref.prId}/commits?${API}`;
-  const data = await adoGet<{ value?: RawCommitRef[] }>(url);
+  const data = await adoGet<{ value?: RawCommitRef[] }>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}/commits?${API}`);
   return (data.value ?? []).map((c) => ({
     sha: c.commitId,
     shortSha: c.commitId.slice(0, 7),
     message: (c.comment ?? "").split(/\r?\n/)[0],
     author: c.author?.name ?? "Unknown",
     date: c.author?.date ?? "",
-    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
+    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(ref.project ?? PROJECT)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
   }));
 }
 
@@ -449,10 +521,8 @@ function commitChangeType(raw: string): CommitFile["changeType"] {
 }
 
 /** Fetch raw file content at a given commit, or null if the path didn't exist there. */
-async function adoGetItemText(repositoryId: string, path: string, sha: string): Promise<string | null> {
-  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
-  )}/_apis/git/repositories/${repositoryId}/items?path=${encodeURIComponent(
+async function adoGetItemText(ref: PrRef, path: string, sha: string): Promise<string | null> {
+  const url = `${repoBaseUrl(ref)}/items?path=${encodeURIComponent(
     path
   )}&versionDescriptor.version=${sha}&versionDescriptor.versionType=commit&${API}&$format=text`;
   const res = await fetch(url, { headers: authHeader(), cache: "no-store" });
@@ -464,19 +534,14 @@ async function adoGetItemText(repositoryId: string, path: string, sha: string): 
 const MAX_COMMIT_FILES = 60; // guard against pathological commits touching hundreds of files
 
 /** Per-file changes for one commit, each with a unified diff built from before/after content. */
-export async function getCommitFileChanges(ticketId: string, sha: string): Promise<CommitFile[]> {
+export async function getCommitFileChanges(ticketId: string, sha: string, fallbackPrUrl?: string | null): Promise<CommitFile[]> {
   await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId);
+  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
   if (!ref) return [];
-  const { repositoryId } = ref;
 
   const [changesData, detail] = await Promise.all([
-    adoGet<{ changes?: RawCommitChange[] }>(
-      `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_apis/git/repositories/${repositoryId}/commits/${sha}/changes?${API}`
-    ),
-    adoGet<RawCommitDetail>(
-      `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_apis/git/repositories/${repositoryId}/commits/${sha}?${API}`
-    ),
+    adoGet<{ changes?: RawCommitChange[] }>(`${repoBaseUrl(ref)}/commits/${sha}/changes?${API}`),
+    adoGet<RawCommitDetail>(`${repoBaseUrl(ref)}/commits/${sha}?${API}`),
   ]);
   const parentSha = detail.parents?.[0];
 
@@ -486,8 +551,8 @@ export async function getCommitFileChanges(ticketId: string, sha: string): Promi
     const path = c.item!.path!;
     const changeType = commitChangeType(c.changeType ?? "edit");
     const [oldContent, newContent] = await Promise.all([
-      changeType === "added" || !parentSha ? Promise.resolve(null) : adoGetItemText(repositoryId, path, parentSha).catch(() => null),
-      changeType === "deleted" ? Promise.resolve(null) : adoGetItemText(repositoryId, path, sha).catch(() => null),
+      changeType === "added" || !parentSha ? Promise.resolve(null) : adoGetItemText(ref, path, parentSha).catch(() => null),
+      changeType === "deleted" ? Promise.resolve(null) : adoGetItemText(ref, path, sha).catch(() => null),
     ]);
     const { diff, additions, deletions } = buildUnifiedDiff(path, oldContent, newContent);
     results.push({ path, changeType, diff, additions, deletions });

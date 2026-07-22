@@ -44,6 +44,10 @@ export async function POST(req: Request) {
     data.animatedBackground = body.animatedBackground;
   if (typeof body.autoImplement === "boolean")
     data.autoImplement = body.autoImplement;
+  if (typeof body.autoResolveCodeReview === "boolean")
+    data.autoResolveCodeReview = body.autoResolveCodeReview;
+  if (typeof body.multiTicketMode === "boolean")
+    data.multiTicketMode = body.multiTicketMode;
   if (
     typeof body.concurrentRuns === "number" &&
     Number.isFinite(body.concurrentRuns)

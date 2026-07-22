@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getStatusOptions, updateTicketStatus, normalizeProvider } from "@/lib/tickets";
+import { getStatusOptions, updateTicketStatus, resolveStatusForUpdate, normalizeProvider } from "@/lib/tickets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,8 +34,15 @@ export async function POST(
     const provider = normalizeProvider(body.provider);
     const status = String(body.status || "");
     if (!status) return NextResponse.json({ error: "status is required" }, { status: 400 });
-    await updateTicketStatus(provider, id, status);
-    return NextResponse.json({ ok: true, status });
+    const resolved = await resolveStatusForUpdate(provider, id, status);
+    if (!resolved) {
+      return NextResponse.json(
+        { error: `No workflow state on this ticket matches "${status}" — update it manually` },
+        { status: 422 }
+      );
+    }
+    await updateTicketStatus(provider, id, resolved);
+    return NextResponse.json({ ok: true, status: resolved });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });

@@ -99,6 +99,12 @@ export function nextStatusAfter(skill: string, current: string): string {
   return current;
 }
 
+// True for either code-review-resolution skill (auto v2 or plan-review-gated v3) —
+// used everywhere the UI needs to treat both the same regardless of which one ran.
+export function isFixReviewSkill(skill?: string): boolean {
+  return skill === "fix-code-review-v2" || skill === "fix-code-review-v3";
+}
+
 export const EXEC_COLOR: Record<ExecStatus, string> = {
   "not started": "#5B6273",
   running: "#F5B341",

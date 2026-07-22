@@ -10,3 +10,4 @@
 //   runner.ts     — worktree isolation, run lifecycle, plan gate, cancellation
 export { getExecution, getPersistedExecution, listExecutions } from "./execution/queries";
 export { cancelExecution, isTwoPhaseSkill, resolvePlan, startExecution, type PlanAction } from "./execution/runner";
+export { findOtherActiveTicketId } from "./execution/store";
