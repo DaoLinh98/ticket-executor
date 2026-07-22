@@ -1419,6 +1419,10 @@ export default function TicketExecutor() {
         reviewReadMap={reviewReadMap}
         onOpenReview={(rv, e) => { markReviewRead(rv); selectTicket(rv.ticketId, e); setTab("resolve-review"); setBellOpen(false); }}
         onOpenSettings={openSettings}
+        onLogout={async () => {
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+          window.location.href = "/login";
+        }}
       />
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
