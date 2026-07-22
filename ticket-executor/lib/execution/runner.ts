@@ -9,7 +9,7 @@ import { commonArgs, runTurn } from "./claudeCli";
 import { cleanPath, fmtDuration } from "./format";
 import { collectFileChanges } from "./git";
 import { store } from "./store";
-import type { Entry } from "./types";
+import type { Entry, TurnState } from "./types";
 
 // Skills that run in two phases with a human plan-review gate in between.
 // Everything else (implement-ticket-v2, fix-code-review-v2, …) keeps the old
@@ -35,6 +35,19 @@ export function cancelExecution(id: string): boolean {
   return true;
 }
 
+// A run can span several turns (plan → implement, or replans in between), each
+// ending with its own `result` event; accumulate their usage so the persisted
+// totals reflect the whole run's spend.
+function accumulateUsage(entry: Entry, ts: TurnState) {
+  entry.costUsd += ts.costUsd;
+  entry.inputTokens += ts.inputTokens;
+  entry.outputTokens += ts.outputTokens;
+  entry.cacheReadTokens += ts.cacheReadTokens;
+  entry.cacheCreationTokens += ts.cacheCreationTokens;
+  entry.numTurns += ts.numTurns;
+  entry.durationMs += ts.durationMs;
+}
+
 // ---- shared persistence ----
 
 async function persist(entry: Entry) {
@@ -56,6 +69,13 @@ async function persist(entry: Entry) {
         phase: entry.phase,
         planStatus: entry.planStatus,
         planMarkdown: entry.planMarkdown,
+        costUsd: entry.costUsd,
+        inputTokens: entry.inputTokens,
+        outputTokens: entry.outputTokens,
+        cacheReadTokens: entry.cacheReadTokens,
+        cacheCreationTokens: entry.cacheCreationTokens,
+        numTurns: entry.numTurns,
+        durationMs: entry.durationMs,
         completedAt: entry.completedAt ? new Date(entry.completedAt) : null,
       },
     });
@@ -173,6 +193,8 @@ export async function startExecution(params: {
     child: null, cancelled: false,
     sessionId, phase: twoPhase ? "plan" : "implement", planStatus: "none", planMarkdown: "",
     rootRepo, provider,
+    costUsd: 0, inputTokens: 0, outputTokens: 0,
+    cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
   };
   const prompt = basePrompt(entry, prUrl, twoPhase ? "plan" : "");
   const command = `cd ${rootRepo} && claude -p "${prompt}"${model ? ` --model ${model}` : ""}${effort ? ` --effort ${effort}` : ""}`;
@@ -182,7 +204,7 @@ export async function startExecution(params: {
     data: {
       adoTicketId: ticketId, projectName: project, skillName: skill, model, effort,
       status: "running", command, sessionId, phase: entry.phase,
-      planStatus: twoPhase ? "pending" : "none",
+      planStatus: twoPhase ? "pending" : "none", provider,
     },
   });
   entry.id = row.id;
@@ -226,6 +248,7 @@ export async function startExecution(params: {
   void (async () => {
     const ts = await runTurn(entry, ["-p", prompt, "--session-id", sessionId, ...modelArgs, ...commonArgs()]);
     if (ts.resultText) entry.resultText = ts.resultText;
+    accumulateUsage(entry, ts);
 
     if (entry.cancelled) {
       await finish(entry, "failed", "Cancelled by user");
@@ -276,7 +299,10 @@ async function rehydrate(id: string): Promise<Entry | null> {
     // Rows from before the rootRepo column existed isolated every run, so the
     // worktree's repo is two levels up from it; fall back to that derivation only then.
     rootRepo: r.rootRepo || path.dirname(path.dirname(r.worktreePath)),
-    provider: "",
+    provider: r.provider,
+    costUsd: r.costUsd, inputTokens: r.inputTokens, outputTokens: r.outputTokens,
+    cacheReadTokens: r.cacheReadTokens, cacheCreationTokens: r.cacheCreationTokens,
+    numTurns: r.numTurns, durationMs: r.durationMs,
   };
   try {
     entry.baseSha = execSync(`git -C "${entry.cwd}" rev-parse HEAD`).toString().trim();
@@ -358,6 +384,7 @@ export async function resolvePlan(
       "-p", prompt, "--resume", entry.sessionId, ...modelArgs, ...commonArgs(),
     ]);
     if (ts.resultText) entry.resultText = ts.resultText;
+    accumulateUsage(entry, ts);
 
     if (entry.cancelled) {
       await finish(entry, "failed", "Cancelled by user");
