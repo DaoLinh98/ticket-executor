@@ -8,6 +8,6 @@
 //   claudeCli.ts  — CLI args and the NDJSON stream-json turn runner
 //   queries.ts    — read models (in-memory, persisted, history)
 //   runner.ts     — worktree isolation, run lifecycle, plan gate, cancellation
-export { getExecution, getPersistedExecution, listExecutions } from "./execution/queries";
+export { getExecution, getPersistedExecution, listExecutions, dashboardMetrics, type DashboardMetrics } from "./execution/queries";
 export { cancelExecution, isTwoPhaseSkill, resolvePlan, startExecution, type PlanAction } from "./execution/runner";
 export { findOtherActiveTicketId } from "./execution/store";

@@ -62,19 +62,44 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
     return;
   }
   if (type === "result") {
-    const r = obj as { result?: string; is_error?: boolean };
+    const r = obj as {
+      result?: string;
+      is_error?: boolean;
+      total_cost_usd?: number;
+      num_turns?: number;
+      duration_ms?: number;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
+    };
     if (typeof r.result === "string" && r.result.trim()) {
       ts.resultText = r.result.trim();
       detectArtifacts(entry, ts.resultText);
     }
     ts.isError = !!r.is_error;
+    // Token & cost usage reported once on the final result event of the turn.
+    const u = r.usage ?? {};
+    ts.costUsd = typeof r.total_cost_usd === "number" ? r.total_cost_usd : 0;
+    ts.numTurns = typeof r.num_turns === "number" ? r.num_turns : 0;
+    ts.durationMs = typeof r.duration_ms === "number" ? r.duration_ms : 0;
+    ts.inputTokens = u.input_tokens ?? 0;
+    ts.outputTokens = u.output_tokens ?? 0;
+    ts.cacheReadTokens = u.cache_read_input_tokens ?? 0;
+    ts.cacheCreationTokens = u.cache_creation_input_tokens ?? 0;
   }
 }
 
 // Run one Claude turn; resolves when the process closes.
 export function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exitCode: number | null }> {
   return new Promise((resolve) => {
-    const ts: TurnState = { resultText: "", isError: false, errorDetail: "" };
+    const ts: TurnState = {
+      resultText: "", isError: false, errorDetail: "",
+      costUsd: 0, inputTokens: 0, outputTokens: 0,
+      cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
+    };
     let child: ChildProcess;
     try {
       child = spawn(CLAUDE_BIN, args, {

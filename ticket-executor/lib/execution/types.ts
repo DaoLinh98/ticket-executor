@@ -34,7 +34,27 @@ export type Entry = {
   /** Repo the worktree was created under — needed to resume/clean up after a restart. */
   rootRepo: string;
   provider: string;
+  // ---- token & cost usage (accumulated across all turns of the run) ----
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  numTurns: number;
+  durationMs: number;
 };
 
 // What one Claude turn produced, accumulated while its NDJSON stream is parsed.
-export type TurnState = { resultText: string; isError: boolean; errorDetail: string };
+// The usage fields are read from the final stream-json `result` event.
+export type TurnState = {
+  resultText: string;
+  isError: boolean;
+  errorDetail: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  numTurns: number;
+  durationMs: number;
+};
