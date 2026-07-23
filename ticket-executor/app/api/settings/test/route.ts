@@ -28,23 +28,27 @@ async function withTimeout(url: string, init: RequestInit): Promise<Response> {
 }
 
 async function testAdo(url: string, token: string): Promise<Result> {
-  const { org, project } = parseAdoUrl(url);
-  if (!org || !project) {
+  const { org } = parseAdoUrl(url);
+  if (!org) {
     return {
       ok: false,
-      message: "Enter the full project URL, e.g. https://dev.azure.com/your-org/your-project.",
+      message: "Enter the organization URL, e.g. https://dev.azure.com/your-org.",
     };
   }
   const auth = "Basic " + Buffer.from(":" + token).toString("base64");
-  // Hit the project itself — this validates the org, the project and the token
-  // in one call (an org-level probe would pass even for a wrong project).
+  // Org-level project list validates the org and the token in one call; the
+  // specific project is now chosen per request, not baked into the connection.
   const r = await withTimeout(
-    `https://dev.azure.com/${org}/_apis/projects/${encodeURIComponent(project)}?api-version=7.0`,
+    `https://dev.azure.com/${org}/_apis/projects?api-version=7.0`,
     { headers: { Authorization: auth } }
   );
-  if (r.ok) return { ok: true, message: `Connected to Azure DevOps — ${org}/${project}.` };
+  if (r.ok) {
+    const data = (await r.json().catch(() => ({}))) as { count?: number };
+    const n = typeof data.count === "number" ? data.count : undefined;
+    return { ok: true, message: `Connected to Azure DevOps — ${org}${n !== undefined ? ` (${n} projects)` : ""}.` };
+  }
   if (r.status === 404)
-    return { ok: false, message: `Project "${project}" not found in organization "${org}". Check the project URL.` };
+    return { ok: false, message: `Organization "${org}" not found. Check the organization URL.` };
   if (r.status === 401 || r.status === 203)
     return { ok: false, message: "Azure DevOps rejected the token. Check the PAT and its scopes (Work Items: Read, Code: Read)." };
   return { ok: false, message: `Azure DevOps returned ${r.status} ${r.statusText}.` };

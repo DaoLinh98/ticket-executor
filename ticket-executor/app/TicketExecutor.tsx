@@ -1,15 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
-import Reactor from "./Reactor";
 import { useBoltsContext } from "./BoltsContext";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
 import CommitFilesModal from "./ticket-executor/CommitFilesModal";
 import DiffModal from "./ticket-executor/DiffModal";
 import LoadingRing from "./ticket-executor/LoadingRing";
-import SettingsModal from "./ticket-executor/SettingsModal";
 import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
 import Toast from "./ticket-executor/Toast";
@@ -24,10 +23,10 @@ import {
 } from "./ticket-executor/constants";
 import { deriveStep, reviewFingerprint } from "./ticket-executor/helpers";
 import type {
-  Action, ConnTest, ExecView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
+  Action, ExecView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
 import type { CommitFile, CommitSummary, ExecStatus, FileChange, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
-import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
+import { providerMeta, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import {
   EXEC_COLOR,
@@ -52,6 +51,11 @@ export default function TicketExecutor() {
   const [sprintLabel, setSprintLabel] = useState<string>("");
   const [sprintOptions, setSprintOptions] = useState<IterationOption[]>([]);
   const [selectedSprint, setSelectedSprint] = useState<string>("");
+  // Connection-level project selector (org-scoped). Distinct from the per-ticket
+  // "area" override on the Overview tab (getArea/onProjectChange) — this drives
+  // which project's tickets + sprints the whole screen loads.
+  const [projectList, setProjectList] = useState<{ id: string; name: string }[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
   const [tab, setTab] = useState<TabId>("overview");
@@ -67,15 +71,12 @@ export default function TicketExecutor() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuOptions, setStatusMenuOptions] = useState<string[]>([]);
   const [statusMenuLoading, setStatusMenuLoading] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
-  const [settingsError, setSettingsError] = useState("");
-  const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<OverrideField, string>>>>({});
   const [savedOptions, setSavedOptions] = useState<Record<"rootRepo" | "project" | "skill", string[]>>({ rootRepo: [], project: [], skill: [] });
   const [settings, setSettings] = useState<SettingsView>({
@@ -119,14 +120,17 @@ export default function TicketExecutor() {
   const batchRunningRef = useRef<Set<string>>(new Set());
   const tryStartNextQueuedRef = useRef<() => void>(() => { });
 
+  const searchParams = useSearchParams();
+
   // ---- data load ----
-  // Fetch the ticket list for a given provider (and optional sprint override) and refresh the header sprint.
-  const reloadTickets = useCallback(async (provider: ProviderId, sprint?: string, opts?: { notify?: boolean }) => {
+  // Fetch the ticket list for a given provider/project (and optional sprint override) and refresh the header sprint.
+  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean }) => {
     setLoading(true);
     setLoadError("");
     setTicketsNotice("");
     try {
       const qs = new URLSearchParams({ provider });
+      if (project) qs.set("project", project);
       if (sprint) qs.set("sprint", sprint);
       const r = await fetch(`/api/tickets?${qs.toString()}`);
       const data = await r.json();
@@ -152,20 +156,43 @@ export default function TicketExecutor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showToast is declared later but stable (empty-dep useCallback)
   }, []);
 
-  // Populate the sprint picker (Azure DevOps only) and default-select ADO's current iteration.
-  const loadSprintOptions = useCallback(async (provider: ProviderId) => {
+  // Populate the project picker (Azure DevOps only). Returns the list so callers
+  // can resolve the initial/default project synchronously.
+  const loadProjectOptions = useCallback(async (provider: ProviderId): Promise<{ id: string; name: string }[]> => {
     if (provider !== "azure-devops") {
-      setSprintOptions([]);
-      setSelectedSprint("");
-      return;
+      setProjectList([]);
+      return [];
     }
     try {
-      const r = await fetch("/api/sprints");
+      const r = await fetch(`/api/projects?provider=${provider}`);
+      const data = await r.json();
+      const list = Array.isArray(data.projects) ? data.projects : [];
+      setProjectList(list);
+      return list;
+    } catch {
+      setProjectList([]);
+      return [];
+    }
+  }, []);
+
+  // Populate the sprint picker for a project (Azure DevOps only) and default-select
+  // ADO's current iteration. Returns the resolved current-sprint name.
+  const loadSprintOptions = useCallback(async (provider: ProviderId, project: string): Promise<string> => {
+    if (provider !== "azure-devops" || !project) {
+      setSprintOptions([]);
+      setSelectedSprint("");
+      return "";
+    }
+    try {
+      const r = await fetch(`/api/sprints?project=${encodeURIComponent(project)}`);
       const data = await r.json();
       setSprintOptions(Array.isArray(data.sprints) ? data.sprints : []);
-      setSelectedSprint(typeof data.current === "string" ? data.current : "");
+      const current = typeof data.current === "string" ? data.current : "";
+      setSelectedSprint(current);
+      return current;
     } catch {
       setSprintOptions([]);
+      return "";
     }
   }, []);
 
@@ -173,7 +200,15 @@ export default function TicketExecutor() {
   const onSprintChange = (value: string, e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);
     setSelectedSprint(value);
-    reloadTickets(settings.provider, value);
+    reloadTickets(settings.provider, selectedProject, value);
+  };
+
+  // User picked a project — reset its sprints to the current one, then reload tickets.
+  const onSelectProject = async (value: string, e: { clientX: number; clientY: number }) => {
+    fireBoltFromEvent(e);
+    setSelectedProject(value);
+    const current = await loadSprintOptions(settings.provider, value);
+    reloadTickets(settings.provider, value, current || undefined, { notify: true });
   };
 
   useEffect(() => {
@@ -189,8 +224,13 @@ export default function TicketExecutor() {
       } catch {
         /* ignore — fall back to default provider */
       }
-      await loadSprintOptions(provider);
-      await reloadTickets(provider);
+      const list = await loadProjectOptions(provider);
+      const urlProject = searchParams.get("project") ?? "";
+      const project =
+        urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
+      setSelectedProject(project);
+      const current = await loadSprintOptions(provider, project);
+      await reloadTickets(provider, project, current || undefined);
     })();
     (async () => {
       try {
@@ -219,7 +259,7 @@ export default function TicketExecutor() {
       Object.values(sseConnections.current).forEach((es) => es.close());
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
-  }, [reloadTickets, loadSprintOptions]);
+  }, [reloadTickets, loadSprintOptions, loadProjectOptions, searchParams]);
 
   // ---- execution history ----
   const loadHistory = useCallback(async (ticketId: string) => {
@@ -234,10 +274,12 @@ export default function TicketExecutor() {
   }, []);
 
   // Lazily load a ticket's discussion comments when it becomes selected.
-  const loadComments = useCallback(async (ticketId: string, provider: ProviderId) => {
+  const loadComments = useCallback(async (ticketId: string, provider: ProviderId, project: string) => {
     if (!ticketId || comments[ticketId]) return;
     try {
-      const r = await fetch(`/api/tickets/${ticketId}/comments?provider=${provider}`);
+      const qs = new URLSearchParams({ provider });
+      if (project) qs.set("project", project);
+      const r = await fetch(`/api/tickets/${ticketId}/comments?${qs.toString()}`);
       const data = await r.json();
       setComments((c) => ({ ...c, [ticketId]: data.comments ?? [] }));
     } catch {
@@ -250,8 +292,8 @@ export default function TicketExecutor() {
   }, [selectedId, loadHistory]);
 
   useEffect(() => {
-    if (selectedId) loadComments(selectedId, settings.provider);
-  }, [selectedId, settings.provider, loadComments]);
+    if (selectedId) loadComments(selectedId, settings.provider, selectedProject);
+  }, [selectedId, settings.provider, selectedProject, loadComments]);
 
   // Fetch (or refetch) the Resolve Review data for one ticket — the linked PR
   // overview plus its open/resolved review-comment threads.
@@ -468,7 +510,7 @@ export default function TicketExecutor() {
     } catch { }
     if (!hadCache) setStatusMenuLoading(true);
     try {
-      const r = await fetch(`/api/tickets/${ticket.id}/status?provider=${settings.provider}&type=${encodeURIComponent(ticket.type)}`);
+      const r = await fetch(`/api/tickets/${ticket.id}/status?provider=${settings.provider}&type=${encodeURIComponent(ticket.type)}${selectedProject ? `&project=${encodeURIComponent(selectedProject)}` : ""}`);
       const data = await r.json();
       const options = Array.isArray(data.options) ? data.options : [];
       setStatusMenuOptions(options);
@@ -1035,99 +1077,6 @@ export default function TicketExecutor() {
     setTab(ex && ex.status === "running" ? "execution" : "overview");
   };
 
-  // ---- settings ----
-  const openSettings = (e?: MouseEvent) => {
-    fireBoltFromEvent(e);
-    setSettingsError("");
-    setConnTest({ status: "idle", message: "" });
-    setSettingsOpen(true);
-  };
-  const closeSettings = (e?: MouseEvent) => {
-    fireBoltFromEvent(e);
-    setSettingsOpen(false);
-  };
-  // Validate connection settings before saving; returns an error string or "".
-  const validateSettings = (): string => {
-    const url = settings.org.trim();
-    if (!url) return `${pm.urlLabel} is required.`;
-    try {
-      const u = new URL(url);
-      if (!/^https?:$/.test(u.protocol)) return "URL must start with http:// or https://";
-    } catch {
-      return "Enter a valid URL (e.g. https://…).";
-    }
-    if (!settings.hasPat && !settings.pat.trim()) return `${pm.tokenLabel} is required.`;
-    return "";
-  };
-  const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setSettings((s) => ({ ...s, [k]: e.target.value }));
-  // Switching provider prefills that provider's own saved URL/token (if any),
-  // then immediately reloads the sprint/tickets for that provider.
-  const onProviderChange = async (label: string) => {
-    const provider = PROVIDERS.find((p) => p.name === label)?.id ?? DEFAULT_PROVIDER;
-    setConnTest({ status: "idle", message: "" });
-    try {
-      const r = await fetch(`/api/settings?provider=${provider}`);
-      const data = await r.json();
-      setSettings((s) => ({
-        ...s,
-        provider,
-        org: data.settings?.org ?? "",
-        hasPat: !!data.settings?.hasPat,
-        pat: "",
-      }));
-    } catch {
-      setSettings((s) => ({ ...s, provider, org: "", hasPat: false, pat: "" }));
-    }
-    loadSprintOptions(provider);
-    reloadTickets(provider, undefined, { notify: true });
-  };
-  const testConnection = async () => {
-    setConnTest({ status: "testing", message: "" });
-    try {
-      const r = await fetch("/api/settings/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: settings.provider, org: settings.org, pat: settings.pat }),
-      });
-      const data = await r.json();
-      // Only reports whether the credentials work — the form isn't persisted yet,
-      // so tickets stay as they are until Save.
-      setConnTest({ status: data.ok ? "ok" : "fail", message: data.message || (data.ok ? "Connected." : "Failed.") });
-    } catch (err) {
-      setConnTest({ status: "fail", message: err instanceof Error ? err.message : String(err) });
-    }
-  };
-  const saveSettings = async (e?: MouseEvent) => {
-    const err = validateSettings();
-    if (err) {
-      setSettingsError(err);
-      return; // keep modal open, show inline error
-    }
-    setSettingsError("");
-    fireBoltFromEvent(e);
-    setSettingsOpen(false);
-    try {
-      const r = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      const data = await r.json();
-      if (!r.ok || !data.settings) {
-        showToast(data.error || "Failed to save settings", 3200, "error");
-        return;
-      }
-      setSettings(data.settings);
-      showToast("Settings saved", 3200);
-      const provider = (data.settings?.provider as ProviderId) ?? settings.provider;
-      await loadSprintOptions(provider);
-      await reloadTickets(provider, undefined, { notify: true });
-    } catch {
-      showToast("Failed to save settings", 3200, "error");
-    }
-  };
-
   // ---- derived ----
   const execStatusOf = (id: string): ExecStatus => execs[id]?.status ?? "not started";
   const activeCount = Object.values(execs).filter((e) => e.status === "running" || e.status === "awaiting-approval").length;
@@ -1383,14 +1332,15 @@ export default function TicketExecutor() {
         overflow: "hidden", ["--accent" as string]: ACCENT,
       }}
     >
-      <Reactor accent={ACCENT} frozen={!settings.animatedBackground} />
-
       <AppHeader
         pm={pm}
         sprintLabel={sprintLabel}
         sprintOptions={sprintOptions}
         selectedSprint={selectedSprint}
         onSprintChange={onSprintChange}
+        projectOptions={projectList}
+        selectedProject={selectedProject}
+        onSelectProject={onSelectProject}
         activeCount={activeCount}
         bellRef={bellRef}
         bellOpen={bellOpen}
@@ -1399,11 +1349,6 @@ export default function TicketExecutor() {
         reviewSummary={reviewSummary}
         reviewReadMap={reviewReadMap}
         onOpenReview={(rv, e) => { markReviewRead(rv); selectTicket(rv.ticketId, e); setTab("resolve-review"); setBellOpen(false); }}
-        onOpenSettings={openSettings}
-        onLogout={async () => {
-          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-          window.location.href = "/login";
-        }}
       />
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
@@ -1567,21 +1512,6 @@ export default function TicketExecutor() {
           )}
         </main>
       </div>
-
-      {settingsOpen && (
-        <SettingsModal
-          settings={settings}
-          setSettings={setSettings}
-          setField={setField}
-          pm={pm}
-          connTest={connTest}
-          settingsError={settingsError}
-          onProviderChange={onProviderChange}
-          onTestConnection={testConnection}
-          onSave={saveSettings}
-          onClose={closeSettings}
-        />
-      )}
 
       {diffFile && <DiffModal file={diffFile} onClose={() => setDiffFile(null)} />}
 
