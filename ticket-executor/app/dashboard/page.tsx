@@ -4,8 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import SelectMenu from "../SelectMenu";
+import Reactor from "../Reactor";
+import LoadingRing from "../ticket-executor/LoadingRing";
 import type { CountEntry, DashboardMetrics } from "@/lib/executionStore";
-import { COLORS, card, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { useBoltsContext } from "../BoltsContext";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -23,9 +26,18 @@ const sectionHeading: CSSProperties = {
   fontWeight: 700, letterSpacing: ".16em", color: COLORS.faint,
 };
 
-function KpiTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+function KpiTile({ label, value, sub, tone, index = 0 }: { label: string; value: string; sub?: string; tone?: string; index?: number }) {
   return (
-    <div style={{ ...card({ padding: "16px 18px", radius: "13px" }), display: "flex", flexDirection: "column", gap: "8px" }}>
+    <div
+      style={{
+        padding: "16px 18px", borderRadius: "13px", display: "flex", flexDirection: "column", gap: "8px",
+        transition: "transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s",
+        animation: "fadeUp .45s both", animationDelay: `${index * 55}ms`,
+        ...ringBorder({ fill: COLORS.panelBg, duration: 4.2 + index * 0.3, shape: "none" }),
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 14px 34px -20px var(--accent)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+    >
       <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600 }}>{label}</div>
       <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: "11.5px", color: COLORS.textDim }}>{sub}</div>}
@@ -115,6 +127,7 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
 }
 
 export default function DashboardPage() {
+  const { fireBoltFromEvent } = useBoltsContext();
   const [data, setData] = useState<DashboardMetrics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -143,58 +156,93 @@ export default function DashboardPage() {
     void load();
   }, [load]);
 
-  const panel = { ...card({ padding: "18px 20px", radius: "14px" }) } as CSSProperties;
+  // Same rounded-panel-with-spinning-ring treatment as the log panel in ExecutionTab —
+  // shape:"none" keeps the ring's animated conic-gradient background while letting us
+  // set our own border-radius instead of the hexagon chip cut used for buttons/pills.
+  // delayIndex is only passed when this panelStyle is applied directly to the entrance-
+  // animated section itself (not a plain inner div) — ringBorder's extraAnimation keeps
+  // the spin and the fadeUp from clobbering each other's `animation` property.
+  const panelStyle = (duration = 4.2, delayIndex?: number): CSSProperties => ({
+    padding: "18px 20px", borderRadius: "14px", position: "relative", overflow: "hidden",
+    ...ringBorder({
+      fill: COLORS.panelBg, duration, shape: "none",
+      ...(delayIndex !== undefined
+        ? { extraAnimation: "fadeUp .45s both", extraAnimationDelay: `${delayIndex * 70}ms` }
+        : {}),
+    }),
+  });
+  const heroPanelStyle = (delayIndex?: number): CSSProperties => ({
+    ...panelStyle(5.5, delayIndex),
+    boxShadow: "0 24px 60px -34px #000",
+  });
+  const scanlineOverlay: CSSProperties = {
+    position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none",
+    background: "repeating-linear-gradient(0deg,rgba(255,255,255,.016) 0px,rgba(255,255,255,.016) 1px,transparent 1px,transparent 3px)",
+  };
+  const topAccentLine: CSSProperties = {
+    position: "absolute", top: 0, left: 0, right: 0, height: "1px", zIndex: 0, pointerEvents: "none",
+    background: "linear-gradient(90deg,transparent,var(--accent),transparent)", opacity: 0.55,
+  };
+  const sectionDelay = (i: number) => ({ animation: "fadeUp .45s both", animationDelay: `${i * 70}ms` } as CSSProperties);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#06070A", color: COLORS.text, display: "flex", flexDirection: "column" }}>
-      <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+    <div style={{ position: "relative", minHeight: "100vh", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
+      <Reactor accent={COLORS.accent} />
+      <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="#0B0C10" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontWeight: 700, fontSize: "16px", letterSpacing: ".01em", color: COLORS.text }}>Run Metrics</div>
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
+            <span style={logoText("16px")}>Run Metrics</span>
+            <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>D-AGENT · ANALYTICS</span>
+          </div>
         </div>
         <div style={{ flex: 1 }} />
         <div style={{ width: "200px" }}>
-          <SelectMenu variant="filter" value={provider} onChange={setProvider} options={data?.filters.providers ?? []} allLabel="Provider: All" ariaLabel="Filter by provider" />
+          <SelectMenu variant="filter" alwaysGlow value={provider} onChange={setProvider} options={data?.filters.providers ?? []} allLabel="Provider: All" ariaLabel="Filter by provider" />
         </div>
         <div style={{ width: "220px" }}>
-          <SelectMenu variant="filter" value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
+          <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
-        <Link href="/" style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, textDecoration: "none", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
+        <Link href="/" onClick={(e) => fireBoltFromEvent(e)} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, textDecoration: "none", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
           Back
         </Link>
       </header>
 
-      <main className="te-scroll" style={{ flex: 1, overflowY: "auto", padding: "26px 28px 48px" }}>
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .4s both" }}>
+      <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>
           {error && (
-            <div style={tintedCard("danger")}>
+            <div style={{ ...tintedCard("danger"), animation: "fadeUp .4s both" }}>
               <div style={{ fontSize: "13px", color: COLORS.danger, fontWeight: 600 }}>{error}</div>
             </div>
           )}
-          {loading && !data && <div style={{ fontSize: "13px", color: COLORS.textDim }}>Loading metrics…</div>}
+          {loading && !data && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", minHeight: "calc(100vh - 220px)" }}>
+              <LoadingRing size={100} />
+            </div>
+          )}
 
           {data && (
             <>
               {/* KPI tiles */}
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px" }}>
-                <KpiTile label="TOTAL RUNS" value={`${data.volume.total}`} sub={`${data.reliability.running} running · ${data.reliability.awaitingApproval} awaiting`} />
-                <KpiTile label="SUCCESS RATE" value={fmtPct(data.reliability.successRate)} tone={COLORS.success} sub={`${data.reliability.completed} ok · ${data.reliability.failed} failed`} />
-                <KpiTile label="AVG DURATION" value={data.speed.count ? fmtMs(data.speed.avgMs) : "—"} sub={data.speed.count ? `p50 ${fmtMs(data.speed.p50Ms)} · p95 ${fmtMs(data.speed.p95Ms)}` : "no completed runs"} />
-                <KpiTile label="TOTAL SPEND" value={fmtUsd(data.cost.totalUsd)} tone={COLORS.accent} sub={`${data.cost.withUsageCount} runs w/ usage`} />
-                <KpiTile label="AVG COST / RUN" value={fmtUsd(data.cost.avgUsdPerRun)} sub={`${fmtTokens(data.cost.avgTokensPerRun)} tokens/run`} />
-                <KpiTile label="CACHE HIT RATIO" value={fmtPct(data.efficiency.cacheHitRatio)} tone={COLORS.info} sub={`${fmtTokens(data.efficiency.cacheReadTokens)} cached reads`} />
+              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px", ...sectionDelay(0) }}>
+                <KpiTile index={0} label="TOTAL RUNS" value={`${data.volume.total}`} sub={`${data.reliability.running} running · ${data.reliability.awaitingApproval} awaiting`} />
+                <KpiTile index={1} label="SUCCESS RATE" value={fmtPct(data.reliability.successRate)} tone={COLORS.success} sub={`${data.reliability.completed} ok · ${data.reliability.failed} failed`} />
+                <KpiTile index={2} label="AVG DURATION" value={data.speed.count ? fmtMs(data.speed.avgMs) : "—"} sub={data.speed.count ? `p50 ${fmtMs(data.speed.p50Ms)} · p95 ${fmtMs(data.speed.p95Ms)}` : "no completed runs"} />
+                <KpiTile index={3} label="TOTAL SPEND" value={fmtUsd(data.cost.totalUsd)} tone={COLORS.accent} sub={`${data.cost.withUsageCount} runs w/ usage`} />
+                <KpiTile index={4} label="AVG COST / RUN" value={fmtUsd(data.cost.avgUsdPerRun)} sub={`${fmtTokens(data.cost.avgTokensPerRun)} tokens/run`} />
+                <KpiTile index={5} label="CACHE HIT RATIO" value={fmtPct(data.efficiency.cacheHitRatio)} tone={COLORS.info} sub={`${fmtTokens(data.efficiency.cacheReadTokens)} cached reads`} />
               </section>
 
               {/* Reliability + Speed */}
-              <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                <div style={panel}>
+              <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(1) }}>
+                <div style={panelStyle(3.8)}>
                   <h3 style={sectionHeading}>RELIABILITY</h3>
                   <StatusBar r={data.reliability} />
                 </div>
-                <div style={panel}>
+                <div style={panelStyle(4.2)}>
                   <h3 style={sectionHeading}>SPEED (COMPLETED RUNS)</h3>
                   <div style={{ display: "flex", gap: "24px" }}>
                     {[
@@ -212,14 +260,19 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              {/* Cost trend */}
-              <section style={panel}>
-                <h3 style={sectionHeading}>COST OVER TIME (USD / DAY)</h3>
-                <CostTrend trend={data.cost.trend} />
+              {/* Cost trend — the hero chart, same scanline + top-accent-line + spinning ring
+                  treatment as the live-log panel in ExecutionTab. */}
+              <section style={heroPanelStyle(2)}>
+                <div style={scanlineOverlay} />
+                <div style={topAccentLine} />
+                <div style={{ position: "relative", zIndex: 1 }}>
+                  <h3 style={sectionHeading}>COST OVER TIME (USD / DAY)</h3>
+                  <CostTrend trend={data.cost.trend} />
+                </div>
               </section>
 
               {/* Token breakdown */}
-              <section style={panel}>
+              <section style={panelStyle(4.6, 3)}>
                 <h3 style={sectionHeading}>TOKEN USAGE</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "16px" }}>
                   {[
@@ -237,16 +290,16 @@ export default function DashboardPage() {
               </section>
 
               {/* Volume breakdowns */}
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
-                <div style={panel}>
+              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", ...sectionDelay(4) }}>
+                <div style={panelStyle(3.6)}>
                   <h3 style={sectionHeading}>RUNS BY PROVIDER</h3>
                   <BarList rows={data.volume.byProvider} color={COLORS.indigo} />
                 </div>
-                <div style={panel}>
+                <div style={panelStyle(4.4)}>
                   <h3 style={sectionHeading}>RUNS BY PROJECT</h3>
                   <BarList rows={data.volume.byProject} color={COLORS.info} />
                 </div>
-                <div style={panel}>
+                <div style={panelStyle(5.0)}>
                   <h3 style={sectionHeading}>RUNS BY SKILL</h3>
                   <BarList rows={data.volume.bySkill} color={COLORS.accent} />
                 </div>

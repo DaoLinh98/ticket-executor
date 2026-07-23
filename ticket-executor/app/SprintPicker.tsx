@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
+import { useBoltsContext } from "./BoltsContext";
 
 export type IterationOption = {
   id: string;
@@ -27,6 +28,7 @@ export default function SprintPicker({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hasOptions = options.length > 0;
+  const { fireBoltFromEvent } = useBoltsContext();
 
   useEffect(() => {
     if (!open) return;
@@ -41,7 +43,7 @@ export default function SprintPicker({
     <div ref={wrapRef} style={{ position: "relative", marginLeft: "8px" }}>
       <button
         type="button"
-        onClick={() => hasOptions && setOpen((o) => !o)}
+        onClick={(e) => { if (hasOptions) { fireBoltFromEvent(e); setOpen((o) => !o); } }}
         style={{
           display: "flex",
           alignItems: "center",

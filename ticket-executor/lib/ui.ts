@@ -165,6 +165,15 @@ type RingOpts = {
   duration?: number;
   shape?: "pill" | "clip" | "none";
   cornerPx?: 6 | 7 | 8;
+  /** Extra animation(s) to run alongside the ring's spin (e.g. an entrance
+   *  fadeUp), comma-joined onto the same `animation` property. Use this
+   *  instead of spreading a second `{ animation: ... }` object over a
+   *  ringBorder style — a plain spread's last "animation" key wins and
+   *  silently kills the spin. */
+  extraAnimation?: string;
+  /** animation-delay for extraAnimation, paired via the same comma position
+   *  (the ring itself always gets delay 0s). */
+  extraAnimationDelay?: string;
 };
 
 // The one spinning conic-gradient "energy ring" border used everywhere in the
@@ -178,6 +187,8 @@ export function ringBorder(opts: RingOpts): CSSProperties {
     duration = 3.2,
     shape = "clip",
     cornerPx = 8,
+    extraAnimation,
+    extraAnimationDelay,
   } = opts;
   const highlight =
     opts.highlight ?? (variant === "filled" ? "#ffe4d8" : "#ffd8c9");
@@ -186,10 +197,13 @@ export function ringBorder(opts: RingOpts): CSSProperties {
       ? `conic-gradient(from var(--angle), transparent, ${highlight}, transparent 70%)`
       : `conic-gradient(from var(--angle), transparent, ${ring}, ${highlight}, ${ring}, transparent 70%)`;
   const style: CSSProperties = {
-    border: "1.5px solid transparent",
+    border: "2.25px solid transparent",
     background: `linear-gradient(${fill},${fill}) padding-box, ${conic} border-box`,
-    animation: `spinAngle ${duration}s linear infinite`,
+    animation: extraAnimation
+      ? `spinAngle ${duration}s linear infinite, ${extraAnimation}`
+      : `spinAngle ${duration}s linear infinite`,
   };
+  if (extraAnimation) style.animationDelay = `0s, ${extraAnimationDelay ?? "0s"}`;
   if (shape === "pill") style.borderRadius = "999px";
   else if (shape === "clip") style.clipPath = clipCorner(cornerPx);
   return style;
@@ -247,6 +261,38 @@ export function tintedCard(
     borderRadius: radius,
     border: `1px solid ${t.border}`,
     background: t.background,
+  };
+}
+
+// Modal shell chrome — the dark bordered/shadowed sliding-in panel shared by
+// SettingsModal, DiffModal and CommitFilesModal. Compose this instead of
+// re-typing the border/radius/background/shadow/slide-in animation quad.
+export function modalShellStyle(opts?: { radius?: string }): CSSProperties {
+  return {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: opts?.radius ?? "16px",
+    background: "#14171D",
+    boxShadow: "0 40px 90px -30px #000",
+    animation: "slideIn .28s both",
+  };
+}
+
+// Animated fire-gradient wordmark text ("D-Agent" style headers/titles) shared
+// by AppHeader and the dashboard header. fontSize differs by placement; the
+// gradient/animation is the part that must stay identical everywhere.
+export function logoText(fontSize: string): CSSProperties {
+  return {
+    fontFamily: "var(--font-space), sans-serif",
+    fontWeight: 700,
+    fontSize,
+    letterSpacing: ".01em",
+    background:
+      "linear-gradient(90deg,var(--accent) 0%,#FFC15E 18%,#FF5F3D 36%,var(--accent) 54%,#FFC15E 72%,#FF5F3D 90%,var(--accent) 100%)",
+    backgroundSize: "300% 100%",
+    WebkitBackgroundClip: "text",
+    backgroundClip: "text",
+    color: "transparent",
+    animation: "fireFlow 3.6s linear infinite,fireFlicker 2.2s ease-in-out infinite",
   };
 }
 

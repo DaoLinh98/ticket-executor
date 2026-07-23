@@ -8,6 +8,7 @@ import type { Ticket, TicketComment } from "@/lib/types";
 import { COLORS, EXEC_COLOR, EXEC_LABEL, avatar, card, execDot, initials, tintedCard } from "@/lib/ui";
 import { renderCommentBody } from "../helpers";
 import type { Action, OverrideField, RunSummary } from "../types";
+import LoadingRing from "../LoadingRing";
 
 type Props = {
   ticket: Ticket;
@@ -127,7 +128,7 @@ export default function OverviewTab({
         </div>
         <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={bannerCtaStyle}>
           {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
-          {action.spinner && <span style={{ width: "15px", height: "15px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
+          {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={15} /></span>}
           {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
           <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
         </button>

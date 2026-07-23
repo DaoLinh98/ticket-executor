@@ -4,6 +4,8 @@ import type { CSSProperties, MouseEvent, RefObject } from "react";
 import type { ExecStatus, Ticket } from "@/lib/types";
 import { COLORS, EXEC_LABEL, avatar, dropdownPanelStyle, execDot, initials, pill, ringBorder, statusPillActive, typeBadge } from "@/lib/ui";
 import type { Action, TabId } from "./types";
+import LoadingRing from "./LoadingRing";
+import { useBoltsContext } from "../BoltsContext";
 
 type Props = {
   ticket: Ticket;
@@ -41,20 +43,21 @@ export default function TicketDetailHeader({
   statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus,
   tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   return (
     <div style={{ position: "relative", zIndex: 1, flex: "0 0 auto", padding: "20px 28px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "9px" }}>
         <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
         <span style={typeBadge(t.type)}>{t.type}</span>
         <div ref={statusMenuRef} style={{ position: "relative" }}>
-          <button onClick={onToggleStatusMenu} style={statusPillActive(effStatus)}>
+          <button onClick={(e) => { fireBoltFromEvent(e); onToggleStatusMenu(); }} style={statusPillActive(effStatus)}>
             {effStatus}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: statusMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
           </button>
           {statusMenuOpen && (
             <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "190px", maxHeight: "280px" }) }}>
               {statusMenuLoading ? (
-                <div style={{ padding: "8px 10px", fontSize: "12px", color: "#5B6273" }}>Loading…</div>
+                <div style={{ padding: "10px", display: "flex", justifyContent: "center" }}><LoadingRing size={20} /></div>
               ) : statusMenuOptions.length === 0 ? (
                 <div style={{ padding: "8px 10px", fontSize: "12px", color: "#5B6273", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
               ) : (
@@ -101,27 +104,27 @@ export default function TicketDetailHeader({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
-        <button onClick={() => setTab("overview")} style={tabStyle("overview", true)}>Overview</button>
-        <button onClick={() => execEnabled && setTab("execution")} style={tabStyle("execution", execEnabled)}>Execution</button>
+        <button onClick={(e) => { fireBoltFromEvent(e); setTab("overview"); }} style={tabStyle("overview", true)}>Overview</button>
+        <button onClick={(e) => { if (execEnabled) { fireBoltFromEvent(e); setTab("execution"); } }} style={tabStyle("execution", execEnabled)}>Execution</button>
         {planEnabled && (
-          <button onClick={() => setTab("plan")} style={{ ...tabStyle("plan", true), display: "flex", alignItems: "center", gap: "6px" }}>
+          <button onClick={(e) => { fireBoltFromEvent(e); setTab("plan"); }} style={{ ...tabStyle("plan", true), display: "flex", alignItems: "center", gap: "6px" }}>
             Plan
             {planNeedsReview && <span style={{ ...pill({ color: "#0B0C10", background: COLORS.indigo, size: "xs", weight: 700 }), padding: "1px 6px" }}>review</span>}
           </button>
         )}
-        <button onClick={() => setTab("resolve-review")} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
+        <button onClick={(e) => { fireBoltFromEvent(e); setTab("resolve-review"); }} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
           Resolve Review
           {unresolvedCount > 0 && (
             <span style={{ ...pill({ color: "#0B0C10", background: "var(--accent)", size: "xs", weight: 700 }), padding: "1px 6px" }}>{unresolvedCount}</span>
           )}
         </button>
-        <button onClick={() => setTab("commits")} style={tabStyle("commits", true)}>Commits</button>
-        <button onClick={() => resultEnabled && setTab("result")} style={tabStyle("result", resultEnabled)}>Result</button>
+        <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
+        <button onClick={(e) => { if (resultEnabled) { fireBoltFromEvent(e); setTab("result"); } }} style={tabStyle("result", resultEnabled)}>Result</button>
         <div style={{ flex: 1 }} />
         <div style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
             {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
-            {action.spinner && <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite", position: "relative", zIndex: 1 }} />}
+            {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={14} /></span>}
             {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
             <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
           </button>

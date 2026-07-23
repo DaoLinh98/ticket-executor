@@ -1,14 +1,35 @@
 "use client";
 
-import { forwardRef } from "react";
+import { useEffect, useRef } from "react";
+import { useBoltsContext } from "../BoltsContext";
 
-// The spinning conic-gradient "energy core" — shared by the ticket-list
-// loading state and the detail-pane loading state so both read as the same
-// spinner, just scaled to size.
-const LoadingRing = forwardRef<HTMLDivElement, { size?: number }>(function LoadingRing({ size = 78 }, ref) {
+// The spinning conic-gradient "energy core" — the ONE loading spinner shared
+// by every loading state in the app, scaled via `size`. While mounted it also
+// self-strikes with the app's lightning-bolt click effect (same one used for
+// clicks) so every loading moment reads as "energy striking into the sphere",
+// not just a static spin.
+export default function LoadingRing({ size = 78 }: { size?: number }) {
   const scale = size / 78;
+  const coreRef = useRef<HTMLDivElement>(null);
+  const { fireBolt } = useBoltsContext();
+
+  useEffect(() => {
+    const jitter = Math.max(6, size * 0.33);
+    const strike = () => {
+      const el = coreRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2 + (Math.random() - 0.5) * jitter;
+      const y = r.top + r.height / 2 + (Math.random() - 0.5) * jitter;
+      fireBolt(x, y);
+    };
+    strike();
+    const id = setInterval(strike, 420);
+    return () => clearInterval(id);
+  }, [fireBolt, size]);
+
   return (
-    <div ref={ref} style={{ position: "relative", width: size + "px", height: size + "px" }}>
+    <div ref={coreRef} style={{ position: "relative", width: size + "px", height: size + "px" }}>
       <div style={{ position: "absolute", top: "50%", left: "50%", width: "78px", height: "78px", transform: `translate(-50%,-50%) scale(${scale})` }}>
         {/* outer spinning conic-gradient ring — same technique as the header pills */}
         <span
@@ -53,6 +74,4 @@ const LoadingRing = forwardRef<HTMLDivElement, { size?: number }>(function Loadi
       </div>
     </div>
   );
-});
-
-export default LoadingRing;
+}

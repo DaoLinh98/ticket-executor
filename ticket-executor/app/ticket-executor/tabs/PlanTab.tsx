@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { COLORS, card, ctaButtonStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { useBoltsContext } from "../../BoltsContext";
 
 type Props = {
   /** The plan markdown as the run last produced it. */
@@ -32,6 +33,7 @@ const SECTION_ICON: Record<string, { glyph: string; color: string }> = {
 // source file is touched, then accept it, send it back with feedback, or drop
 // the run entirely.
 export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onCancel }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   const [draft, setDraft] = useState(plan);
   const [editing, setEditing] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -129,7 +131,7 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
             <button
-              onClick={handleSave}
+              onClick={(e) => { fireBoltFromEvent(e); handleSave(); }}
               disabled={!edited}
               style={{ ...ctaButtonStyle("success", { height: "32px" }), padding: "0 16px", fontSize: "12.5px", opacity: edited ? 1 : 0.45, cursor: edited ? "pointer" : "not-allowed" }}
             >
@@ -192,7 +194,7 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
         <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
           <button
             disabled={busy || editing}
-            onClick={() => onApprove(draft)}
+            onClick={(e) => { fireBoltFromEvent(e, { big: true }); onApprove(draft); }}
             title={editing ? "Save your edits first" : undefined}
             style={{ ...ctaButtonStyle("success", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy || editing ? 0.5 : 1, cursor: busy || editing ? "not-allowed" : "pointer" }}
           >
@@ -201,7 +203,8 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
           </button>
           <button
             disabled={busy || editing || (feedbackOpen && !feedback.trim())}
-            onClick={() => {
+            onClick={(e) => {
+              fireBoltFromEvent(e);
               if (!feedbackOpen) {
                 setFeedbackOpen(true);
                 return;
@@ -217,7 +220,7 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
           <div style={{ flex: 1 }} />
           <button
             disabled={busy}
-            onClick={onCancel}
+            onClick={(e) => { fireBoltFromEvent(e); onCancel(); }}
             style={{ ...ctaButtonStyle("danger", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy ? 0.5 : 1 }}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ position: "relative", zIndex: 1 }}><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -240,6 +243,7 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
 // Segmented Preview/Edit control — a sliding accent highlight instead of two
 // static outline buttons, so the active mode is unmistakable at a glance.
 function PreviewEditToggle({ editing, onPreview, onEdit }: { editing: boolean; onPreview: () => void; onEdit: () => void }) {
+  const { fireBoltFromEvent } = useBoltsContext();
   const trackStyle: CSSProperties = {
     position: "relative", display: "inline-grid", gridTemplateColumns: "1fr 1fr",
     width: "200px", height: "34px", padding: "3px", borderRadius: "10px",
@@ -261,11 +265,11 @@ function PreviewEditToggle({ editing, onPreview, onEdit }: { editing: boolean; o
   return (
     <div style={trackStyle}>
       <div style={thumbStyle} />
-      <button onClick={onPreview} style={btnStyle(!editing)}>
+      <button onClick={(e) => { fireBoltFromEvent(e); onPreview(); }} style={btnStyle(!editing)}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" /><circle cx="12" cy="12" r="3" /></svg>
         Preview
       </button>
-      <button onClick={onEdit} style={btnStyle(editing)}>
+      <button onClick={(e) => { fireBoltFromEvent(e); onEdit(); }} style={btnStyle(editing)}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
         Edit
       </button>

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import type { FileChange } from "@/lib/types";
 import { COLORS, pill, ringBorder, tintedCard } from "@/lib/ui";
 import type { ExecView, ResultSection } from "../types";
+import { useBoltsContext } from "../../BoltsContext";
 
 type Props = {
   exec: ExecView;
@@ -17,6 +18,7 @@ type Props = {
 
 // Completion banner (branch / PR chips) plus one markdown block per completed run.
 export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpenDiff, onOpenPr }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .35s both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard("success", { padding: "16px 18px", radius: "13px" }) }}>
@@ -89,7 +91,7 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
               {rs.filesChanged.map((fc) => (
                 <button
                   key={fc.path}
-                  onClick={() => onOpenDiff(fc)}
+                  onClick={(e) => { fireBoltFromEvent(e); onOpenDiff(fc); }}
                   style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 11px", borderRadius: "9px", cursor: "pointer", ...ringBorder({ fill: "#111419", duration: 4.5, cornerPx: 7 }) }}
                 >
                   <span style={{

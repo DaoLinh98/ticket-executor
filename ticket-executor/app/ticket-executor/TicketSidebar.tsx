@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, Dispatch, MouseEvent, RefObject, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
 import type { ExecStatus, Ticket } from "@/lib/types";
 import {
@@ -9,6 +9,7 @@ import {
 } from "@/lib/ui";
 import { ACCENT } from "./constants";
 import LoadingRing from "./LoadingRing";
+import { useBoltsContext } from "../BoltsContext";
 
 type Props = {
   tickets: Ticket[];
@@ -16,7 +17,6 @@ type Props = {
   loading: boolean;
   loadError: string;
   ticketsNotice: string;
-  loadingCoreRef: RefObject<HTMLDivElement | null>;
   search: string;
   setSearch: Dispatch<SetStateAction<string>>;
   filtersOpen: boolean;
@@ -48,13 +48,14 @@ type Props = {
 
 // Left rail: search, filters, multi-select batch controls and the ticket rows.
 export default function TicketSidebar({
-  tickets, filtered, loading, loadError, ticketsNotice, loadingCoreRef,
+  tickets, filtered, loading, loadError, ticketsNotice,
   search, setSearch, filtersOpen, setFiltersOpen, activeFilters, clearFilters,
   fStatus, setFStatus, fType, setFType, fAssignee, setFAssignee,
   statusOptions, typeOptions, assigneeOptions,
   multiTicketMode, selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
   queuedIds, onRunSelected, selectedId, execStatusOf, getStatus, onSelectTicket,
 }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   const q = search.trim().toLowerCase();
   return (
     <aside style={{ width: "388px", flex: "0 0 388px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,.05)", background: "rgba(12,15,20,.74)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", minHeight: 0 }}>
@@ -69,9 +70,9 @@ export default function TicketSidebar({
               <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: "13px", fontWeight: 600, color: "#C7CCD8", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
                 {selectedIds.size} selected
               </div>
-              <button onClick={onCancelSelect} style={{ ...ctaButtonStyle("outline"), height: "36px" }}>Cancel</button>
+              <button onClick={(e) => { fireBoltFromEvent(e); onCancelSelect(); }} style={{ ...ctaButtonStyle("outline"), height: "36px" }}>Cancel</button>
               <button
-                onClick={onRunSelected}
+                onClick={(e) => { fireBoltFromEvent(e, { big: true }); onRunSelected(); }}
                 disabled={selectedIds.size === 0}
                 style={{ ...ctaButtonStyle("primary"), height: "36px", opacity: selectedIds.size === 0 ? 0.5 : 1, cursor: selectedIds.size === 0 ? "not-allowed" : "pointer" }}
               >
@@ -84,7 +85,7 @@ export default function TicketSidebar({
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
               </div>
-              <button onClick={() => setFiltersOpen((o) => !o)} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
+              <button onClick={(e) => { fireBoltFromEvent(e); setFiltersOpen((o) => !o); }} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
                 {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
               </button>
@@ -92,7 +93,7 @@ export default function TicketSidebar({
           )}
           {multiTicketMode && (
             <button
-              onClick={onToggleSelectMode}
+              onClick={(e) => { fireBoltFromEvent(e); onToggleSelectMode(); }}
               title="Select multiple tickets"
               style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}
             >
@@ -119,7 +120,7 @@ export default function TicketSidebar({
               </div>
             ))}
             {activeFilters > 0 && (
-              <button onClick={clearFilters} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #262B36", borderRadius: "9px", background: "transparent", color: "#8A90A0", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+              <button onClick={(e) => { fireBoltFromEvent(e); clearFilters(); }} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #262B36", borderRadius: "9px", background: "transparent", color: "#8A90A0", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             )}
           </div>
         )}
@@ -127,7 +128,7 @@ export default function TicketSidebar({
       <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
         {loading && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", padding: "58px 6px 46px" }}>
-            <LoadingRing ref={loadingCoreRef} size={78} />
+            <LoadingRing size={78} />
           </div>
         )}
         {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", lineHeight: 1.5, ...tintedCard("danger", { padding: "14px", radius: "10px" }) }}>{loadError}</div>}
@@ -159,6 +160,7 @@ export default function TicketSidebar({
               key={tk.id}
               onClick={(e) => {
                 if (selectMode) {
+                  fireBoltFromEvent(e);
                   onToggleTicketSelected(tk.id);
                 } else {
                   onSelectTicket(tk.id, e);

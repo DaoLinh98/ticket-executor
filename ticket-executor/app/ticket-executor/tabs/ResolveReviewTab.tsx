@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import type { ReviewData } from "@/lib/types";
 import { COLORS, avatar, card, ctaButtonStyle, initials, pill, statusPill, tintedCard } from "@/lib/ui";
 import { timeAgo } from "../helpers";
+import LoadingRing from "../LoadingRing";
 
 type Props = {
   review: ReviewData;
@@ -83,7 +84,7 @@ export default function ResolveReviewTab({ review, fixReviewRunning, fixReviewDi
               disabled={fixReviewDisabled}
               style={{ ...ctaButtonStyle(fixReviewDisabled ? "outline" : "primary"), height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto", opacity: fixReviewDisabled ? 0.5 : 1, cursor: fixReviewDisabled ? "not-allowed" : "pointer" }}
             >
-              {fixReviewRunning && <span style={{ width: "14px", height: "14px", borderRadius: "50%", border: "2px solid rgba(11,12,16,.3)", borderTopColor: "#0B0C10", display: "inline-block", animation: "spin .7s linear infinite" }} />}
+              {fixReviewRunning && <LoadingRing size={14} />}
               {!fixReviewRunning && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z" /></svg>}
               <span>{fixReviewRunning ? "Running…" : "Fix Code Review"}</span>
             </button>

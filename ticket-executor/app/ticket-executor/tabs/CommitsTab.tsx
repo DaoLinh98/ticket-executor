@@ -3,6 +3,8 @@
 import type { CommitSummary, PullRequestOverview } from "@/lib/types";
 import { avatar, card, initials, ringBorder } from "@/lib/ui";
 import { timeAgo } from "../helpers";
+import LoadingRing from "../LoadingRing";
+import { useBoltsContext } from "../../BoltsContext";
 
 type Props = {
   pr: PullRequestOverview | null;
@@ -13,6 +15,7 @@ type Props = {
 // List of every commit on the linked PR's source branch (GitHub/ADO-style),
 // newest activity surfaced first. Clicking a row opens CommitFilesModal.
 export default function CommitsTab({ pr, commits, onOpenCommit }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   if (!pr) {
     return (
       <div style={{ maxWidth: "800px", color: "#5B6273", fontSize: "13.5px", ...card({ padding: "22px" }) }}>
@@ -27,7 +30,7 @@ export default function CommitsTab({ pr, commits, onOpenCommit }: Props) {
         {commits ? `${commits.length} commit${commits.length === 1 ? "" : "s"} on ${pr.branch}` : "Loading commits…"}
       </div>
       {commits === null ? (
-        <div style={{ color: "#5B6273", fontSize: "13px", ...card({ padding: "18px" }) }}>Loading commits…</div>
+        <div style={{ display: "flex", justifyContent: "center", padding: "18px" }}><LoadingRing size={48} /></div>
       ) : commits.length === 0 ? (
         <div style={{ color: "#5B6273", fontSize: "13px", ...card({ padding: "18px" }) }}>No commits found on this pull request.</div>
       ) : (
@@ -35,7 +38,7 @@ export default function CommitsTab({ pr, commits, onOpenCommit }: Props) {
           {commits.map((c) => (
             <button
               key={c.sha}
-              onClick={() => onOpenCommit(c)}
+              onClick={(e) => { fireBoltFromEvent(e); onOpenCommit(c); }}
               style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: "11px", cursor: "pointer", ...ringBorder({ fill: "#111419", duration: 4.5, cornerPx: 8 }) }}
             >
               <span style={avatar(c.author)}>{initials(c.author)}</span>

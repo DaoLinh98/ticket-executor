@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { dropdownPanelStyle } from "@/lib/ui";
+import { useBoltsContext } from "./BoltsContext";
 
 // Creatable combobox: pick an option from the themed dropdown OR type a custom
 // value that is not in the list. Styled to match the prototype (dark, mono).
@@ -22,6 +23,7 @@ export default function Combobox({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const { fireBoltFromEvent } = useBoltsContext();
 
   useEffect(() => {
     if (!open) return;
@@ -87,7 +89,7 @@ export default function Combobox({
           tabIndex={-1}
           aria-label="Toggle options"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setOpen((o) => !o)}
+          onClick={(e) => { fireBoltFromEvent(e); setOpen((o) => !o); }}
           style={{
             flex: "0 0 auto",
             display: "flex",
@@ -138,7 +140,8 @@ export default function Combobox({
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(i)}
-                onClick={() => {
+                onClick={(e) => {
+                  fireBoltFromEvent(e);
                   onChange(o);
                   setOpen(false);
                 }}

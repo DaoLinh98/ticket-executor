@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { CommitFile, CommitSummary } from "@/lib/types";
-import { pill, ringBorder } from "@/lib/ui";
+import { modalShellStyle, pill, ringBorder } from "@/lib/ui";
 import DiffView from "./DiffView";
 import { timeAgo } from "./helpers";
 import LoadingRing from "./LoadingRing";
+import { useBoltsContext } from "../BoltsContext";
 
 type Props = {
   commit: CommitSummary;
@@ -31,6 +32,7 @@ const CHANGE_LETTER: Record<CommitFile["changeType"], string> = {
 // Result tab's single-file diff popup.
 export default function CommitFilesModal({ commit, files, onClose }: Props) {
   const [activePath, setActivePath] = useState<string | null>(null);
+  const { fireBoltFromEvent } = useBoltsContext();
 
   useEffect(() => {
     setActivePath(files && files.length ? files[0].path : null);
@@ -40,7 +42,7 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 55, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
-      <div style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "14px", padding: "16px 20px", borderBottom: "1px solid #1E232C", flex: "0 0 auto" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "14px", fontWeight: 700, color: "#F3F5F9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{commit.message || "(no message)"}</div>
@@ -50,7 +52,7 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
               {commit.date && <span>· {timeAgo(commit.date)}</span>}
             </div>
           </div>
-          <button onClick={onClose} style={{ width: "26px", height: "26px", flex: "0 0 auto", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+          <button onClick={(e) => { fireBoltFromEvent(e); onClose(); }} style={{ width: "26px", height: "26px", flex: "0 0 auto", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
         </div>
 
         {files === null ? (
@@ -65,7 +67,7 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
                 return (
                   <button
                     key={f.path}
-                    onClick={() => setActivePath(f.path)}
+                    onClick={(e) => { fireBoltFromEvent(e); setActivePath(f.path); }}
                     style={{
                       display: "flex",
                       alignItems: "center",

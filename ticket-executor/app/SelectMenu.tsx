@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { dropdownPanelStyle, ringBorder } from "@/lib/ui";
+import { useBoltsContext } from "./BoltsContext";
 
 // Themed, non-creatable dropdown — same button+panel pattern as the ticket
 // status dropdown (dropdownPanelStyle-based menu), reused for the ticket-list
@@ -14,6 +15,7 @@ export default function SelectMenu({
   allLabel,
   ariaLabel,
   variant = "field",
+  alwaysGlow = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -22,9 +24,14 @@ export default function SelectMenu({
   allLabel?: string;
   ariaLabel?: string;
   variant?: "filter" | "field";
+  /** Keep the spinning ring on even with no value selected — for standalone header
+   *  controls (e.g. the Dashboard's Provider/Project pickers) that should always read
+   *  as a live control, unlike the sidebar's optional refinement filters. */
+  alwaysGlow?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const { fireBoltFromEvent } = useBoltsContext();
 
   useEffect(() => {
     if (!open) return;
@@ -35,7 +42,7 @@ export default function SelectMenu({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  const active = !!value;
+  const active = !!value || alwaysGlow;
   const list = allLabel ? ["", ...options] : options;
 
   const buttonStyle: CSSProperties =
@@ -73,7 +80,7 @@ export default function SelectMenu({
 
   return (
     <div ref={wrapRef} style={{ position: "relative", flex: variant === "field" ? 1 : undefined, minWidth: 0 }}>
-      <button type="button" aria-label={ariaLabel} onClick={() => setOpen((o) => !o)} style={buttonStyle}>
+      <button type="button" aria-label={ariaLabel} onClick={(e) => { fireBoltFromEvent(e); setOpen((o) => !o); }} style={buttonStyle}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
           {value ? value : allLabel ?? ""}
         </span>
@@ -117,7 +124,8 @@ export default function SelectMenu({
               <button
                 key={o || "__all__"}
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  fireBoltFromEvent(e);
                   onChange(o);
                   setOpen(false);
                 }}

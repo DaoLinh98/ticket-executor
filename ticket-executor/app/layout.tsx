@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { BoltsProvider } from "./BoltsContext";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -31,7 +32,7 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} ${hankenGrotesk.variable} ${jetbrainsMono.variable}`}
       >
-        {children}
+        <BoltsProvider>{children}</BoltsProvider>
       </body>
     </html>
   );

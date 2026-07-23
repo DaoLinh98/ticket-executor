@@ -4,8 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { COLORS } from "@/lib/ui";
 
-type Bolt = { id: string; d: string; d2: string | null; color: string; big: boolean };
-type Flash = { id: string; color: string; x: number; y: number };
+type Bolt = { id: string; d: string; d2: string | null; big: boolean };
+type Flash = { id: string; x: number; y: number };
 
 const ACCENT = COLORS.accent;
 
@@ -27,10 +27,9 @@ export function useBolts() {
   const seq = useRef(0);
 
   const fireBolt = useCallback(
-    (x: number, y: number, opts?: { color?: string; big?: boolean }) => {
+    (x: number, y: number, opts?: { big?: boolean }) => {
       opts = opts || {};
       const id = "b" + ++seq.current;
-      const color = opts.color || ACCENT;
       const big = !!opts.big;
       const originX = x + (Math.random() - 0.5) * 160;
       const originY = -40;
@@ -42,13 +41,13 @@ export function useBolts() {
           by = originY + (y - originY) * f;
         d2 = zigzagPath(bx, by, bx + (Math.random() - 0.5) * 170, by + 70 + Math.random() * 90, 4, 34);
       }
-      const bolt: Bolt = { id, d, d2, color, big };
+      const bolt: Bolt = { id, d, d2, big };
       setBolts((s) => [...s, bolt]);
       const dur = big ? 640 : 440;
       setTimeout(() => setBolts((s) => s.filter((b) => b.id !== id)), dur);
       if (big) {
         const fid = id + "f";
-        setFlashes((s) => [...s, { id: fid, color, x, y }]);
+        setFlashes((s) => [...s, { id: fid, x, y }]);
         setTimeout(() => setFlashes((s) => s.filter((f) => f.id !== fid)), 500);
       }
     },
@@ -56,7 +55,7 @@ export function useBolts() {
   );
 
   const fireBoltFromEvent = useCallback(
-    (e?: { clientX?: number; clientY?: number }, opts?: { color?: string; big?: boolean }) => {
+    (e?: { clientX?: number; clientY?: number }, opts?: { big?: boolean }) => {
       const x = e && typeof e.clientX === "number" ? e.clientX : window.innerWidth / 2;
       const y = e && typeof e.clientY === "number" ? e.clientY : window.innerHeight / 3;
       fireBolt(x, y, opts);
@@ -87,7 +86,7 @@ export function BoltLayer({ bolts, flashes }: { bolts: Bolt[]; flashes: Flash[] 
             borderRadius: "50%",
             pointerEvents: "none",
             zIndex: 94,
-            background: `radial-gradient(circle, ${f.color}55 0%, ${f.color}18 40%, transparent 72%)`,
+            background: `radial-gradient(circle, ${ACCENT}55 0%, ${ACCENT}18 40%, transparent 72%)`,
             animation: "boltFlash 520ms ease-out forwards",
           }}
         />
@@ -106,10 +105,10 @@ export function BoltLayer({ bolts, flashes }: { bolts: Bolt[]; flashes: Flash[] 
         {bolts.map((bolt) => {
           const mainStyle: CSSProperties = {
             fill: "none",
-            stroke: bolt.color,
+            stroke: ACCENT,
             strokeWidth: bolt.big ? 3.6 : 2.1,
             strokeLinecap: "round",
-            filter: `drop-shadow(0 0 6px ${bolt.color}) drop-shadow(0 0 18px ${bolt.color})`,
+            filter: `drop-shadow(0 0 6px ${ACCENT}) drop-shadow(0 0 18px ${ACCENT})`,
             animation: bolt.big
               ? "boltFlicker 620ms ease-out forwards"
               : "boltFlicker 420ms ease-out forwards",
@@ -117,11 +116,11 @@ export function BoltLayer({ bolts, flashes }: { bolts: Bolt[]; flashes: Flash[] 
           };
           const branchStyle: CSSProperties = {
             fill: "none",
-            stroke: bolt.color,
+            stroke: ACCENT,
             strokeWidth: 1.5,
             strokeLinecap: "round",
             opacity: 0,
-            filter: `drop-shadow(0 0 5px ${bolt.color})`,
+            filter: `drop-shadow(0 0 5px ${ACCENT})`,
             animation: "boltFlicker 360ms ease-out forwards",
             animationDelay: "30ms",
           };

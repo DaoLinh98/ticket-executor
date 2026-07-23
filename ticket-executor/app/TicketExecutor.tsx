@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import Reactor from "./Reactor";
-import { BoltLayer, useBolts } from "./Bolts";
+import { useBoltsContext } from "./BoltsContext";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
 import CommitFilesModal from "./ticket-executor/CommitFilesModal";
@@ -30,7 +30,6 @@ import type { CommitFile, CommitSummary, ExecStatus, FileChange, LogLine, Ticket
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import {
-  COLORS,
   EXEC_COLOR,
   STEPS,
   actionInfoFor,
@@ -108,34 +107,17 @@ export default function TicketExecutor() {
   // the approve/revise/cancel POST is in flight.
   const [planBusy, setPlanBusy] = useState<Record<string, boolean>>({});
 
-  const { bolts, flashes, fireBolt, fireBoltFromEvent } = useBolts();
+  const { fireBoltFromEvent } = useBoltsContext();
   const logRef = useRef<HTMLDivElement>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseConnections = useRef<Record<string, EventSource>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadingCoreRef = useRef<HTMLDivElement>(null);
   // Batch "Run selected" scheduler: tickets waiting for a free slot, and
   // tickets currently occupying one — capped by settings.concurrentRuns.
   const batchQueueRef = useRef<string[]>([]);
   const batchRunningRef = useRef<Set<string>>(new Set());
   const tryStartNextQueuedRef = useRef<() => void>(() => { });
-
-  // While the sprint list is (re)loading, crackle small bolts around the energy core.
-  useEffect(() => {
-    if (!loading) return;
-    const strike = () => {
-      const el = loadingCoreRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const x = r.left + r.width / 2 + (Math.random() - 0.5) * 26;
-      const y = r.top + r.height / 2 + (Math.random() - 0.5) * 26;
-      fireBolt(x, y, { color: ACCENT });
-    };
-    strike();
-    const id = setInterval(strike, 420);
-    return () => clearInterval(id);
-  }, [loading, fireBolt]);
 
   // ---- data load ----
   // Fetch the ticket list for a given provider (and optional sprint override) and refresh the header sprint.
@@ -501,7 +483,7 @@ export default function TicketExecutor() {
   };
 
   const selectStatus = async (ticketId: string, status: string, e?: MouseEvent) => {
-    fireBoltFromEvent(e, { color: "#35D6A4" });
+    fireBoltFromEvent(e);
     setStatusMenuOpen(false);
     const prev = statusOverrides[ticketId];
     setStatusOverrides((s) => ({ ...s, [ticketId]: status })); // optimistic
@@ -997,7 +979,7 @@ export default function TicketExecutor() {
       const t = tickets.find((x) => x.id === selectedId);
       const execId = t ? execs[t.id]?.executionId : undefined;
       if (!execId) return;
-      fireBoltFromEvent(e, { color: "#FF6B6B" });
+      fireBoltFromEvent(e);
       try {
         await fetch(`/api/executions/${execId}/cancel`, { method: "POST" });
       } catch {
@@ -1123,7 +1105,7 @@ export default function TicketExecutor() {
       return; // keep modal open, show inline error
     }
     setSettingsError("");
-    fireBoltFromEvent(e, { color: "#35D6A4" });
+    fireBoltFromEvent(e);
     setSettingsOpen(false);
     try {
       const r = await fetch("/api/settings", {
@@ -1402,7 +1384,6 @@ export default function TicketExecutor() {
       }}
     >
       <Reactor accent={ACCENT} frozen={!settings.animatedBackground} />
-      <BoltLayer bolts={bolts} flashes={flashes} />
 
       <AppHeader
         pm={pm}
@@ -1432,7 +1413,6 @@ export default function TicketExecutor() {
           loading={loading}
           loadError={loadError}
           ticketsNotice={ticketsNotice}
-          loadingCoreRef={loadingCoreRef}
           search={search}
           setSearch={setSearch}
           filtersOpen={filtersOpen}
@@ -1478,7 +1458,7 @@ export default function TicketExecutor() {
                 projectName={selProject}
                 status={st}
                 execPillStyle={selExecPillStyle}
-                onOpenTicketLink={(e) => fireBoltFromEvent(e, { color: COLORS.indigo })}
+                onOpenTicketLink={(e) => fireBoltFromEvent(e)}
                 statusMenuRef={statusMenuRef}
                 statusMenuOpen={statusMenuOpen}
                 statusMenuLoading={statusMenuLoading}
@@ -1579,7 +1559,7 @@ export default function TicketExecutor() {
                     sections={resultSections}
                     showSectionHeader={showResultSectionHeader}
                     onOpenDiff={setDiffFile}
-                    onOpenPr={(e) => fireBoltFromEvent(e, { color: "#35D6A4" })}
+                    onOpenPr={(e) => fireBoltFromEvent(e)}
                   />
                 )}
               </div>

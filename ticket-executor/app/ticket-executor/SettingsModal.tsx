@@ -3,8 +3,10 @@
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
 import { PROVIDERS, type ProviderMeta } from "@/lib/providers";
-import { card, clipCorner, ringBorder, tintedCard } from "@/lib/ui";
+import { card, clipCorner, modalShellStyle, ringBorder, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "./types";
+import LoadingRing from "./LoadingRing";
+import { useBoltsContext } from "../BoltsContext";
 
 const fieldInputStyle: CSSProperties = {
   height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px",
@@ -34,9 +36,10 @@ export default function SettingsModal({
   settings, setSettings, setField, pm, connTest, settingsError,
   onProviderChange, onTestConnection, onSave, onClose,
 }: Props) {
+  const { fireBoltFromEvent } = useBoltsContext();
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
-      <div style={{ width: "95%", maxWidth: "980px", maxHeight: "90vh", display: "flex", flexDirection: "column", border: "1px solid #262B36", borderRadius: "16px", background: "#14171D", boxShadow: "0 40px 90px -30px #000", animation: "slideIn .28s both", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ width: "95%", maxWidth: "980px", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 28px", borderBottom: "1px solid #1E232C", flex: "0 0 auto" }}>
           <div><div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "17px", fontWeight: 700, color: "#F3F5F9" }}>Settings</div><div style={{ fontSize: "12.5px", color: "#6B7283", marginTop: "3px" }}>Connect your work-tracking provider &amp; execution defaults</div></div>
           <button onClick={onClose} style={{ width: "28px", height: "28px", color: "#8A90A0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 6 }) }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
@@ -57,7 +60,7 @@ export default function SettingsModal({
                   return (
                     <button
                       key={sc}
-                      onClick={() => setSettings((s) => ({ ...s, scope: sc }))}
+                      onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, scope: sc })); }}
                       style={{
                         flex: 1, height: "40px", fontSize: "13px", fontWeight: 700, cursor: "pointer",
                         textTransform: "capitalize", color: active ? "#F3F5F9" : "#8A90A0",
@@ -85,8 +88,8 @@ export default function SettingsModal({
             <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
-            <button onClick={onTestConnection} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)" }}>
-              {connTest.status === "testing" ? <span style={{ width: "13px", height: "13px", borderRadius: "50%", border: "2px solid rgba(199,204,216,.3)", borderTopColor: "#C7CCD8", display: "inline-block", animation: "spin .7s linear infinite" }} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
+            <button onClick={(e) => { fireBoltFromEvent(e); onTestConnection(); }} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: clipCorner(7) }}>
+              {connTest.status === "testing" ? <LoadingRing size={13} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
               Test connection
             </button>
             {connTest.status !== "idle" && connTest.status !== "testing" && (
@@ -107,7 +110,7 @@ export default function SettingsModal({
               </div>
             </div>
             <button
-              onClick={() => setSettings((s) => ({ ...s, multiTicketMode: !s.multiTicketMode }))}
+              onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, multiTicketMode: !s.multiTicketMode })); }}
               aria-pressed={settings.multiTicketMode}
               title="Toggle multi-ticket mode"
               style={{
@@ -160,7 +163,7 @@ export default function SettingsModal({
               </div>
             </div>
             <button
-              onClick={() => setSettings((s) => ({ ...s, autoImplement: !s.autoImplement }))}
+              onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, autoImplement: !s.autoImplement })); }}
               aria-pressed={settings.autoImplement}
               title="Toggle auto-implementation mode"
               style={{
@@ -189,7 +192,7 @@ export default function SettingsModal({
               </div>
             </div>
             <button
-              onClick={() => setSettings((s) => ({ ...s, autoResolveCodeReview: !s.autoResolveCodeReview }))}
+              onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, autoResolveCodeReview: !s.autoResolveCodeReview })); }}
               aria-pressed={settings.autoResolveCodeReview}
               title="Toggle auto-resolve-code-review mode"
               style={{
@@ -215,7 +218,7 @@ export default function SettingsModal({
               <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Turn off to freeze the 3D reactor backdrop.</div>
             </div>
             <button
-              onClick={() => setSettings((s) => ({ ...s, animatedBackground: !s.animatedBackground }))}
+              onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, animatedBackground: !s.animatedBackground })); }}
               aria-pressed={settings.animatedBackground}
               title="Toggle animated background"
               style={{
@@ -242,7 +245,7 @@ export default function SettingsModal({
           )}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "20px 28px", borderTop: "1px solid #1E232C", background: "#101318", flex: "0 0 auto" }}>
-          <button onClick={onClose} style={{ height: "32px", padding: "0 16px", border: "1.5px solid #2A2F3A", background: "transparent", color: "#C7CCD8", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", clipPath: "polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)", transition: "border-color .15s,color .15s,transform .12s" }}>Cancel</button>
+          <button onClick={onClose} style={{ height: "32px", padding: "0 16px", border: "1.5px solid #2A2F3A", background: "transparent", color: "#C7CCD8", fontSize: "12.5px", fontWeight: 600, cursor: "pointer", clipPath: clipCorner(7), transition: "border-color .15s,color .15s,transform .12s" }}>Cancel</button>
           <button onClick={onSave} style={{ height: "32px", padding: "0 18px", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
         </div>
       </div>
