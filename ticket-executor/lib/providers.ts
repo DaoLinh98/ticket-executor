@@ -16,8 +16,8 @@ export const PROVIDERS: ProviderMeta[] = [
     id: "azure-devops",
     name: "Azure DevOps",
     short: "AZURE DEVOPS",
-    urlLabel: "PROJECT URL",
-    urlPlaceholder: "https://dev.azure.com/your-org/your-project",
+    urlLabel: "ORGANIZATION URL",
+    urlPlaceholder: "https://dev.azure.com/your-org",
     tokenLabel: "PERSONAL ACCESS TOKEN",
   },
   {

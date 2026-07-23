@@ -11,7 +11,7 @@ let ORG = "";
 let PROJECT = "";
 let PAT = "";
 
-export type AdoCreds = { org: string; project: string; pat: string };
+export type AdoCreds = { org: string; pat: string };
 
 /**
  * Parse whatever the user pasted into the Settings URL field into org + project.
@@ -55,24 +55,34 @@ function decodeSegment(s: string | undefined): string {
   }
 }
 
-/** Saved Azure DevOps credentials, or null when the connection isn't configured yet. */
+/**
+ * Saved Azure DevOps credentials, or null when the connection isn't configured
+ * yet. The connection is configured at the *organization* level — the project
+ * is selected per request (Projects page / ticket-execution dropdown), not
+ * baked into the stored URL. A legacy stored project URL still parses to the
+ * right org, so old configs keep working.
+ */
 export async function adoCreds(): Promise<AdoCreds | null> {
   const c = await prisma.providerCredential.findUnique({ where: { provider: "azure-devops" } });
-  const { org, project } = parseAdoUrl(c?.org);
+  const { org } = parseAdoUrl(c?.org);
   const pat = decryptSecret(c?.pat);
-  return org && project && pat ? { org, project, pat } : null;
+  return org && pat ? { org, pat } : null;
 }
 
-async function loadCreds(): Promise<void> {
+// Populate the module globals for a call. `project` is required for
+// project-scoped endpoints (iterations, work items, comments) and passed in by
+// the caller; org-level endpoints (project list, work-item batch, PR/repo GUID
+// lookups) leave it empty.
+async function loadCreds(project?: string): Promise<void> {
   const c = await adoCreds();
   if (!c) {
     throw new Error(
-      "Azure DevOps is not configured — set the project URL (e.g. https://dev.azure.com/your-org/your-project) and a personal access token in Settings."
+      "Azure DevOps is not configured — set the organization URL (e.g. https://dev.azure.com/your-org) and a personal access token in Settings."
     );
   }
   ORG = c.org;
-  PROJECT = c.project;
   PAT = c.pat;
+  PROJECT = project ?? "";
 }
 
 function authHeader(): Record<string, string> {
@@ -134,6 +144,20 @@ function lastAreaSegment(areaPath: string): string {
   return last === PROJECT ? "" : last;
 }
 
+export type ProjectInfo = { id: string; name: string; description?: string };
+
+type RawProject = { id: string; name: string; description?: string };
+
+/** All projects in the configured organization (org-level, no project segment). */
+export async function listProjects(): Promise<ProjectInfo[]> {
+  await loadCreds();
+  const url = `https://dev.azure.com/${ORG}/_apis/projects?${API}`;
+  const data = await adoGet<{ value: RawProject[] }>(url);
+  return data.value
+    .map((p) => ({ id: p.id, name: p.name, description: p.description }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export type IterationInfo = {
   id: string;
   name: string;
@@ -149,8 +173,8 @@ type RawIteration = {
 };
 
 /** Iterations for the project's default team (used to resolve the current sprint and to populate the sprint picker). */
-export async function listIterations(): Promise<IterationInfo[]> {
-  await loadCreds();
+export async function listIterations(project: string): Promise<IterationInfo[]> {
+  await loadCreds(project);
   // No team segment: ADO falls back to the project's default team, so the user
   // only has to configure the project URL.
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
@@ -167,8 +191,8 @@ export async function listIterations(): Promise<IterationInfo[]> {
 }
 
 /** Resolve which iteration to load: an explicit override name, else ADO's current iteration. */
-async function resolveIteration(sprintOverride?: string): Promise<IterationInfo> {
-  const iterations = await listIterations();
+async function resolveIteration(project: string, sprintOverride?: string): Promise<IterationInfo> {
+  const iterations = await listIterations(project);
   const requested = sprintOverride?.trim();
   if (requested) {
     const found = iterations.find((i) => i.name === requested);
@@ -189,10 +213,11 @@ type WorkItemDetail = {
 
 /** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to ADO's current iteration. */
 export async function getSprintTickets(
+  project: string,
   sprintOverride?: string
 ): Promise<{ tickets: Ticket[]; sprintName: string }> {
-  await loadCreds();
-  const iteration = await resolveIteration(sprintOverride);
+  await loadCreds(project);
+  const iteration = await resolveIteration(project, sprintOverride);
 
   const wiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
@@ -251,8 +276,8 @@ export async function getSprintTickets(
 type RawWorkItemState = { name: string };
 
 /** Real workflow states for a work item type (e.g. "Bug", "User Story"), as configured by this project's process template — not a hard-coded guess. */
-export async function getWorkItemTypeStates(type: string): Promise<string[]> {
-  await loadCreds();
+export async function getWorkItemTypeStates(project: string, type: string): Promise<string[]> {
+  await loadCreds(project);
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT
   )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
@@ -279,11 +304,12 @@ export async function resolveWorkItemState(id: string, desired: string): Promise
   await loadCreds();
   const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
     id
-  )}?fields=System.WorkItemType&${API}`;
-  const data = await adoGet<{ fields?: { "System.WorkItemType"?: string } }>(url);
+  )}?fields=System.WorkItemType,System.TeamProject&${API}`;
+  const data = await adoGet<{ fields?: { "System.WorkItemType"?: string; "System.TeamProject"?: string } }>(url);
   const type = data.fields?.["System.WorkItemType"];
-  if (!type) return null;
-  const states = await getWorkItemTypeStates(type);
+  const project = data.fields?.["System.TeamProject"];
+  if (!type || !project) return null;
+  const states = await getWorkItemTypeStates(project, type);
 
   const want = desired.trim().toLowerCase();
   const exact = states.find((s) => s.toLowerCase() === want);
@@ -312,8 +338,8 @@ function shortDate(iso?: string): string {
 }
 
 /** Fetch the discussion comments for a single work item, oldest first. */
-export async function getWorkItemComments(id: string): Promise<TicketComment[]> {
-  await loadCreds();
+export async function getWorkItemComments(project: string, id: string): Promise<TicketComment[]> {
+  await loadCreds(project);
   // Comments live behind a preview API version.
   const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
     PROJECT

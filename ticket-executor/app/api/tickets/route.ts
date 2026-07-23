@@ -10,13 +10,14 @@ export async function GET(req: Request) {
     url.searchParams.get("provider") ?? process.env.TICKET_PROVIDER
   );
   const sprint = url.searchParams.get("sprint") ?? undefined;
+  const project = url.searchParams.get("project") ?? undefined;
   try {
     const setting = await prisma.setting.findUnique({ where: { id: "default" } });
     const personalFilter =
       setting && setting.scope === "personal"
         ? { scope: "personal" as const, account: setting.personalAccount }
         : undefined;
-    const result = await loadTickets(provider, sprint, personalFilter);
+    const result = await loadTickets(provider, project, sprint, personalFilter);
     return NextResponse.json({ provider, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -1,13 +1,11 @@
 "use client";
 
 import type { MouseEvent, RefObject } from "react";
-import Link from "next/link";
 import SprintPicker, { type IterationOption } from "../SprintPicker";
 import type { ProviderMeta } from "@/lib/providers";
 import type { ReviewSummaryEntry } from "@/lib/types";
 import { dropdownPanelStyle, logoText, ringBorder } from "@/lib/ui";
 import { reviewFingerprint, timeAgo } from "./helpers";
-import { useBoltsContext } from "../BoltsContext";
 
 type Props = {
   pm: ProviderMeta;
@@ -15,6 +13,9 @@ type Props = {
   sprintOptions: IterationOption[];
   selectedSprint: string;
   onSprintChange: (value: string, e: { clientX: number; clientY: number }) => void;
+  projectOptions: { id: string; name: string }[];
+  selectedProject: string;
+  onSelectProject: (value: string, e: { clientX: number; clientY: number }) => void;
   activeCount: number;
   bellRef: RefObject<HTMLDivElement | null>;
   bellOpen: boolean;
@@ -23,17 +24,25 @@ type Props = {
   reviewSummary: ReviewSummaryEntry[];
   reviewReadMap: Record<string, { seen: string; readAt: string }>;
   onOpenReview: (rv: ReviewSummaryEntry, e: MouseEvent) => void;
-  onOpenSettings: (e?: MouseEvent) => void;
-  onLogout: () => void;
 };
 
-// Top bar: brand, sprint picker, active-run counter, review bell, Settings.
+// Project picker leading icon (a small grid/folder), distinct from the sprint
+// picker's green "current" dot.
+const projectLeading = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8A90A0" strokeWidth="2" style={{ flex: "0 0 auto" }}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+);
+
+// Top bar (Ticket Execution): brand, project + sprint pickers, active-run
+// counter and the review bell. Cross-page nav / Settings / Logout live in the
+// shared Sidebar.
 export default function AppHeader({
-  pm, sprintLabel, sprintOptions, selectedSprint, onSprintChange, activeCount,
+  pm, sprintLabel, sprintOptions, selectedSprint, onSprintChange,
+  projectOptions, selectedProject, onSelectProject, activeCount,
   bellRef, bellOpen, onToggleBell, reviewBadgeCount, reviewSummary, reviewReadMap,
-  onOpenReview, onOpenSettings, onLogout,
+  onOpenReview,
 }: Props) {
-  const { fireBoltFromEvent } = useBoltsContext();
   return (
     <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -45,6 +54,7 @@ export default function AppHeader({
           <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
         </div>
       </div>
+      <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
       <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
       <div style={{ flex: 1 }} />
       <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
@@ -92,17 +102,6 @@ export default function AppHeader({
           </div>
         )}
       </div>
-      <Link href="/dashboard" onClick={(e) => fireBoltFromEvent(e)} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px 0 11px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, textDecoration: "none", cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>
-        Dashboard
-      </Link>
-      <button onClick={onOpenSettings} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px 0 11px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-        Settings
-      </button>
-      <button onClick={(e) => { fireBoltFromEvent(e); onLogout(); }} title="Log out" aria-label="Log out" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "30px", height: "30px", color: "#8A90A0", cursor: "pointer", transition: "filter .15s,transform .12s", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
-      </button>
     </header>
   );
 }

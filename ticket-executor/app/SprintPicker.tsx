@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
 
@@ -10,20 +10,26 @@ export type IterationOption = {
   timeFrame?: "past" | "current" | "future";
 };
 
-// Themed sprint picker for the header chip: same spinning conic-gradient pill
-// as the rest of the app, with a custom dark dropdown panel (native <select>
-// can't be restyled to match). Falls back to a plain label when there is
-// nothing to pick from (non-ADO providers).
+// Themed picker for the header chip: same spinning conic-gradient pill as the
+// rest of the app, with a custom dark dropdown panel (native <select> can't be
+// restyled to match). Falls back to a plain label when there is nothing to pick
+// from (non-ADO providers). Used for both the sprint picker (default green dot)
+// and the project picker (custom `leading` icon).
+const defaultLeading = (
+  <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4", flex: "0 0 auto" }} />
+);
 export default function SprintPicker({
   label,
   options,
   value,
   onSelect,
+  leading = defaultLeading,
 }: {
   label: string;
   options: IterationOption[];
   value: string;
   onSelect: (name: string, e: { clientX: number; clientY: number }) => void;
+  leading?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -56,7 +62,7 @@ export default function SprintPicker({
           ...ringBorder({ fill: "#14171D", shape: "pill", duration: 4 }),
         }}
       >
-        <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4", flex: "0 0 auto" }} />
+        {leading}
         <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
         {hasOptions && (
           <svg

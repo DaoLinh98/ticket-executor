@@ -2,13 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
-import SelectMenu from "../SelectMenu";
-import Reactor from "../Reactor";
-import LoadingRing from "../ticket-executor/LoadingRing";
+import SelectMenu from "../../SelectMenu";
+import LoadingRing from "../../ticket-executor/LoadingRing";
 import type { CountEntry, DashboardMetrics } from "@/lib/executionStore";
 import { COLORS, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
-import { useBoltsContext } from "../BoltsContext";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -127,7 +124,6 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
 }
 
 export default function DashboardPage() {
-  const { fireBoltFromEvent } = useBoltsContext();
   const [data, setData] = useState<DashboardMetrics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -186,8 +182,7 @@ export default function DashboardPage() {
   const sectionDelay = (i: number) => ({ animation: "fadeUp .45s both", animationDelay: `${i * 70}ms` } as CSSProperties);
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
-      <Reactor accent={COLORS.accent} />
+    <div style={{ position: "relative", height: "100vh", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
@@ -205,10 +200,6 @@ export default function DashboardPage() {
         <div style={{ width: "220px" }}>
           <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
-        <Link href="/" onClick={(e) => fireBoltFromEvent(e)} style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, textDecoration: "none", ...ringBorder({ fill: "#14171D", duration: 3.4, cornerPx: 7 }) }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-          Back
-        </Link>
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

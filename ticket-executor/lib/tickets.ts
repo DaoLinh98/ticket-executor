@@ -1,7 +1,7 @@
 import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
   adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
-  getPullRequestCommits, getCommitFileChanges, resolveWorkItemState,
+  getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, type ProjectInfo,
 } from "./ado";
 import {
   getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
@@ -46,6 +46,7 @@ function applyPersonalFilter(tickets: Ticket[], filter?: PersonalFilter): Ticket
 // throwing, so the UI can show a "not connected yet" state.
 export async function loadTickets(
   provider: ProviderId,
+  project?: string,
   sprintOverride?: string,
   personalFilter?: PersonalFilter
 ): Promise<TicketLoadResult> {
@@ -56,10 +57,13 @@ export async function loadTickets(
           tickets: [],
           sprint: "",
           connected: false,
-          notice: "Azure DevOps is not configured — set the project URL and a personal access token in Settings.",
+          notice: "Azure DevOps is not configured — set the organization URL and a personal access token in Settings.",
         };
       }
-      const { tickets, sprintName } = await getSprintTickets(sprintOverride);
+      if (!project) {
+        return { tickets: [], sprint: "", connected: true, notice: "Select a project to load its tickets." };
+      }
+      const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
       return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true };
     }
     case "github": {
@@ -83,10 +87,35 @@ export async function loadTickets(
   }
 }
 
+export type ProjectLoadResult = {
+  projects: ProjectInfo[];
+  connected: boolean;
+  notice?: string;
+};
+
+// List the projects available for a provider's configured organization. Azure
+// DevOps is wired; other providers degrade to an empty "not connected" result.
+export async function loadProjects(provider: ProviderId): Promise<ProjectLoadResult> {
+  switch (provider) {
+    case "azure-devops": {
+      if (!(await adoCreds())) {
+        return {
+          projects: [],
+          connected: false,
+          notice: "Azure DevOps is not configured — set the organization URL and a personal access token in Settings.",
+        };
+      }
+      return { projects: await listProjects(), connected: true };
+    }
+    default:
+      return { projects: [], connected: false, notice: `${labelFor(provider)} does not expose a project list yet.` };
+  }
+}
+
 // Load the discussion comments for a single ticket. Only Azure DevOps is wired;
 // other providers return an empty list so the section simply hides.
-export async function loadTicketComments(provider: ProviderId, id: string): Promise<TicketComment[]> {
-  if (provider === "azure-devops") return getWorkItemComments(id);
+export async function loadTicketComments(provider: ProviderId, id: string, project?: string): Promise<TicketComment[]> {
+  if (provider === "azure-devops") return getWorkItemComments(project ?? "", id);
   return [];
 }
 
@@ -161,8 +190,8 @@ export async function loadCommitFileChanges(provider: ProviderId, ticketId: stri
 // GitHub: the linked Projects v2 board's Status field (Todo/In Progress/Done),
 // falling back to the repo's "status: X" labels if the issue isn't on a board.
 // Jira/GitLab: not wired yet.
-export async function getStatusOptions(provider: ProviderId, ticketId: string, ticketType: string): Promise<string[]> {
-  if (provider === "azure-devops") return getWorkItemTypeStates(ticketType);
+export async function getStatusOptions(provider: ProviderId, ticketId: string, ticketType: string, project?: string): Promise<string[]> {
+  if (provider === "azure-devops") return getWorkItemTypeStates(project ?? "", ticketType);
   if (provider === "github") {
     const creds = await githubCreds();
     return creds ? getGithubStatusOptions(creds.url, creds.token, ticketId) : [];

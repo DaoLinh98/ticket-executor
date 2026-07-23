@@ -14,8 +14,9 @@ export async function GET(
   const url = new URL(req.url);
   const provider = normalizeProvider(url.searchParams.get("provider"));
   const ticketType = url.searchParams.get("type") ?? "";
+  const project = url.searchParams.get("project") ?? undefined;
   try {
-    const options = await getStatusOptions(provider, id, ticketType);
+    const options = await getStatusOptions(provider, id, ticketType, project);
     return NextResponse.json({ options });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
