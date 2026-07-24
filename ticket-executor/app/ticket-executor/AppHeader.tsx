@@ -4,7 +4,7 @@ import type { MouseEvent, RefObject } from "react";
 import SprintPicker, { type IterationOption } from "../SprintPicker";
 import type { ProviderMeta } from "@/lib/providers";
 import type { ReviewSummaryEntry } from "@/lib/types";
-import { dropdownPanelStyle, logoText, ringBorder } from "@/lib/ui";
+import { dropdownPanelStyle, ringBorder } from "@/lib/ui";
 import { reviewFingerprint, timeAgo } from "./helpers";
 
 type Props = {
@@ -45,15 +45,7 @@ export default function AppHeader({
 }: Props) {
   return (
     <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-        <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-          <span style={logoText("16px")}>D-Agent</span>
-          <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
-        </div>
-      </div>
+      <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
       <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
       <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
       <div style={{ flex: 1 }} />

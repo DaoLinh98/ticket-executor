@@ -8,6 +8,7 @@ import LoadingRing from "../LoadingRing";
 
 type Props = {
   review: ReviewData;
+  loading: boolean;
   fixReviewRunning: boolean;
   fixReviewDisabled: boolean;
   onFixReview: (e: MouseEvent, prUrl: string) => void;
@@ -16,10 +17,12 @@ type Props = {
 const cardLabel = { fontSize: "10.5px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "6px" } as const;
 
 // Linked-PR overview, its review threads, and the "Fix Code Review" launcher.
-export default function ResolveReviewTab({ review, fixReviewRunning, fixReviewDisabled, onFixReview }: Props) {
+export default function ResolveReviewTab({ review, loading, fixReviewRunning, fixReviewDisabled, onFixReview }: Props) {
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "22px", animation: "fadeUp .35s both" }}>
-      {!review.pr ? (
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: "40px" }}><LoadingRing size={48} /></div>
+      ) : !review.pr ? (
         <div style={{ color: "#5B6273", fontSize: "13.5px", ...card({ padding: "22px" }) }}>
           No pull request linked to this ticket yet.
         </div>

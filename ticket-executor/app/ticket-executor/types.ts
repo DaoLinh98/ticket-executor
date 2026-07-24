@@ -14,6 +14,10 @@ export type ExecView = {
   branch?: string;
   duration?: string;
   currentStep?: number;
+  // Token & cost usage reported by the Claude CLI, accumulated across the run.
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   // Two-phase (implement-ticket-v3) run state — drives the Plan tab.
   phase?: ExecPhase;
   planStatus?: PlanStatus;
@@ -31,6 +35,9 @@ export type RunSummary = {
   duration?: string;
   resultText?: string;
   filesChanged?: FileChange[];
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 // The Settings modal's form state (mirrors the persisted Setting row).

@@ -4,18 +4,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { prisma } from "../prisma";
 import type { ExecPhase, ExecStatus, PlanStatus } from "../types";
-import { PLAN_GATE_STEP, STEPS } from "../ui";
+import { isTwoPhaseSkill, PLAN_GATE_STEP, STEPS } from "../ui";
 import { commonArgs, runTurn } from "./claudeCli";
 import { cleanPath, fmtDuration } from "./format";
 import { collectFileChanges } from "./git";
 import { store } from "./store";
 import type { Entry, TurnState } from "./types";
 
-// Skills that run in two phases with a human plan-review gate in between.
-// Everything else (implement-ticket-v2, fix-code-review-v2, …) keeps the old
-// single-turn behaviour.
-const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
-export const isTwoPhaseSkill = (skill: string) => TWO_PHASE_SKILLS.has(skill);
+export { isTwoPhaseSkill };
 
 // Where the plan phase leaves its deliverable, relative to the run's worktree.
 const PLAN_FILE = path.join(".te", "plan.md");

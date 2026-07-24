@@ -30,7 +30,6 @@ import { providerMeta, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import {
   EXEC_COLOR,
-  STEPS,
   actionInfoFor,
   branchOf,
   clipCorner,
@@ -39,6 +38,8 @@ import {
   nextStatusAfter,
   pill,
   ringBorder,
+  stepsForSkill,
+  stepsIndexMap,
 } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
@@ -93,6 +94,9 @@ export default function TicketExecutor() {
     multiTicketMode: true,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
+  // True while a ticket's Resolve Review data is being (re)fetched — lets the
+  // tab distinguish "still loading" from "genuinely no PR yet".
+  const [reviewsLoading, setReviewsLoading] = useState<Record<string, boolean>>({});
   const [commits, setCommits] = useState<Record<string, CommitSummary[]>>({});
   const [openCommit, setOpenCommit] = useState<CommitSummary | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
@@ -104,9 +108,10 @@ export default function TicketExecutor() {
   // re-memoizing them on every selection change.
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
-  // Per-ticket "resolving the plan" flag — disables the Plan tab's buttons while
-  // the approve/revise/cancel POST is in flight.
-  const [planBusy, setPlanBusy] = useState<Record<string, boolean>>({});
+  // Per-ticket "resolving the plan" flag — disables the Plan tab's buttons (and
+  // shows a spinner on whichever one was clicked) while the approve/revise/cancel
+  // POST is in flight.
+  const [planBusy, setPlanBusy] = useState<Record<string, "approve" | "revise" | "cancel" | undefined>>({});
 
   const { fireBoltFromEvent } = useBoltsContext();
   const logRef = useRef<HTMLDivElement>(null);
@@ -299,12 +304,15 @@ export default function TicketExecutor() {
   // overview plus its open/resolved review-comment threads.
   const loadReview = useCallback(async (ticketId: string, provider: ProviderId) => {
     if (!ticketId) return;
+    setReviewsLoading((s) => ({ ...s, [ticketId]: true }));
     try {
       const r = await fetch(`/api/tickets/${ticketId}/review?provider=${provider}`);
       const data = await r.json();
       setReviews((s) => ({ ...s, [ticketId]: data.review ?? { pr: null, comments: [], unresolvedCount: 0 } }));
     } catch {
       /* ignore — Resolve Review tab shows the empty state */
+    } finally {
+      setReviewsLoading((s) => ({ ...s, [ticketId]: false }));
     }
   }, []);
 
@@ -426,6 +434,9 @@ export default function TicketExecutor() {
           prUrl: ex.prUrl ?? "",
           branch: ex.branch ?? "",
           duration: ex.duration,
+          costUsd: ex.costUsd,
+          inputTokens: ex.inputTokens,
+          outputTokens: ex.outputTokens,
           currentStep: ex.currentStep,
           phase: ex.phase,
           planStatus: ex.planStatus,
@@ -675,6 +686,9 @@ export default function TicketExecutor() {
           prUrl: (ex.prUrl as string) ?? "",
           branch: (ex.branch as string) ?? "",
           duration: ex.duration as string | undefined,
+          costUsd: ex.costUsd as number | undefined,
+          inputTokens: ex.inputTokens as number | undefined,
+          outputTokens: ex.outputTokens as number | undefined,
           currentStep: ex.currentStep as number,
           phase: ex.phase as ExecView["phase"],
           planStatus: ex.planStatus as ExecView["planStatus"],
@@ -817,6 +831,9 @@ export default function TicketExecutor() {
             prUrl: ex.prUrl ?? "",
             branch: ex.branch ?? "",
             duration: ex.duration,
+            costUsd: ex.costUsd,
+            inputTokens: ex.inputTokens,
+            outputTokens: ex.outputTokens,
             currentStep: ex.currentStep,
             phase: ex.phase,
             planStatus: ex.planStatus,
@@ -1038,7 +1055,7 @@ export default function TicketExecutor() {
     async (ticketId: string, action: "approve" | "revise" | "cancel", plan?: string, feedback?: string) => {
       const execId = execs[ticketId]?.executionId;
       if (!execId) return;
-      setPlanBusy((b) => ({ ...b, [ticketId]: true }));
+      setPlanBusy((b) => ({ ...b, [ticketId]: action }));
       try {
         const r = await fetch(`/api/executions/${execId}/plan`, {
           method: "POST",
@@ -1064,7 +1081,7 @@ export default function TicketExecutor() {
         }
         startPolling(ticketId, execId);
       } finally {
-        setPlanBusy((b) => ({ ...b, [ticketId]: false }));
+        setPlanBusy((b) => ({ ...b, [ticketId]: undefined }));
       }
     },
     [execs, showToast, loadHistory, startPolling]
@@ -1106,7 +1123,7 @@ export default function TicketExecutor() {
   // The Plan tab exists only for a two-phase run that has produced (or is
   // producing) a plan — i.e. once a v3 run is underway.
   const planEnabled = !!ex?.planMarkdown || st === "awaiting-approval" || (ex?.phase === "plan" && st === "running");
-  const planBusyForSel = t ? !!planBusy[t.id] : false;
+  const planBusyForSel = t ? planBusy[t.id] : undefined;
 
   // Single-ticket mode: only one run at a time. Find any other ticket currently
   // occupying the one slot, so this ticket's CTA can be blocked while it does.
@@ -1235,14 +1252,22 @@ export default function TicketExecutor() {
             : `Claude Code will cd into the repo and run ${getSkill(t)} for ${getArea(t)}.`
     : "";
 
-  // steps
-  const cur = ex?.currentStep ?? (ex ? deriveStep(ex.logLines) : 0);
-  const steps: StepView[] = STEPS.map((label, i) => {
+  // steps — filtered to the skill actually driving this run (or that would
+  // run next), so a one-shot (v2) skill's list never shows the plan-phase-only
+  // "Draft plan" / "Awaiting your review" steps it can never reach.
+  const skillForSteps = ex?.skillName ?? (t ? getSkill(t) : undefined);
+  const visibleSteps = stepsForSkill(skillForSteps);
+  const stepIndexMap = stepsIndexMap(skillForSteps);
+  const rawCur = ex?.currentStep ?? (ex ? deriveStep(ex.logLines) : 0);
+  // Translate a raw STEPS index into the filtered list's index — a hidden
+  // step (mapped to -1) means every visible step up to the gate is done.
+  const cur = stepIndexMap[rawCur] >= 0 ? stepIndexMap[rawCur] : visibleSteps.length;
+  const steps: StepView[] = visibleSteps.map((label, i) => {
     let sst: "pending" | "active" | "done" | "failed" = "pending";
     if (st === "completed") sst = "done";
     else if (st === "failed") sst = i < cur ? "done" : i === cur ? "failed" : "pending";
     else if (st === "running" || st === "awaiting-approval") sst = i < cur ? "done" : i === cur ? "active" : "pending";
-    const last = i === STEPS.length - 1;
+    const last = i === visibleSteps.length - 1;
     const db: CSSProperties = {
       position: "relative", width: "24px", height: "24px", borderRadius: "50%",
       display: "flex", alignItems: "center", justifyContent: "center",
@@ -1474,7 +1499,8 @@ export default function TicketExecutor() {
                   <PlanTab
                     plan={ex.planMarkdown ?? ""}
                     awaiting={st === "awaiting-approval"}
-                    busy={planBusyForSel}
+                    busy={!!planBusyForSel}
+                    busyAction={planBusyForSel}
                     onApprove={(plan) => resolvePlan(t.id, "approve", plan)}
                     onRevise={(plan, feedback) => resolvePlan(t.id, "revise", plan, feedback)}
                     onCancel={() => resolvePlan(t.id, "cancel")}
@@ -1484,6 +1510,7 @@ export default function TicketExecutor() {
                 {tab === "resolve-review" && (
                   <ResolveReviewTab
                     review={ticketReview}
+                    loading={!!(t && reviewsLoading[t.id]) && !reviews[t.id]}
                     fixReviewRunning={fixReviewRunning}
                     fixReviewDisabled={fixReviewDisabled}
                     onFixReview={(e, prUrl) => startImplement(e, getReviewSkill(), prUrl)}

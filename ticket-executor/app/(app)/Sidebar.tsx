@@ -74,7 +74,7 @@ export default function Sidebar() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
           <span style={logoText("17px")}>D-Agent</span>
-          <span style={{ fontSize: "9.5px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", color: COLORS.faint }}>CLAUDE CODE</span>
+          <span style={{ fontSize: "9.5px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
         </div>
       </div>
 

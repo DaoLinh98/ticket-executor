@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
+import Toast from "../../ticket-executor/Toast";
+import { SETTINGS_UPDATED_EVENT } from "../AppReactor";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { card, clipCorner, logoText, ringBorder, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
@@ -43,9 +45,17 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsView>(DEFAULTS);
   const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [error, setError] = useState("");
-  const [saveMsg, setSaveMsg] = useState("");
+  const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(true);
   const pm = providerMeta(settings.provider);
+
+  const showToast = (msg: string, kind: "success" | "error" = "success", ms = 4000) => {
+    setToast({ msg, kind });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
+  };
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   useEffect(() => {
     (async () => {
@@ -106,7 +116,7 @@ export default function SettingsPage() {
 
   const save = async (e?: React.MouseEvent) => {
     const v = validate();
-    if (v) { setError(v); setSaveMsg(""); return; }
+    if (v) { setError(v); return; }
     setError("");
     if (e) fireBoltFromEvent(e);
     try {
@@ -118,7 +128,12 @@ export default function SettingsPage() {
       const data = await r.json();
       if (!r.ok || !data.settings) { setError(data.error || "Failed to save settings"); return; }
       setSettings(data.settings);
-      setSaveMsg("Settings saved.");
+      // Broadcast so the app-wide reactor backdrop picks up an animated-background
+      // change immediately, without waiting for a route change / reload.
+      window.dispatchEvent(
+        new CustomEvent(SETTINGS_UPDATED_EVENT, { detail: { animatedBackground: data.settings.animatedBackground } })
+      );
+      showToast("Settings saved.");
     } catch {
       setError("Failed to save settings");
     }
@@ -255,12 +270,12 @@ export default function SettingsPage() {
             )}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
-              {saveMsg && <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#5BE8B8" }}>{saveMsg}</span>}
               <button onClick={save} style={{ height: "34px", padding: "0 20px", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
             </div>
           </div>
         )}
       </main>
+      {toast && <Toast toast={toast} />}
     </div>
   );
 }

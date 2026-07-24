@@ -27,6 +27,9 @@ export function getExecution(id: string) {
     planStatus: e.planStatus,
     planMarkdown: e.planMarkdown,
     duration: e.completedAt ? fmtDuration(e.completedAt - e.startedAt) : undefined,
+    costUsd: e.costUsd,
+    inputTokens: e.inputTokens,
+    outputTokens: e.outputTokens,
     startedAt: new Date(e.startedAt).toISOString(),
     completedAt: e.completedAt ? new Date(e.completedAt).toISOString() : null,
   };
@@ -57,6 +60,9 @@ export async function getPersistedExecution(id: string) {
     planStatus: r.planStatus as PlanStatus,
     planMarkdown: r.planMarkdown,
     duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
+    costUsd: r.costUsd,
+    inputTokens: r.inputTokens,
+    outputTokens: r.outputTokens,
     startedAt: r.startedAt.toISOString(),
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,
   };
@@ -219,6 +225,7 @@ export async function listExecutions(ticketId: string) {
     select: {
       id: true, status: true, skillName: true, prUrl: true, branch: true,
       resultText: true, filesChanged: true, startedAt: true, completedAt: true,
+      costUsd: true, inputTokens: true, outputTokens: true,
     },
   });
   return rows.map((r) => ({
@@ -231,5 +238,8 @@ export async function listExecutions(ticketId: string) {
     filesChanged: safeParseJson<FileChange[]>(r.filesChanged, []),
     startedAt: r.startedAt.toISOString(),
     duration: r.completedAt ? fmtDuration(r.completedAt.getTime() - r.startedAt.getTime()) : undefined,
+    costUsd: r.costUsd,
+    inputTokens: r.inputTokens,
+    outputTokens: r.outputTokens,
   }));
 }

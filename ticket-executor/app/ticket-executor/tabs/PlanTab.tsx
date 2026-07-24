@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { COLORS, card, ctaButtonStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
+import LoadingRing from "../LoadingRing";
 
 type Props = {
   /** The plan markdown as the run last produced it. */
@@ -13,6 +14,8 @@ type Props = {
   /** False while the run is still drafting/revising the plan — actions are hidden. */
   awaiting: boolean;
   busy: boolean;
+  /** Which action's POST is currently in flight — drives which button shows a spinner. */
+  busyAction?: "approve" | "revise" | "cancel";
   onApprove: (plan: string) => void;
   onRevise: (plan: string, feedback: string) => void;
   onCancel: () => void;
@@ -32,7 +35,7 @@ const SECTION_ICON: Record<string, { glyph: string; color: string }> = {
 // The plan-review gate: read (or edit) what Claude intends to do before any
 // source file is touched, then accept it, send it back with feedback, or drop
 // the run entirely.
-export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onCancel }: Props) {
+export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, onRevise, onCancel }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   const [draft, setDraft] = useState(plan);
   const [editing, setEditing] = useState(false);
@@ -198,7 +201,11 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
             title={editing ? "Save your edits first" : undefined}
             style={{ ...ctaButtonStyle("success", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy || editing ? 0.5 : 1, cursor: busy || editing ? "not-allowed" : "pointer" }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ position: "relative", zIndex: 1 }}><path d="M5 13l4 4L19 7" /></svg>
+            {busyAction === "approve" ? (
+              <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ position: "relative", zIndex: 1 }}><path d="M5 13l4 4L19 7" /></svg>
+            )}
             <span style={{ position: "relative", zIndex: 1 }}>{edited ? "Accept edited plan" : "Accept & implement"}</span>
           </button>
           <button
@@ -214,7 +221,11 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
             title={editing ? "Save your edits first" : undefined}
             style={{ ...ctaButtonStyle("ghost", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy || editing || (feedbackOpen && !feedback.trim()) ? 0.5 : 1 }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: "relative", zIndex: 1 }}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+            {busyAction === "revise" ? (
+              <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: "relative", zIndex: 1 }}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+            )}
             <span style={{ position: "relative", zIndex: 1 }}>Request changes</span>
           </button>
           <div style={{ flex: 1 }} />
@@ -223,7 +234,11 @@ export default function PlanTab({ plan, awaiting, busy, onApprove, onRevise, onC
             onClick={(e) => { fireBoltFromEvent(e); onCancel(); }}
             style={{ ...ctaButtonStyle("danger", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy ? 0.5 : 1 }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ position: "relative", zIndex: 1 }}><path d="M18 6 6 18M6 6l12 12" /></svg>
+            {busyAction === "cancel" ? (
+              <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ position: "relative", zIndex: 1 }}><path d="M18 6 6 18M6 6l12 12" /></svg>
+            )}
             <span style={{ position: "relative", zIndex: 1 }}>Cancel run</span>
           </button>
         </div>

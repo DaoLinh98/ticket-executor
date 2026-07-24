@@ -23,6 +23,32 @@ export const STEPS = [
 // Index of the plan-review gate within STEPS.
 export const PLAN_GATE_STEP = 4;
 
+// Skills that run in two phases with a human plan-review gate in between
+// (STEPS indices 0-4: plan phase, ending at the gate). Everything else
+// (implement-ticket-v2, fix-code-review-v2, …) is a single-turn run that goes
+// straight from "Analyze codebase" to "Create branch" — the plan-phase steps
+// (3 "Draft plan", 4 "Awaiting your review") never apply and must be hidden
+// from that run's progress list, not just left un-advanced.
+const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
+export const isTwoPhaseSkill = (skill?: string) => !!skill && TWO_PHASE_SKILLS.has(skill);
+
+// The progress-list STEPS for a given skill: two-phase skills show all 10;
+// one-shot skills drop the plan-phase-only steps (3, 4) since they're never
+// reached. Index i in the returned array no longer matches its STEPS index,
+// so pair with stepsIndexMap() to translate a raw `currentStep` into it.
+export function stepsForSkill(skill?: string): string[] {
+  if (isTwoPhaseSkill(skill)) return STEPS;
+  return STEPS.filter((_, i) => i !== 3 && i !== 4);
+}
+
+// Maps each STEPS index to its position within stepsForSkill(skill) (or -1 if
+// that step is hidden for this skill) — use to translate a raw `currentStep`
+// (always indexed against the full STEPS) into an index into the filtered list.
+export function stepsIndexMap(skill?: string): number[] {
+  const visible = stepsForSkill(skill);
+  return STEPS.map((label) => visible.indexOf(label));
+}
+
 const TYPES: Record<string, { c: string; bg: string }> = {
   Feature: { c: "#9B8CFF", bg: "rgba(155,140,255,.13)" },
   Bug: { c: "#FF6B6B", bg: "rgba(255,107,107,.13)" },

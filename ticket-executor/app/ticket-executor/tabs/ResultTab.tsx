@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import type { FileChange } from "@/lib/types";
 import { COLORS, pill, ringBorder, tintedCard } from "@/lib/ui";
 import type { ExecView, ResultSection } from "../types";
+import { formatCost, formatTokenCount } from "../helpers";
 import { useBoltsContext } from "../../BoltsContext";
 
 type Props = {
@@ -19,6 +20,8 @@ type Props = {
 // Completion banner (branch / PR chips) plus one markdown block per completed run.
 export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpenDiff, onOpenPr }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
+  const totalTokens = (ex.inputTokens ?? 0) + (ex.outputTokens ?? 0);
+  const hasUsage = (ex.costUsd ?? 0) > 0 || totalTokens > 0;
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .35s both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard("success", { padding: "16px 18px", radius: "13px" }) }}>
@@ -26,6 +29,28 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9" }}>Implementation complete</div>
           <div style={{ fontSize: "12.5px", color: "#8A90A0", marginTop: "2px" }}>Finished{ex.duration ? <> in <span style={{ color: "#C7CCD8", fontWeight: 600 }}>{ex.duration}</span></> : ""} · Claude Code output below</div>
+          {hasUsage && (
+            <div style={{ display: "flex", gap: "7px", marginTop: "9px", flexWrap: "wrap" }}>
+              {ex.duration && (
+                <span style={pill({ color: COLORS.text, background: "rgba(255,255,255,.04)", border: COLORS.border, size: "sm" })}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 3.5" /></svg>
+                  {ex.duration}
+                </span>
+              )}
+              {(ex.costUsd ?? 0) > 0 && (
+                <span style={pill({ color: COLORS.success, background: "rgba(53,214,164,.09)", border: "#24382F", size: "sm" })}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5c0-1.4 1.2-2 2.5-2s2.5.7 2.5 2-1.2 1.7-2.5 2-2.5.6-2.5 2 1.2 2 2.5 2 2.5-.6 2.5-2" /></svg>
+                  {formatCost(ex.costUsd!)}
+                </span>
+              )}
+              {totalTokens > 0 && (
+                <span style={pill({ color: COLORS.info, background: "rgba(91,157,255,.09)", border: "#26314A", size: "sm" })}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 2 2 7l10 5 10-5-10-5Z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
+                  {formatTokenCount(totalTokens)} tokens
+                </span>
+              )}
+            </div>
+          )}
         </div>
         {ex.branch && (
           <span

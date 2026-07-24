@@ -6,12 +6,17 @@ import { buildUnifiedDiff } from "./diffText";
 const API = "api-version=7.0";
 
 // Org / project / PAT are per-provider DB-backed credentials (Settings modal),
-// not env vars. Re-fetched at the top of every exported function below.
-let ORG = "";
-let PROJECT = "";
-let PAT = "";
-
+// not env vars. Resolved into a per-call `Creds` context at the top of every
+// exported function and threaded through explicitly — never stored in module
+// globals, because exported functions run concurrently (e.g. a ticket load and
+// the 45s review poll overlap) and shared mutable state would let one call's
+// empty project clobber another's mid-await, producing `.../org//_apis/...`
+// (double slash → 404).
 export type AdoCreds = { org: string; pat: string };
+
+// Full per-call context: org + PAT (constant for the connection) plus the
+// project scope for this specific call (empty for org-level endpoints).
+type Creds = { org: string; project: string; pat: string };
 
 /**
  * Parse whatever the user pasted into the Settings URL field into org + project.
@@ -69,29 +74,28 @@ export async function adoCreds(): Promise<AdoCreds | null> {
   return org && pat ? { org, pat } : null;
 }
 
-// Populate the module globals for a call. `project` is required for
+// Resolve the per-call credentials context. `project` is required for
 // project-scoped endpoints (iterations, work items, comments) and passed in by
 // the caller; org-level endpoints (project list, work-item batch, PR/repo GUID
-// lookups) leave it empty.
-async function loadCreds(project?: string): Promise<void> {
+// lookups) leave it empty. The returned object is local to the call — nothing
+// is stored in module state — so concurrent calls can't stomp each other.
+async function loadCreds(project?: string): Promise<Creds> {
   const c = await adoCreds();
   if (!c) {
     throw new Error(
       "Azure DevOps is not configured — set the organization URL (e.g. https://dev.azure.com/your-org) and a personal access token in Settings."
     );
   }
-  ORG = c.org;
-  PAT = c.pat;
-  PROJECT = project ?? "";
+  return { org: c.org, pat: c.pat, project: project ?? "" };
 }
 
-function authHeader(): Record<string, string> {
-  const b64 = Buffer.from(":" + PAT).toString("base64");
+function authHeader(pat: string): Record<string, string> {
+  const b64 = Buffer.from(":" + pat).toString("base64");
   return { Authorization: "Basic " + b64 };
 }
 
-async function adoGet<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeader(), cache: "no-store" });
+async function adoGet<T>(url: string, pat: string): Promise<T> {
+  const res = await fetch(url, { headers: authHeader(pat), cache: "no-store" });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`ADO ${res.status} ${res.statusText} — ${url}\n${body.slice(0, 300)}`);
@@ -99,10 +103,10 @@ async function adoGet<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function adoSend(url: string, method: string, body: unknown, contentType: string): Promise<void> {
+async function adoSend(url: string, method: string, body: unknown, contentType: string, pat: string): Promise<void> {
   const res = await fetch(url, {
     method,
-    headers: { ...authHeader(), "Content-Type": contentType },
+    headers: { ...authHeader(pat), "Content-Type": contentType },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -136,12 +140,12 @@ function htmlToLines(html: string): string[] {
     .filter((l) => l.length > 0);
 }
 
-function lastAreaSegment(areaPath: string): string {
+function lastAreaSegment(areaPath: string, project: string): string {
   if (!areaPath) return "";
   const parts = areaPath.split("\\");
   const last = parts[parts.length - 1].trim();
   // If the area is just the project root (no sub-area), treat it as no project.
-  return last === PROJECT ? "" : last;
+  return last === project ? "" : last;
 }
 
 export type ProjectInfo = { id: string; name: string; description?: string };
@@ -150,9 +154,9 @@ type RawProject = { id: string; name: string; description?: string };
 
 /** All projects in the configured organization (org-level, no project segment). */
 export async function listProjects(): Promise<ProjectInfo[]> {
-  await loadCreds();
-  const url = `https://dev.azure.com/${ORG}/_apis/projects?${API}`;
-  const data = await adoGet<{ value: RawProject[] }>(url);
+  const { org, pat } = await loadCreds();
+  const url = `https://dev.azure.com/${org}/_apis/projects?${API}`;
+  const data = await adoGet<{ value: RawProject[] }>(url, pat);
   return data.value
     .map((p) => ({ id: p.id, name: p.name, description: p.description }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -174,13 +178,13 @@ type RawIteration = {
 
 /** Iterations for the project's default team (used to resolve the current sprint and to populate the sprint picker). */
 export async function listIterations(project: string): Promise<IterationInfo[]> {
-  await loadCreds(project);
+  const { org, pat, project: proj } = await loadCreds(project);
   // No team segment: ADO falls back to the project's default team, so the user
   // only has to configure the project URL.
-  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
   )}/_apis/work/teamsettings/iterations?${API}`;
-  const data = await adoGet<{ value: RawIteration[] }>(url);
+  const data = await adoGet<{ value: RawIteration[] }>(url, pat);
   return data.value.map((i) => ({
     id: i.id,
     name: i.name,
@@ -216,13 +220,13 @@ export async function getSprintTickets(
   project: string,
   sprintOverride?: string
 ): Promise<{ tickets: Ticket[]; sprintName: string }> {
-  await loadCreds(project);
+  const { org, pat, project: proj } = await loadCreds(project);
   const iteration = await resolveIteration(project, sprintOverride);
 
-  const wiUrl = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
+  const wiUrl = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
   )}/_apis/work/teamsettings/iterations/${iteration.id}/workitems?${API}`;
-  const rel = await adoGet<WorkItemRelations>(wiUrl);
+  const rel = await adoGet<WorkItemRelations>(wiUrl, pat);
   const ids = Array.from(
     new Set(rel.workItemRelations.map((r) => r.target?.id).filter(Boolean) as number[])
   );
@@ -243,10 +247,10 @@ export async function getSprintTickets(
   const tickets: Ticket[] = [];
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
-    const batchUrl = `https://dev.azure.com/${ORG}/_apis/wit/workitems?ids=${chunk.join(
+    const batchUrl = `https://dev.azure.com/${org}/_apis/wit/workitems?ids=${chunk.join(
       ","
     )}&fields=${fields}&${API}`;
-    const det = await adoGet<{ value: WorkItemDetail[] }>(batchUrl);
+    const det = await adoGet<{ value: WorkItemDetail[] }>(batchUrl, pat);
     for (const w of det.value) {
       const f = w.fields;
       const area = (f["System.AreaPath"] as string) ?? "";
@@ -259,12 +263,12 @@ export async function getSprintTickets(
         assignee: assignedTo?.displayName ?? "Unassigned",
         assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
-        project: lastAreaSegment(area) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
+        project: lastAreaSegment(area, proj) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
         description: htmlToText((f["System.Description"] as string) ?? ""),
         criteria: htmlToLines(
           (f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""
         ),
-        url: `https://dev.azure.com/${ORG}/${encodeURIComponent(PROJECT)}/_workitems/edit/${f["System.Id"]}`,
+        url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
       });
     }
   }
@@ -277,19 +281,19 @@ type RawWorkItemState = { name: string };
 
 /** Real workflow states for a work item type (e.g. "Bug", "User Story"), as configured by this project's process template — not a hard-coded guess. */
 export async function getWorkItemTypeStates(project: string, type: string): Promise<string[]> {
-  await loadCreds(project);
-  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
+  const { org, pat, project: proj } = await loadCreds(project);
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
   )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
-  const data = await adoGet<{ value: RawWorkItemState[] }>(url);
+  const data = await adoGet<{ value: RawWorkItemState[] }>(url, pat);
   return data.value.map((s) => s.name);
 }
 
 /** Write the work item's State field back to Azure DevOps. */
 export async function updateWorkItemState(id: string, state: string): Promise<void> {
-  await loadCreds();
-  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(id)}?${API}`;
-  await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json");
+  const { org, pat } = await loadCreds();
+  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(id)}?${API}`;
+  await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json", pat);
 }
 
 /**
@@ -301,11 +305,11 @@ export async function updateWorkItemState(id: string, state: string): Promise<vo
  * instead of sending a PATCH that ADO will reject.
  */
 export async function resolveWorkItemState(id: string, desired: string): Promise<string | null> {
-  await loadCreds();
-  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
+  const { org, pat } = await loadCreds();
+  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
     id
   )}?fields=System.WorkItemType,System.TeamProject&${API}`;
-  const data = await adoGet<{ fields?: { "System.WorkItemType"?: string; "System.TeamProject"?: string } }>(url);
+  const data = await adoGet<{ fields?: { "System.WorkItemType"?: string; "System.TeamProject"?: string } }>(url, pat);
   const type = data.fields?.["System.WorkItemType"];
   const project = data.fields?.["System.TeamProject"];
   if (!type || !project) return null;
@@ -339,12 +343,12 @@ function shortDate(iso?: string): string {
 
 /** Fetch the discussion comments for a single work item, oldest first. */
 export async function getWorkItemComments(project: string, id: string): Promise<TicketComment[]> {
-  await loadCreds(project);
+  const { org, pat, project: proj } = await loadCreds(project);
   // Comments live behind a preview API version.
-  const url = `https://dev.azure.com/${ORG}/${encodeURIComponent(
-    PROJECT
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
   )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
-  const data = await adoGet<{ comments?: RawComment[] }>(url);
+  const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
   return (data.comments ?? [])
     .map((c) => ({
       author: c.createdBy?.displayName ?? "Unknown",
@@ -368,14 +372,14 @@ type PrRef = { repositoryId: string; prId: string; project?: string };
  * Settings (a single Settings connection only names one project, but tickets
  * fetched by ID are not restricted to it).
  */
-function repoBaseUrl(ref: { repositoryId: string; project?: string }): string {
+function repoBaseUrl(org: string, ref: { repositoryId: string; project?: string }): string {
   const projectSegment = ref.project ? `${encodeURIComponent(ref.project)}/` : "";
-  return `https://dev.azure.com/${ORG}/${projectSegment}_apis/git/repositories/${encodeURIComponent(ref.repositoryId)}`;
+  return `https://dev.azure.com/${org}/${projectSegment}_apis/git/repositories/${encodeURIComponent(ref.repositoryId)}`;
 }
 
 /** The repo's own project name, if the ref resolves to an accessible repo. */
-async function resolveRepositoryProject(ref: { repositoryId: string; project?: string }): Promise<string | null> {
-  const res = await fetch(`${repoBaseUrl(ref)}?${API}`, { headers: authHeader(), cache: "no-store" });
+async function resolveRepositoryProject(org: string, pat: string, ref: { repositoryId: string; project?: string }): Promise<string | null> {
+  const res = await fetch(`${repoBaseUrl(org, ref)}?${API}`, { headers: authHeader(pat), cache: "no-store" });
   if (!res.ok) return null;
   const repo = (await res.json()) as { project?: { name?: string } };
   return repo.project?.name ?? ref.project ?? null;
@@ -398,11 +402,12 @@ async function resolveRepositoryProject(ref: { repositoryId: string; project?: s
  * (rather than the globally configured PROJECT), since the ticket's repo may
  * not live in the project Settings happens to be connected to.
  */
-async function getLinkedPullRequestRef(ticketId: string, fallbackPrUrl?: string | null): Promise<PrRef | null> {
-  const url = `https://dev.azure.com/${ORG}/_apis/wit/workitems/${encodeURIComponent(
+async function getLinkedPullRequestRef(creds: Creds, ticketId: string, fallbackPrUrl?: string | null): Promise<PrRef | null> {
+  const { org, pat, project } = creds;
+  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
     ticketId
   )}?$expand=relations&${API}`;
-  const data = await adoGet<{ relations?: ArtifactRelation[] }>(url);
+  const data = await adoGet<{ relations?: ArtifactRelation[] }>(url, pat);
   const candidates: PrRef[] = [];
   for (const r of data.relations ?? []) {
     if (r.rel !== "ArtifactLink" || !r.url) continue;
@@ -415,12 +420,12 @@ async function getLinkedPullRequestRef(ticketId: string, fallbackPrUrl?: string 
       candidates.push({ repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) });
     } else {
       const m = fallbackPrUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
-      if (m) candidates.push({ repositoryId: decodeURIComponent(m[1]), prId: m[2], project: PROJECT });
+      if (m) candidates.push({ repositoryId: decodeURIComponent(m[1]), prId: m[2], project });
     }
   }
   for (const ref of candidates) {
-    const project = await resolveRepositoryProject(ref);
-    if (project) return { ...ref, project };
+    const resolved = await resolveRepositoryProject(org, pat, ref);
+    if (resolved) return { ...ref, project: resolved };
   }
   return null;
 }
@@ -467,14 +472,15 @@ const RESOLVED_THREAD_STATUSES = new Set(["fixed", "closed", "wontfix"]);
 
 /** Fetch the PR (if any) linked to a work item, plus its review-comment threads. */
 export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: string | null): Promise<ReviewData> {
-  await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
+  const creds = await loadCreds();
+  const { org, pat, project } = creds;
+  const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
 
-  const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}?${API}`);
+  const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat);
   const pr: PullRequestOverview = {
     id: String(raw.pullRequestId),
-    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(ref.project ?? PROJECT)}/_git/${encodeURIComponent(
+    url: `https://dev.azure.com/${org}/${encodeURIComponent(ref.project ?? project)}/_git/${encodeURIComponent(
       raw.repository?.name ?? ""
     )}/pullrequest/${raw.pullRequestId}`,
     title: raw.title ?? "",
@@ -486,7 +492,7 @@ export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: str
     createdAt: raw.creationDate ?? "",
   };
 
-  const threadsData = await adoGet<{ value?: RawThread[] }>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}/threads?${API}`);
+  const threadsData = await adoGet<{ value?: RawThread[] }>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}/threads?${API}`, pat);
   const comments: ReviewComment[] = [];
   for (const th of threadsData.value ?? []) {
     if (!th.threadContext) continue; // skip system threads (status/vote updates)
@@ -517,18 +523,19 @@ type RawCommitRef = {
 
 /** List every commit on the PR's source branch, newest first (as ADO returns them). */
 export async function getPullRequestCommits(ticketId: string, fallbackPrUrl?: string | null): Promise<CommitSummary[]> {
-  await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
+  const creds = await loadCreds();
+  const { org, pat, project } = creds;
+  const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
   if (!ref) return [];
 
-  const data = await adoGet<{ value?: RawCommitRef[] }>(`${repoBaseUrl(ref)}/pullrequests/${ref.prId}/commits?${API}`);
+  const data = await adoGet<{ value?: RawCommitRef[] }>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}/commits?${API}`, pat);
   return (data.value ?? []).map((c) => ({
     sha: c.commitId,
     shortSha: c.commitId.slice(0, 7),
     message: (c.comment ?? "").split(/\r?\n/)[0],
     author: c.author?.name ?? "Unknown",
     date: c.author?.date ?? "",
-    url: `https://dev.azure.com/${ORG}/${encodeURIComponent(ref.project ?? PROJECT)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
+    url: `https://dev.azure.com/${org}/${encodeURIComponent(ref.project ?? project)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
   }));
 }
 
@@ -547,11 +554,11 @@ function commitChangeType(raw: string): CommitFile["changeType"] {
 }
 
 /** Fetch raw file content at a given commit, or null if the path didn't exist there. */
-async function adoGetItemText(ref: PrRef, path: string, sha: string): Promise<string | null> {
-  const url = `${repoBaseUrl(ref)}/items?path=${encodeURIComponent(
+async function adoGetItemText(org: string, pat: string, ref: PrRef, path: string, sha: string): Promise<string | null> {
+  const url = `${repoBaseUrl(org, ref)}/items?path=${encodeURIComponent(
     path
   )}&versionDescriptor.version=${sha}&versionDescriptor.versionType=commit&${API}&$format=text`;
-  const res = await fetch(url, { headers: authHeader(), cache: "no-store" });
+  const res = await fetch(url, { headers: authHeader(pat), cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`ADO ${res.status} ${res.statusText} — ${url}`);
   return res.text();
@@ -561,13 +568,14 @@ const MAX_COMMIT_FILES = 60; // guard against pathological commits touching hund
 
 /** Per-file changes for one commit, each with a unified diff built from before/after content. */
 export async function getCommitFileChanges(ticketId: string, sha: string, fallbackPrUrl?: string | null): Promise<CommitFile[]> {
-  await loadCreds();
-  const ref = await getLinkedPullRequestRef(ticketId, fallbackPrUrl);
+  const creds = await loadCreds();
+  const { org, pat } = creds;
+  const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
   if (!ref) return [];
 
   const [changesData, detail] = await Promise.all([
-    adoGet<{ changes?: RawCommitChange[] }>(`${repoBaseUrl(ref)}/commits/${sha}/changes?${API}`),
-    adoGet<RawCommitDetail>(`${repoBaseUrl(ref)}/commits/${sha}?${API}`),
+    adoGet<{ changes?: RawCommitChange[] }>(`${repoBaseUrl(org, ref)}/commits/${sha}/changes?${API}`, pat),
+    adoGet<RawCommitDetail>(`${repoBaseUrl(org, ref)}/commits/${sha}?${API}`, pat),
   ]);
   const parentSha = detail.parents?.[0];
 
@@ -577,8 +585,8 @@ export async function getCommitFileChanges(ticketId: string, sha: string, fallba
     const path = c.item!.path!;
     const changeType = commitChangeType(c.changeType ?? "edit");
     const [oldContent, newContent] = await Promise.all([
-      changeType === "added" || !parentSha ? Promise.resolve(null) : adoGetItemText(ref, path, parentSha).catch(() => null),
-      changeType === "deleted" ? Promise.resolve(null) : adoGetItemText(ref, path, sha).catch(() => null),
+      changeType === "added" || !parentSha ? Promise.resolve(null) : adoGetItemText(org, pat, ref, path, parentSha).catch(() => null),
+      changeType === "deleted" ? Promise.resolve(null) : adoGetItemText(org, pat, ref, path, sha).catch(() => null),
     ]);
     const { diff, additions, deletions } = buildUnifiedDiff(path, oldContent, newContent);
     results.push({ path, changeType, diff, additions, deletions });
