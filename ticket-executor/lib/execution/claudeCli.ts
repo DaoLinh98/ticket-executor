@@ -9,7 +9,12 @@ const MCP_CONFIG = process.env.CLAUDE_MCP_CONFIG || ""; // path to MCP json; emp
 const MAX_BUDGET = process.env.CLAUDE_MAX_BUDGET_USD || ""; // e.g. "5"
 const EXTRA = (process.env.CLAUDE_EXTRA_ARGS ?? "").split(" ").filter(Boolean);
 
-export function commonArgs(): string[] {
+/** `mcpConfigPath` is the app-generated provider MCP config for this turn (see
+ *  lib/mcp.ts). It is *added* to whatever the CLI resolves on its own — no
+ *  --strict-mcp-config — so the machine's other servers keep working. An
+ *  explicit CLAUDE_MCP_CONFIG still wins: it is a deliberate override, and it
+ *  keeps its strict semantics. */
+export function commonArgs(mcpConfigPath?: string): string[] {
   const a = [
     "--output-format",
     "stream-json",
@@ -18,6 +23,7 @@ export function commonArgs(): string[] {
     "--dangerously-skip-permissions",
   ];
   if (MCP_CONFIG) a.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
+  else if (mcpConfigPath) a.push("--mcp-config", mcpConfigPath);
   if (MAX_BUDGET) a.push("--max-budget-usd", MAX_BUDGET);
   return [...a, ...EXTRA];
 }

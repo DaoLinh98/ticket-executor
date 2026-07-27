@@ -322,6 +322,29 @@ export function logoText(fontSize: string): CSSProperties {
   };
 }
 
+// Form-field chrome — the small spaced uppercase caption above an input, and
+// the dark inset text input itself. Shared by every settings-style form field
+// (Settings page, System Check page) so field density stays uniform.
+export function fieldLabel(): CSSProperties {
+  return {
+    fontSize: "11px",
+    letterSpacing: ".1em",
+    fontWeight: 600,
+    color: COLORS.textDim,
+  };
+}
+
+export function fieldInput(opts?: { height?: string; fontSize?: string }): CSSProperties {
+  return {
+    ...card({ padding: "0 13px", radius: "9px", background: "#0E1015" }),
+    height: opts?.height ?? "40px",
+    color: COLORS.text,
+    fontFamily: "var(--font-mono), monospace",
+    fontSize: opts?.fontSize ?? "13px",
+    outline: "none",
+  };
+}
+
 // Dropdown/menu panel chrome shared by SprintPicker, Combobox, and the inline
 // status menu in TicketExecutor.tsx.
 export function dropdownPanelStyle(opts?: {

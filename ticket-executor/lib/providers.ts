@@ -1,5 +1,10 @@
 // Work-tracking providers the app can connect to. The app is provider-agnostic;
 // Azure DevOps is fully wired, the others are scaffolded (see lib/ado.ts + tickets API).
+//
+// Client components import this module, so it stays free of server-only code.
+// The per-provider MCP metadata a run needs (server name, recognition hints,
+// generated-config builder, CLI fallback) therefore lives in lib/mcp.ts —
+// adding a provider means touching both.
 export type ProviderId = "azure-devops" | "github" | "jira" | "gitlab";
 
 export type ProviderMeta = {

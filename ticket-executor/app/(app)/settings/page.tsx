@@ -7,23 +7,15 @@ import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast from "../../ticket-executor/Toast";
 import { SETTINGS_UPDATED_EVENT } from "../AppReactor";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
-import { card, clipCorner, logoText, ringBorder, tintedCard } from "@/lib/ui";
+import { card, clipCorner, fieldInput, fieldLabel, logoText, ringBorder, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
-
-const fieldInputStyle: CSSProperties = {
-  height: "40px", padding: "0 13px", border: "1px solid #262B36", borderRadius: "9px",
-  background: "#0E1015", color: "#ECEEF3", fontFamily: "var(--font-mono), monospace",
-  fontSize: "13px", outline: "none",
-};
-const fieldLabelStyle: CSSProperties = {
-  fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: "#8A90A0",
-};
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
   animatedBackground: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
+  manageMcp: true,
 };
 
 // Reusable pill toggle (ported from the old SettingsModal, deduplicated).
@@ -156,13 +148,13 @@ export default function SettingsPage() {
           <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <span style={fieldLabelStyle}>PROVIDER</span>
+                <span style={fieldLabel()}>PROVIDER</span>
                 <div style={{ ...card({ padding: "0 13px", background: "#0E1015" }), height: "40px", display: "flex", alignItems: "center" }}>
                   <SelectMenu value={pm.name} onChange={onProviderChange} options={PROVIDERS.map((p) => p.name)} ariaLabel="Provider" />
                 </div>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <span style={fieldLabelStyle}>SCOPE</span>
+                <span style={fieldLabel()}>SCOPE</span>
                 <div style={{ display: "flex", gap: "8px" }}>
                   {(["team", "personal"] as const).map((sc) => {
                     const active = settings.scope === sc;
@@ -182,15 +174,15 @@ export default function SettingsPage() {
 
             {settings.scope === "personal" && (
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <span style={fieldLabelStyle}>YOUR {pm.name.toUpperCase()} ACCOUNT</span>
-                <input value={settings.personalAccount} onChange={setField("personalAccount")} placeholder="you@company.com or display name" style={fieldInputStyle} />
+                <span style={fieldLabel()}>YOUR {pm.name.toUpperCase()} ACCOUNT</span>
+                <input value={settings.personalAccount} onChange={setField("personalAccount")} placeholder="you@company.com or display name" style={fieldInput()} />
                 <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Only tickets assigned to this account and PR review notifications it authored will be shown.</span>
               </label>
             )}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabelStyle}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInputStyle} /></label>
-              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabelStyle}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInputStyle} /></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabel()}>{pm.urlLabel}</span><input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInput()} /></label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}><span style={fieldLabel()}>{pm.tokenLabel}</span><input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInput()} /></label>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
@@ -210,6 +202,19 @@ export default function SettingsPage() {
             <div style={divider} />
             <div style={rowStyle}>
               <div>
+                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Manage MCP for me</div>
+                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                  On: each run gets a {pm.name} MCP server generated from the connection above, so Claude can read the
+                  ticket with nothing to set up by hand. If you already configured your own, the app steps aside.<br />
+                  Off: the app never touches MCP — System Check only verifies whatever this machine already has.
+                </div>
+              </div>
+              <Toggle on={settings.manageMcp} title="Toggle app-managed MCP" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, manageMcp: !s.manageMcp })); }} />
+            </div>
+
+            <div style={divider} />
+            <div style={rowStyle}>
+              <div>
                 <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Multi-ticket mode</div>
                 <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
                   On: select multiple tickets and run them concurrently, each isolated in its own git worktree.<br />
@@ -222,8 +227,8 @@ export default function SettingsPage() {
               <div style={{ overflow: "hidden", display: "flex", flexDirection: "column", gap: "20px" }}>
                 <div style={divider} />
                 <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <span style={fieldLabelStyle}>CONCURRENT RUNS</span>
-                  <input type="number" min={1} max={20} value={settings.concurrentRuns} onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))} style={{ ...fieldInputStyle, width: "120px" }} />
+                  <span style={fieldLabel()}>CONCURRENT RUNS</span>
+                  <input type="number" min={1} max={20} value={settings.concurrentRuns} onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))} style={{ ...fieldInput(), width: "120px" }} />
                   <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Runs beyond this limit wait in a queue until a slot frees up.</span>
                 </label>
               </div>

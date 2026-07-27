@@ -34,6 +34,10 @@ export type Entry = {
   /** Repo the worktree was created under — needed to resume/clean up after a restart. */
   rootRepo: string;
   provider: string;
+  /** Generated MCP config handed to the CLI for the current turn, or "" when the
+   *  run uses the machine's own MCP setup. In-memory only: it holds the PAT in
+   *  clear text, is deleted as soon as the turn ends, and is rebuilt on resume. */
+  mcpConfigPath: string;
   // ---- token & cost usage (accumulated across all turns of the run) ----
   costUsd: number;
   inputTokens: number;

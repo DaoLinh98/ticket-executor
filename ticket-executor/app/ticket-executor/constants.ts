@@ -25,4 +25,6 @@ export const SKILL_OPTIONS = [
   "review-re-estimate-ado-tickets",
   "tackle-requirement",
 ];
-export const COMMON_ROOT_REPOS = ["C:\\repos", "C:\\src", "D:\\repos"];
+// Root Repo has no suggested defaults on purpose: it must be the clone itself,
+// so a generic parent folder like C:\repos is always wrong. The combobox is
+// seeded only from paths actually used before (SavedOption / RootRepoProjectMap).

@@ -53,6 +53,8 @@ export type SettingsView = {
   personalAccount: string;
   concurrentRuns: number;
   multiTicketMode: boolean;
+  /** Let the app generate the provider's MCP config for each run (see lib/mcp.ts). */
+  manageMcp: boolean;
 };
 
 // The detail-pane tabs.

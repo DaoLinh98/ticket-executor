@@ -28,6 +28,12 @@ model Setting {
   // isolated in its own git worktree. false → single-ticket mode: only one
   // ticket may run at a time, and it runs directly in rootRepo (no worktree).
   multiTicketMode Boolean @default(true)
+  // true (default) → the app hands the Claude CLI a generated MCP config for the
+  // selected provider, built from this provider's stored org + PAT, so a fresh
+  // install needs no manual `claude mcp add`. It yields to a server the user
+  // configured themselves. false → the app never touches MCP; preflight only
+  // verifies what the machine already has.
+  manageMcp      Boolean  @default(true)
   updatedAt      DateTime @updatedAt
 }
 

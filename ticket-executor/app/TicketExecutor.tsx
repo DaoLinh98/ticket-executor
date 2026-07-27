@@ -19,7 +19,7 @@ import PlanTab from "./ticket-executor/tabs/PlanTab";
 import ResolveReviewTab from "./ticket-executor/tabs/ResolveReviewTab";
 import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
-  ACCENT, COMMON_ROOT_REPOS, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
+  ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
 import { deriveStep, reviewFingerprint } from "./ticket-executor/helpers";
 import type {
@@ -92,6 +92,7 @@ export default function TicketExecutor() {
     personalAccount: "",
     concurrentRuns: 2,
     multiTicketMode: true,
+    manageMcp: true,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -575,7 +576,9 @@ export default function TicketExecutor() {
   // "Auto resolve code review" setting picks the one-shot v2 vs the
   // plan-review-gated v3.
   const getReviewSkill = () => (settings.autoResolveCodeReview ? "fix-code-review-v2" : "fix-code-review-v3");
-  const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "C:\\repos";
+  // No app-wide default: one provider connection spans many projects, so the repo
+  // a run executes in is per-ticket (prefilled from the project's saved mapping).
+  const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "";
   const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
   const setOverrideValue = (ticketId: string, field: OverrideField, value: string) =>
@@ -647,7 +650,6 @@ export default function TicketExecutor() {
   );
   const rootRepoOptions = Array.from(
     new Set([
-      ...COMMON_ROOT_REPOS,
       ...overrideVals.map((o) => o?.rootRepo),
       ...savedOptions.rootRepo,
     ].filter(Boolean) as string[])
@@ -897,6 +899,17 @@ export default function TicketExecutor() {
         if (isActive) showToast(`Ticket status "${status0}" has no runnable action yet.`);
         return false;
       }
+      // Root repo is per-ticket with no default — nudge the dev to fill it in
+      // rather than starting a run the server would reject anyway.
+      if (!getRootRepo(t).trim()) {
+        if (isActive) {
+          setTab("overview");
+          showToast("Set ROOT REPO on the Overview tab first — the git clone this ticket runs in.", 5000, "error");
+        } else {
+          showToast(`#${t.id} skipped — no Root repo set.`, 5000, "error");
+        }
+        return false;
+      }
       requestNotify();
       const skillName = skillOverride || getSkill(t);
       // Reflect a quick-action skill choice in the per-ticket override.
@@ -942,6 +955,22 @@ export default function TicketExecutor() {
         });
         const data = await r.json();
         if (!r.ok || !data.executionId) {
+          // A 400 means the run was rejected before the CLI was spawned (bad Root
+          // repo, missing project) — nothing ran, so don't leave a failed run row
+          // behind; just surface why and drop back to the previous state.
+          if (r.status === 400) {
+            setExecs((s) => {
+              const next = { ...s };
+              delete next[t.id];
+              return next;
+            });
+            if (isActive) {
+              setTab("overview");
+              window.__reactor?.setMode("idle");
+            }
+            showToast(data.error || "Run rejected before starting.", 6000, "error");
+            return false;
+          }
           setExecs((s) => ({
             ...s,
             [t.id]: {
@@ -955,6 +984,11 @@ export default function TicketExecutor() {
           return false;
         }
         setExecs((s) => ({ ...s, [t.id]: { ...s[t.id], executionId: data.executionId } }));
+        // The run started, but the server couldn't verify something worth knowing
+        // up front (e.g. MCP connectivity was never deep-checked).
+        if (Array.isArray(data.warnings) && data.warnings.length && isActive) {
+          showToast(String(data.warnings[0]), 7000, "error");
+        }
         startPolling(t.id, data.executionId);
         return true;
       } catch (err) {
@@ -1316,7 +1350,7 @@ export default function TicketExecutor() {
   const selProject = t ? getArea(t) : "";
   const selBranch = t ? branchOf(t.id, t.title) : "";
   const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
-  const selCdCommand = t ? `cd ${getRootRepo(t)} && claude --model ${getModel(t)} --effort ${getEffort(t)}` : "";
+  const selCdCommand = t ? `cd ${getRootRepo(t) || "<set ROOT REPO>"} && claude --model ${getModel(t)} --effort ${getEffort(t)}` : "";
   const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
+import { clearMcpProbe } from "@/lib/mcp";
 import { normalizeProvider } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,7 @@ export async function POST(req: Request) {
     data.autoResolveCodeReview = body.autoResolveCodeReview;
   if (typeof body.multiTicketMode === "boolean")
     data.multiTicketMode = body.multiTicketMode;
+  if (typeof body.manageMcp === "boolean") data.manageMcp = body.manageMcp;
   if (
     typeof body.concurrentRuns === "number" &&
     Number.isFinite(body.concurrentRuns)
@@ -76,6 +78,18 @@ export async function POST(req: Request) {
     create: { provider, org: "", pat: "", ...credData },
     update: credData,
   });
+
+  // Anything that changes which MCP server a run would use invalidates the
+  // cached deep-check verdict — a stale "MCP is fine" would gate the next run on
+  // a setup that no longer exists.
+  if (
+    typeof body.provider === "string" ||
+    typeof body.manageMcp === "boolean" ||
+    typeof body.org === "string" ||
+    (typeof body.pat === "string" && body.pat.length > 0)
+  ) {
+    clearMcpProbe();
+  }
 
   return NextResponse.json({
     settings: { ...s, org: cred.org, pat: "", hasPat: cred.pat.length > 0 },

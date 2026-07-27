@@ -54,6 +54,8 @@ export default function OverviewTab({
 }: Props) {
   const fieldLabel: CSSProperties = { fontSize: "10px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "5px" };
   const fieldCard = card({ padding: "9px 11px" });
+  // Root Repo has no default — a run can't start without it, so say so on the field.
+  const rootRepoMissing = !rootRepo.trim();
   return (
     <div style={{ maxWidth: "780px", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
       <section>
@@ -92,12 +94,26 @@ export default function OverviewTab({
         </section>
       )}
       <section style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
-        <div style={fieldCard}><div style={fieldLabel}>ROOT REPO</div><Combobox value={rootRepo} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} ariaLabel="Root repo" /></div>
+        <div style={{ ...fieldCard, ...(rootRepoMissing ? { border: `1px solid ${COLORS.warning}` } : null) }}>
+          <div style={fieldLabel}>
+            ROOT REPO
+            {rootRepoMissing && <span style={{ color: COLORS.warning, marginLeft: "6px" }}>· REQUIRED</span>}
+          </div>
+          <Combobox value={rootRepo} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} placeholder="C:\repos\my-service" ariaLabel="Root repo" />
+        </div>
         <div style={fieldCard}><div style={fieldLabel}>PROJECT</div><Combobox value={project} onChange={(v) => onProjectChange(t.id, v)} options={projectOptions} ariaLabel="Project" /></div>
         <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={skill} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
         <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v))} options={CLAUDE_MODELS.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
         <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
+        {rootRepoMissing && (
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={COLORS.warning} strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
+            <span style={{ fontSize: "12.5px", color: COLORS.warning, lineHeight: 1.55 }}>
+              Set <strong>ROOT REPO</strong> before running — the local git clone this ticket should be implemented in (e.g. <span style={{ fontFamily: "var(--font-mono), monospace" }}>C:\repos\my-service</span>). It is remembered per project, so you only pick it once.
+            </span>
+          </div>
+        )}
       </section>
       <section>
         <h3 style={sectionHeading}>COMMAND PREVIEW</h3>

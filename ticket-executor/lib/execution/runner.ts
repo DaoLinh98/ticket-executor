@@ -2,6 +2,8 @@ import { execSync } from "child_process";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
+import { decryptSecret } from "../crypto";
+import { removeRunMcpConfig, resolveMcp, writeRunMcpConfig } from "../mcp";
 import { prisma } from "../prisma";
 import type { ExecPhase, ExecStatus, PlanStatus } from "../types";
 import { isTwoPhaseSkill, PLAN_GATE_STEP, STEPS } from "../ui";
@@ -92,6 +94,46 @@ async function finish(entry: Entry, status: ExecStatus, error: string) {
   });
   await persist(entry);
   removeWorktree(entry);
+  releaseMcp(entry);
+}
+
+// ---- MCP access for one turn ----
+
+// Resolved per turn rather than once per run: a plan parked at the gate can
+// resume after a dev-server restart (when the previous turn's file is long gone),
+// and Settings may have changed in between. Never fails the run — the implement
+// route is what blocks on a missing provider server; here a bad decision is only
+// logged, so the run's own log explains what Claude was given.
+async function prepareMcp(entry: Entry) {
+  try {
+    const [setting, cred] = await Promise.all([
+      prisma.setting.findUnique({ where: { id: "default" } }),
+      prisma.providerCredential.findUnique({ where: { provider: entry.provider } }),
+    ]);
+    const decision = await resolveMcp({
+      provider: entry.provider,
+      org: cred?.org ?? "",
+      pat: decryptSecret(cred?.pat),
+      manageMcp: setting?.manageMcp ?? true,
+      cwd: entry.cwd,
+    });
+    entry.mcpConfigPath = writeRunMcpConfig(entry.id, decision);
+    entry.logLines.push({ text: `● MCP: ${decision.detail}`, kind: "step" });
+    if (decision.blocker) entry.logLines.push({ text: `⚠ ${decision.blocker}`, kind: "err" });
+  } catch (e) {
+    entry.mcpConfigPath = "";
+    entry.logLines.push({
+      text: `⚠ Could not prepare MCP access (${e instanceof Error ? e.message : e}) — the run falls back to this machine's own MCP config.`,
+      kind: "err",
+    });
+  }
+}
+
+/** Delete the generated config as soon as the turn that needed it is over — it
+ *  holds the PAT in clear text. */
+function releaseMcp(entry: Entry) {
+  removeRunMcpConfig(entry.mcpConfigPath);
+  entry.mcpConfigPath = "";
 }
 
 // A finished (completed/failed) isolated run no longer needs its worktree: the
@@ -188,7 +230,7 @@ export async function startExecution(params: {
     currentStep: 0, cwd: rootRepo, baseSha: "", filesChanged: [], startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false,
     sessionId, phase: twoPhase ? "plan" : "implement", planStatus: "none", planMarkdown: "",
-    rootRepo, provider,
+    rootRepo, provider, mcpConfigPath: "",
     costUsd: 0, inputTokens: 0, outputTokens: 0,
     cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
   };
@@ -242,7 +284,11 @@ export async function startExecution(params: {
   // Fire-and-forget. The route returns immediately; the turn either finishes the
   // whole ticket (single-phase skills) or parks at the plan gate (two-phase).
   void (async () => {
-    const ts = await runTurn(entry, ["-p", prompt, "--session-id", sessionId, ...modelArgs, ...commonArgs()]);
+    await prepareMcp(entry);
+    const ts = await runTurn(entry, [
+      "-p", prompt, "--session-id", sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath),
+    ]);
+    releaseMcp(entry);
     if (ts.resultText) entry.resultText = ts.resultText;
     accumulateUsage(entry, ts);
 
@@ -295,7 +341,7 @@ async function rehydrate(id: string): Promise<Entry | null> {
     // Rows from before the rootRepo column existed isolated every run, so the
     // worktree's repo is two levels up from it; fall back to that derivation only then.
     rootRepo: r.rootRepo || path.dirname(path.dirname(r.worktreePath)),
-    provider: r.provider,
+    provider: r.provider, mcpConfigPath: "",
     costUsd: r.costUsd, inputTokens: r.inputTokens, outputTokens: r.outputTokens,
     cacheReadTokens: r.cacheReadTokens, cacheCreationTokens: r.cacheCreationTokens,
     numTurns: r.numTurns, durationMs: r.durationMs,
@@ -376,9 +422,11 @@ export async function resolvePlan(
 
   const prompt = approving ? IMPLEMENT_PROMPT : REPLAN_PROMPT;
   void (async () => {
+    await prepareMcp(entry);
     const ts = await runTurn(entry, [
-      "-p", prompt, "--resume", entry.sessionId, ...modelArgs, ...commonArgs(),
+      "-p", prompt, "--resume", entry.sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath),
     ]);
+    releaseMcp(entry);
     if (ts.resultText) entry.resultText = ts.resultText;
     accumulateUsage(entry, ts);
 
