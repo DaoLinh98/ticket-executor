@@ -36,6 +36,9 @@ input{font-family:inherit;}
 @keyframes growX{from{transform:scaleX(0);}to{transform:scaleX(1);}}
 @keyframes sheen{0%{transform:translateX(0);}55%,100%{transform:translateX(620%);}}
 @keyframes draw{to{stroke-dashoffset:0;}}
+/* Marching-ants flow along a dashed SVG path — the Guide page's two-lane
+   "app REST vs Claude MCP" diagram. Pair with stroke-dasharray:6 4. */
+@keyframes dashFlow{to{stroke-dashoffset:-20;}}
 @keyframes shrink{from{transform:scaleX(1);}to{transform:scaleX(0);}}
 @keyframes breathe{0%,100%{box-shadow:0 8px 22px -10px var(--accent);}50%{box-shadow:0 12px 32px -8px var(--accent),0 0 22px -3px var(--accent);}}
 @keyframes fireFlow{to{background-position:300% 0;}}

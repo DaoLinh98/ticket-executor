@@ -345,6 +345,22 @@ export function fieldInput(opts?: { height?: string; fontSize?: string }): CSSPr
   };
 }
 
+// Read-only mono code / shell-command block — the Guide page's copyable
+// commands and file-content snippets. Same inset dark chrome as fieldInput,
+// but multi-line and not focusable.
+export function codeBlock(opts?: { padding?: string; fontSize?: string }): CSSProperties {
+  return {
+    ...card({ padding: opts?.padding ?? "10px 12px", radius: "9px", background: "#0E1015" }),
+    color: COLORS.text,
+    fontFamily: "var(--font-mono), monospace",
+    fontSize: opts?.fontSize ?? "12px",
+    lineHeight: 1.7,
+    whiteSpace: "pre",
+    overflowX: "auto",
+    margin: 0,
+  };
+}
+
 // Dropdown/menu panel chrome shared by SprintPicker, Combobox, and the inline
 // status menu in TicketExecutor.tsx.
 export function dropdownPanelStyle(opts?: {

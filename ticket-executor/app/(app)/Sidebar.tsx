@@ -30,6 +30,16 @@ const NAV: NavItem[] = [
     icon: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   },
   {
+    href: "/guide",
+    label: "Guide",
+    icon: (
+      <>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      </>
+    ),
+  },
+  {
     href: "/system-check",
     label: "System Check",
     icon: (

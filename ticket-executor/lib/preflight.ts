@@ -60,14 +60,11 @@ export type PreflightResult = {
   deep: boolean;
 };
 
-/** The skills the UI can start a run with — all four are reachable via the
- *  Settings toggles, so a missing one is a blocker. */
-export const REQUIRED_SKILLS = [
-  "implement-ticket-v2",
-  "implement-ticket-v3",
-  "fix-code-review-v2",
-  "fix-code-review-v3",
-] as const;
+// REQUIRED_SKILLS / skillDirs() / findSkill() now live in lib/skillPack.ts
+// (which also owns install + version state) and are re-exported here so the
+// existing import sites keep working.
+export { REQUIRED_SKILLS, findSkill, skillDirs } from "./skillPack";
+import { REQUIRED_SKILLS, findSkill, skillDirs, skillStates } from "./skillPack";
 
 // There is deliberately no app-wide default Root repo: one connection serves many
 // projects, so the repo a run executes in is chosen per ticket (Overview tab) and
@@ -102,27 +99,6 @@ const git = (args: string[], opts?: { cwd?: string; timeout?: number }) => run("
 // ---------------------------------------------------------------------------
 // skills
 // ---------------------------------------------------------------------------
-
-/** The same directories `GET /api/skills` scans, in the same order. */
-export function skillDirs(): string[] {
-  return [
-    path.join(homedir(), ".claude", "skills"),
-    path.join(process.cwd(), ".claude", "skills"),
-    ...(process.env.CLAUDE_SKILLS_DIR ? [process.env.CLAUDE_SKILLS_DIR] : []),
-  ];
-}
-
-export function findSkill(name: string): string | null {
-  for (const dir of skillDirs()) {
-    const p = path.join(dir, name);
-    try {
-      if (existsSync(p) && statSync(p).isDirectory()) return p;
-    } catch {
-      /* unreadable dir — treat as absent */
-    }
-  }
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // check groups
@@ -251,19 +227,33 @@ async function environmentChecks(): Promise<Check[]> {
 }
 
 function skillChecks(): Check[] {
-  return REQUIRED_SKILLS.map((name) => {
-    const found = findSkill(name);
-    return found
-      ? {
-          id: `skill-${name}`, group: "skills" as const, label: name, level: "blocker" as const,
-          status: "pass" as const, message: found,
-        }
-      : {
-          id: `skill-${name}`, group: "skills" as const, label: name, level: "blocker" as const,
-          status: "fail" as const,
-          message: `Not found in ${skillDirs().length} skill folder(s).`,
-          fix: `Install the skill at ~/.claude/skills/${name}/ (or point CLAUDE_SKILLS_DIR at a folder that has it).`,
-        };
+  return skillStates().map((s) => {
+    const base = { id: `skill-${s.name}`, group: "skills" as const, label: s.name };
+    if (s.status === "missing") {
+      return {
+        ...base, level: "blocker" as const, status: "fail" as const,
+        message: `Not found in ${skillDirs().length} skill folder(s).`,
+        fix: "Install it from the Guide or with the Install button here — this repo ships a copy.",
+      };
+    }
+    if (s.status === "outdated") {
+      return {
+        ...base, level: "warning" as const, status: "warn" as const,
+        message: `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion}.`,
+        fix: "Update it to pick up the newer instructions — an old skill fails in ways the log won't explain.",
+      };
+    }
+    if (s.status === "modified") {
+      return {
+        ...base, level: "warning" as const, status: "warn" as const,
+        message: `Version ${s.installedVersion}, but the file differs from the bundled copy.`,
+        fix: "Yours was edited locally. Leave it if that was deliberate; otherwise overwrite it with the bundled copy.",
+      };
+    }
+    return {
+      ...base, level: "blocker" as const, status: "pass" as const,
+      message: `${s.installedVersion} — ${s.installedPath}`,
+    };
   });
 }
 

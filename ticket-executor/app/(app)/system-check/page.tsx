@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import LoadingRing from "../../ticket-executor/LoadingRing";
+import SkillInstaller from "../../SkillInstaller";
 import { useBoltsContext } from "../../BoltsContext";
 import { COLORS, card, clipCorner, ctaButtonStyle, fieldLabel, logoText, pill, tintedCard } from "@/lib/ui";
 import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/preflight";
@@ -11,12 +12,21 @@ import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/pref
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
   { id: "environment", title: "ENVIRONMENT", blurb: "Local tooling and database the app itself needs." },
-  { id: "skills", title: "SKILLS", blurb: "The four skills a run can be started with — they live on your machine, not in this repo." },
+  { id: "skills", title: "SKILLS", blurb: "The four skills a run can be started with. They live on your machine; this repo ships a copy you can install from here." },
   { id: "connection", title: "PROVIDER CONNECTION", blurb: "The organization-level connection tickets are read from." },
   { id: "agent-access", title: "CLAUDE'S PROVIDER ACCESS", blurb: "How the Claude CLI itself reaches the provider — its MCP path, separate from the app's connection above. Without it a skill cannot read the ticket." },
   // No "repo" section: Root repo belongs to a ticket, not to this page. It is
   // validated per run by POST /api/tickets/[id]/implement before the CLI starts.
 ];
+
+// Which Guide section explains how to clear this group's failures.
+// Keys match SECTIONS ids in app/guide/content.tsx.
+const GUIDE_ANCHOR: Partial<Record<CheckGroup, string>> = {
+  environment: "cli",
+  skills: "skills",
+  connection: "connection",
+  "agent-access": "mcp",
+};
 
 const TONE: Record<CheckStatus, { color: string; label: string }> = {
   pass: { color: COLORS.success, label: "PASS" },
@@ -167,10 +177,16 @@ export default function SystemCheckPage() {
                     {(g.id === "connection" || g.id === "agent-access") && (
                       <Link href="/settings" style={{ fontSize: "11.5px", color: COLORS.accent, textDecoration: "none", fontWeight: 600 }}>Open Settings →</Link>
                     )}
+                    {failed > 0 && GUIDE_ANCHOR[g.id] && (
+                      <Link href={`/guide#${GUIDE_ANCHOR[g.id]}`} style={{ fontSize: "11.5px", color: COLORS.accent, textDecoration: "none", fontWeight: 600 }}>How to fix →</Link>
+                    )}
                   </div>
                   <span style={{ fontSize: "11.5px", color: COLORS.faint, lineHeight: 1.5, marginTop: "-4px" }}>{g.blurb}</span>
                   <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
                     {rows.map((c) => <CheckRow key={c.id} c={c} />)}
+                    {/* The skills ship in this repo, so this group is the one
+                        thing on this page the user can fix without leaving it. */}
+                    {g.id === "skills" && <SkillInstaller onChanged={() => load()} />}
                   </div>
                 </div>
               );

@@ -48,15 +48,15 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     window.addEventListener("resize", resize);
 
     const accentC = new THREE.Color(accent);
-    const blue = new THREE.Color("#5B9DFF");
 
     const dotCanvas = document.createElement("canvas");
     dotCanvas.width = dotCanvas.height = 128;
     const dctx = dotCanvas.getContext("2d")!;
+    // Hard-edged dot: the dust points render at a couple of pixels, so any
+    // wide falloff just turns them into grey smudges.
     const dg = dctx.createRadialGradient(64, 64, 0, 64, 64, 64);
     dg.addColorStop(0, "rgba(255,255,255,1)");
-    dg.addColorStop(0.62, "rgba(255,255,255,1)");
-    dg.addColorStop(0.78, "rgba(255,255,255,0.7)");
+    dg.addColorStop(0.82, "rgba(255,255,255,1)");
     dg.addColorStop(1, "rgba(255,255,255,0)");
     dctx.fillStyle = dg;
     dctx.beginPath();
@@ -64,8 +64,12 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     dctx.fill();
     const dotTex = new THREE.CanvasTexture(dotCanvas);
     dotTex.needsUpdate = true;
-    dotTex.minFilter = THREE.LinearFilter;
+    // Mipmaps, not plain LinearFilter: these textures are minified hard (128px
+    // down to ~2px), and without mip levels that aliases into flickering
+    // half-lit pixels instead of a clean point.
+    dotTex.minFilter = THREE.LinearMipmapLinearFilter;
     dotTex.magFilter = THREE.LinearFilter;
+    dotTex.generateMipmaps = true;
 
     // Sharper, tighter-falloff texture for the tiny orbiting satellites (the
     // shared dotTex above is tuned for soft, larger starfield points and
@@ -89,6 +93,73 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     satTex.magFilter = THREE.LinearFilter;
     satTex.anisotropy = 4;
 
+    // Twinkling star texture for the orbiting satellites: a very small hard
+    // core plus four tapered diffraction spikes (the classic camera-flare star
+    // look). The spikes are what read as "sparkle", so the sprite is scaled by
+    // its spike span while the lit dot itself stays tiny.
+    // Authored at 64px, close to the ~30px it actually renders at: a 256px
+    // canvas minified that far (with or without mipmaps) averages the thin
+    // spikes into nothing, which is why the spikes disappeared before.
+    const STAR_TEX = 64;
+    const starCanvas = document.createElement("canvas");
+    starCanvas.width = starCanvas.height = STAR_TEX;
+    const stctx = starCanvas.getContext("2d")!;
+    const stc = STAR_TEX / 2;
+    const spike = (rot: number, len: number, halfWidth: number, alpha: number) => {
+      stctx.save();
+      stctx.translate(stc, stc);
+      stctx.rotate(rot);
+      const g = stctx.createLinearGradient(0, 0, len, 0);
+      g.addColorStop(0, `rgba(255,255,255,${alpha})`);
+      g.addColorStop(0.25, `rgba(255,255,255,${alpha * 0.35})`);
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      stctx.fillStyle = g;
+      stctx.beginPath();
+      stctx.moveTo(0, -halfWidth);
+      stctx.lineTo(len, 0);
+      stctx.lineTo(0, halfWidth);
+      stctx.closePath();
+      stctx.fill();
+      stctx.restore();
+    };
+    // Faint halo, then the long vertical/horizontal spikes and shorter
+    // diagonals, then the core last so it stays the brightest pixel.
+    const starHalo = stctx.createRadialGradient(stc, stc, 0, stc, stc, 5);
+    starHalo.addColorStop(0, "rgba(255,255,255,0.45)");
+    starHalo.addColorStop(1, "rgba(255,255,255,0)");
+    stctx.fillStyle = starHalo;
+    stctx.beginPath();
+    stctx.arc(stc, stc, 5, 0, Math.PI * 2);
+    stctx.fill();
+    for (let k = 0; k < 4; k++) spike((k * Math.PI) / 2, stc * 0.97, 1.7, 1);
+    for (let k = 0; k < 4; k++) spike(Math.PI / 4 + (k * Math.PI) / 2, stc * 0.34, 1.1, 0.55);
+    const starCore = stctx.createRadialGradient(stc, stc, 0, stc, stc, 2.3);
+    starCore.addColorStop(0, "rgba(255,255,255,1)");
+    starCore.addColorStop(0.65, "rgba(255,255,255,1)");
+    starCore.addColorStop(1, "rgba(255,255,255,0)");
+    stctx.fillStyle = starCore;
+    stctx.beginPath();
+    stctx.arc(stc, stc, 2.3, 0, Math.PI * 2);
+    stctx.fill();
+    const starTex = new THREE.CanvasTexture(starCanvas);
+    starTex.needsUpdate = true;
+    // No mipmaps here on purpose: mip averaging is what erased the spikes.
+    // Rendering near 1:1 keeps sub-pixel-thin arms visible and sharp.
+    starTex.minFilter = THREE.LinearFilter;
+    starTex.magFilter = THREE.LinearFilter;
+    starTex.generateMipmaps = false;
+    starTex.anisotropy = 4;
+
+    // Both point clouds are sized in *pixels* (sizeAttenuation: false). With
+    // attenuation on, any point that drifts near the camera blows up into a
+    // huge blurry disc — which is exactly what the field must never do; every
+    // star has to stay tiny and crisp regardless of depth. Fog still supplies
+    // the depth cue. `size` is in device pixels, so scale by the pixel ratio
+    // to keep the same on-screen size on HiDPI displays.
+    const PX = renderer.getPixelRatio();
+    const DUST_PX = 2;
+    const STAR_PX = 30;
+
     const N = 2600;
     const posArr = new Float32Array(N * 3),
       colArr = new Float32Array(N * 3);
@@ -99,10 +170,14 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
       posArr[i * 3] = r * Math.sin(ph) * Math.cos(th) * 1.5;
       posArr[i * 3 + 1] = (Math.random() - 0.5) * 26;
       posArr[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th) - 6;
-      const c = accentC.clone().lerp(blue, Math.random() * 0.75);
-      colArr[i * 3] = c.r;
-      colArr[i * 3 + 1] = c.g;
-      colArr[i * 3 + 2] = c.b;
+      // White stars: only brightness varies (a flat white field reads dead).
+      // Values deliberately go past 1.0 — with additive blending that pushes
+      // the soft edge of each dot to full white too, so the point reads as a
+      // lit spark instead of a grey speck.
+      const b = 1 + Math.random() * 10;
+      colArr[i * 3] = b;
+      colArr[i * 3 + 1] = b;
+      colArr[i * 3 + 2] = Math.min(1, b * 1.06);
     }
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.BufferAttribute(posArr, 3));
@@ -110,20 +185,23 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     const points = new THREE.Points(
       pg,
       new THREE.PointsMaterial({
-        size: 0.19,
+        size: DUST_PX * PX,
         vertexColors: true,
         map: dotTex,
-        alphaTest: 0.12,
+        alphaTest: 0.35,
         transparent: true,
         opacity: 1,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        sizeAttenuation: true,
+        sizeAttenuation: false,
+        // Fog is near-black; on a 2px point it just mutes the far half of the
+        // field into grey specks. Depth here comes from brightness variation.
+        fog: false,
       })
     );
     scene.add(points);
 
-    const streakN = 90;
+    const streakN = 170;
     const streakPos = new Float32Array(streakN * 3),
       streakCol = new Float32Array(streakN * 3);
     for (let i = 0; i < streakN; i++) {
@@ -132,26 +210,29 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
       streakPos[i * 3] = Math.cos(th) * r;
       streakPos[i * 3 + 1] = (Math.random() - 0.5) * 24;
       streakPos[i * 3 + 2] = Math.sin(th) * r - 6;
-      const c = Math.random() > 0.5 ? accentC.clone() : blue.clone();
-      streakCol[i * 3] = c.r;
-      streakCol[i * 3 + 1] = c.g;
-      streakCol[i * 3 + 2] = c.b;
+      // Overdriven past 1.0 as well, so the thin spikes stay clearly lit.
+      const b = 1.35 + Math.random() * 10;
+      streakCol[i * 3] = b;
+      streakCol[i * 3 + 1] = b;
+      streakCol[i * 3 + 2] = Math.min(1, b * 1.06);
     }
     const sg = new THREE.BufferGeometry();
     sg.setAttribute("position", new THREE.BufferAttribute(streakPos, 3));
     sg.setAttribute("color", new THREE.BufferAttribute(streakCol, 3));
     const streaks = new THREE.Points(
       sg,
+      // The brighter stars of the field: same 4-spike star texture as the
+      // satellites, so their span is mostly spike and the lit core stays tiny.
       new THREE.PointsMaterial({
-        size: 0.36,
+        size: STAR_PX * PX,
         vertexColors: true,
-        map: dotTex,
-        alphaTest: 0.12,
+        map: starTex,
         transparent: true,
-        opacity: 0.95,
+        opacity: 1,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        sizeAttenuation: true,
+        sizeAttenuation: false,
+        fog: false,
       })
     );
     scene.add(streaks);
@@ -349,22 +430,32 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     core.add(ico);
     core.add(outer);
     core.add(loader);
-    const SAT_SCALE = 0.11;
+    // Sprite span covers the spikes, so the lit core is only ~4% of this — a
+    // very small bright point that flares. No alphaTest: it would clip the
+    // faint spike tails and leave a bare dot.
+    const SAT_SCALE = 0.5;
     const sats: THREE.Sprite[] = [];
     for (let i = 0; i < 10; i++) {
       const s = new THREE.Sprite(
         new THREE.SpriteMaterial({
-          map: satTex,
-          color: i % 2 ? accentC.clone() : blue.clone(),
+          map: starTex,
+          color: white.clone(),
           transparent: true,
           opacity: 1,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
-          alphaTest: 0.05,
         })
       );
       s.scale.set(SAT_SCALE, SAT_SCALE, 1);
-      s.userData = { orb: 3.7 + i * 0.28, sp: 0.32 + i * 0.11, ph: i * 0.85, tilt: (i % 3) * 0.9 };
+      s.userData = {
+        orb: 3.7 + i * 0.28,
+        sp: 0.32 + i * 0.11,
+        ph: i * 0.85,
+        tilt: (i % 3) * 0.9,
+        // Per-star twinkle: distinct rate/phase so they don't pulse in unison.
+        tw: 1.7 + (i % 4) * 0.55,
+        twPh: i * 1.37,
+      };
       core.add(s);
       sats.push(s);
     }
@@ -460,17 +551,32 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
       (ringOuterA.material as THREE.SpriteMaterial).rotation += 0.012 * stt.speed;
       (ringInnerA.material as THREE.SpriteMaterial).rotation -= 0.018 * stt.speed;
       ico.scale.setScalar(1 + Math.sin(t * 2.2) * 0.08 * stt.speed);
-      (points.material as THREE.PointsMaterial).opacity = 0.9 + Math.sin(t * 1.4) * 0.1;
+      (points.material as THREE.PointsMaterial).opacity = 0.97 + Math.sin(t * 1.4) * 0.03;
+      // Collective twinkle of the bright stars (per-point phases would need a
+      // custom shader; one shared pulse over a rotating field reads fine).
       (streaks.material as THREE.PointsMaterial).size =
-        0.5 + Math.sin(t * 3) * 0.15 + (stt.speed - 1) * 0.25;
+        (STAR_PX + Math.sin(t * 3) * 3 + (stt.speed - 1) * 3) * PX;
       for (let i = 0; i < sats.length; i++) {
-        const u = sats[i].userData as { orb: number; sp: number; ph: number; tilt: number };
+        const u = sats[i].userData as {
+          orb: number;
+          sp: number;
+          ph: number;
+          tilt: number;
+          tw: number;
+          twPh: number;
+        };
         const a = t * u.sp * stt.speed * 1.6 + u.ph;
         sats[i].position.set(
           Math.cos(a) * u.orb,
           Math.sin(a + u.tilt) * u.orb * 0.4,
           Math.sin(a) * u.orb * Math.cos(u.tilt * 0.5)
         );
+        // Twinkle: two out-of-phase sines so the flare briefly spikes and then
+        // nearly vanishes, instead of breathing evenly.
+        const tw = Math.sin(t * u.tw + u.twPh) * 0.5 + 0.5;
+        const sharp = tw * tw;
+        sats[i].scale.setScalar(SAT_SCALE * (0.55 + sharp * 0.75));
+        (sats[i].material as THREE.SpriteMaterial).opacity = 0.6 + sharp * 0.4;
       }
       for (let i = 0; i < bolts.length; i++) {
         const line = bolts[i];
