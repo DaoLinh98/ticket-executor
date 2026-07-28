@@ -93,6 +93,8 @@ export default function TicketExecutor() {
     concurrentRuns: 2,
     multiTicketMode: true,
     manageMcp: true,
+    hourlyRateUsd: 0,
+    hoursPerStoryPoint: 6,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -950,6 +952,10 @@ export default function TicketExecutor() {
             effort,
             title: t.title,
             provider: settings.provider,
+            // Snapshot the team's own sizing alongside the run, for the dashboard's
+            // estimate-vs-actual comparison. Absent on unsized tickets.
+            estimateHours: t.estimateHours,
+            storyPoints: t.storyPoints,
             ...(prUrl ? { prUrl } : {}),
           }),
         });

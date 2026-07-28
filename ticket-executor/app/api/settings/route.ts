@@ -59,6 +59,12 @@ export async function POST(req: Request) {
       Math.min(20, Math.round(body.concurrentRuns)),
     );
   }
+  // Dashboard ROI inputs. 0 is a valid rate (it hides the ROI tile), so these
+  // are clamped rather than treated as unset.
+  if (typeof body.hourlyRateUsd === "number" && Number.isFinite(body.hourlyRateUsd))
+    data.hourlyRateUsd = Math.max(0, body.hourlyRateUsd);
+  if (typeof body.hoursPerStoryPoint === "number" && Number.isFinite(body.hoursPerStoryPoint))
+    data.hoursPerStoryPoint = Math.max(0, body.hoursPerStoryPoint);
 
   const s = await prisma.setting.upsert({
     where: { id: "default" },

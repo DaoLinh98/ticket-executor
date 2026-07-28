@@ -24,6 +24,12 @@ export type Entry = {
   completedAt: number | null;
   child: ChildProcess | null;
   cancelled: boolean;
+  /** Why the run ended, when that is not plain success/error: "cancelled" (user
+   *  killed the child) or "plan-rejected" (reviewer discarded the plan). The UI
+   *  keeps treating both as `status: "failed"` — the run didn't deliver and is
+   *  retryable — but the dashboard must not score a human's decision as an agent
+   *  failure, so the distinction lives here rather than in ExecStatus. */
+  endReason: string;
   // ---- two-phase (implement-ticket-v3) fields ----
   /** Pre-assigned CLI session id, so the implement phase can `--resume` the plan phase's session. */
   sessionId: string;
@@ -31,6 +37,16 @@ export type Entry = {
   phase: ExecPhase;
   planStatus: PlanStatus;
   planMarkdown: string;
+  /** Timestamp the run parked at the plan gate, or null when it is not parked.
+   *  Paired with humanWaitMs to separate "the agent is working" from "a human
+   *  hasn't answered yet" — a run can park more than once (each revise round). */
+  parkedAt: number | null;
+  humanWaitMs: number;
+  /** How many times the reviewer asked for changes before approving. */
+  planRevisions: number;
+  /** True when this run's Entry was rebuilt from the DB because the in-process
+   *  store was lost (dev-server restart) — a session a bare terminal would have dropped. */
+  resumedAfterRestart: boolean;
   /** Repo the worktree was created under — needed to resume/clean up after a restart. */
   rootRepo: string;
   provider: string;

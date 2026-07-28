@@ -1,7 +1,8 @@
 import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
   adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
-  getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, type ProjectInfo,
+  getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
+  type ProjectInfo,
 } from "./ado";
 import {
   getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
@@ -258,6 +259,73 @@ export async function loadReviewsSummary(
     });
   }
   return entries;
+}
+
+export type DeliveryFunnel = {
+  prCreated: number;
+  merged: number;
+  /** Merged without a single human review comment on the PR. */
+  mergedClean: number;
+  /** How many of the PR URLs were actually resolved against the provider. */
+  sampled: number;
+  /** false → this provider can't report PR outcomes yet; merged/mergedClean are meaningless. */
+  providerBacked: boolean;
+  notice?: string;
+};
+
+// Two calls per PR against Azure DevOps (one GraphQL call on GitHub), so the
+// dashboard caps how many it resolves rather than fanning out over all history.
+const FUNNEL_SAMPLE_CAP = 60;
+
+/**
+ * Resolve what became of the PRs the engine opened: how many merged, and how
+ * many merged without a reviewer having to comment. Azure DevOps and GitHub are
+ * wired; other providers degrade to `providerBacked: false` so the UI can show
+ * "not measured" rather than a misleading zero.
+ *
+ * `prUrls` should already be newest-first — anything past FUNNEL_SAMPLE_CAP is
+ * dropped, and `sampled` reports how many were actually checked.
+ */
+export async function loadDeliveryFunnel(provider: ProviderId, prUrls: string[]): Promise<DeliveryFunnel> {
+  const empty = { prCreated: prUrls.length, merged: 0, mergedClean: 0, sampled: 0 };
+  if (provider !== "azure-devops" && provider !== "github") {
+    return { ...empty, providerBacked: false, notice: `${labelFor(provider)} cannot report PR outcomes yet.` };
+  }
+  const sample = prUrls.slice(0, FUNNEL_SAMPLE_CAP);
+  if (!sample.length) return { ...empty, providerBacked: true, sampled: 0 };
+
+  try {
+    let outcomes: Array<{ merged: boolean; reviewComments: number } | null>;
+    if (provider === "azure-devops") {
+      if (!(await adoCreds())) return { ...empty, providerBacked: false, notice: "Azure DevOps is not configured." };
+      outcomes = await getPullRequestOutcomes(sample);
+    } else {
+      const creds = await githubCreds();
+      if (!creds) return { ...empty, providerBacked: false, notice: "GitHub is not configured." };
+      const settled = await Promise.allSettled(
+        sample.map(async (url) => {
+          const review = await getGithubPullRequestReview(url, creds.token);
+          if (!review.pr) return null;
+          return { merged: review.pr.status === "Completed", reviewComments: review.comments.length };
+        })
+      );
+      outcomes = settled.map((r) => (r.status === "fulfilled" ? r.value : null));
+    }
+    const resolved = outcomes.filter((o): o is { merged: boolean; reviewComments: number } => !!o);
+    return {
+      prCreated: prUrls.length,
+      merged: resolved.filter((o) => o.merged).length,
+      mergedClean: resolved.filter((o) => o.merged && o.reviewComments === 0).length,
+      sampled: resolved.length,
+      providerBacked: true,
+      notice:
+        prUrls.length > sample.length
+          ? `Showing the ${sample.length} most recent PRs of ${prUrls.length}.`
+          : undefined,
+    };
+  } catch (e) {
+    return { ...empty, providerBacked: false, notice: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function parseRepoLabel(url: string): string {

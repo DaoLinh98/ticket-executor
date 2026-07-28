@@ -10,6 +10,12 @@ export type Ticket = {
   description: string; // plain text
   criteria: string[]; // acceptance criteria, one line each
   url: string; // deep link to the ticket in ADO/GitHub
+  // The team's own sizing of this ticket, snapshotted onto a run so the dashboard
+  // can compare "what we thought it would take" against what the agent spent.
+  // Providers expose one, the other, or neither — the conversion from points to
+  // hours is a setting, applied where the run is started, not here.
+  estimateHours?: number;
+  storyPoints?: number;
 };
 
 export type TicketComment = {

@@ -51,6 +51,11 @@ export function parseAdoUrl(raw: string | null | undefined): { org: string; proj
   return { org: decodeSegment(org), project: decodeSegment(project) };
 }
 
+// ADO omits unset numeric fields entirely — keep "not sized" distinct from 0.
+function numOrUndefined(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 function decodeSegment(s: string | undefined): string {
   if (!s) return "";
   try {
@@ -241,6 +246,8 @@ export async function getSprintTickets(
     "System.AreaPath",
     "System.Description",
     "Microsoft.VSTS.Common.AcceptanceCriteria",
+    "Microsoft.VSTS.Scheduling.OriginalEstimate",
+    "Microsoft.VSTS.Scheduling.StoryPoints",
   ].join(",");
 
   // Work-item batch GET is capped at 200 ids; chunk to be safe.
@@ -269,6 +276,8 @@ export async function getSprintTickets(
           (f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""
         ),
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
+        estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
+        storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
       });
     }
   }
@@ -511,6 +520,65 @@ export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: str
   }
 
   return { pr, comments, unresolvedCount: comments.filter((c) => c.status === "open").length };
+}
+
+// ---- Dashboard delivery funnel ----
+
+/** What became of one PR the engine opened. */
+export type PrOutcome = { merged: boolean; abandoned: boolean; reviewComments: number };
+
+// Parse a PR URL the engine recorded back into a ref. Unlike the review/commits
+// path there's no work-item lookup here: the dashboard already has the URL, and
+// resolving hundreds of them through the artifact-link API would be far too slow.
+function refFromPrUrl(url: string): PrRef | null {
+  const withProject = url.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  if (withProject) {
+    return {
+      repositoryId: decodeURIComponent(withProject[2]),
+      prId: withProject[3],
+      project: decodeSegment(withProject[1]),
+    };
+  }
+  const m = url.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  return m ? { repositoryId: decodeURIComponent(m[1]), prId: m[2] } : null;
+}
+
+/**
+ * Resolve what happened to each PR: merged (ADO "completed"), abandoned, and how
+ * many human review threads it attracted. Two calls per PR, so callers must cap
+ * the list — see loadDeliveryFunnel() in lib/tickets.ts.
+ *
+ * A URL that no longer resolves yields null rather than throwing, so one stale
+ * PR can't blank out the whole funnel.
+ */
+export async function getPullRequestOutcomes(prUrls: string[]): Promise<(PrOutcome | null)[]> {
+  const { org, pat } = await loadCreds();
+  const CHUNK = 6; // keep ADO happy; these run against one org with one PAT
+  const out: (PrOutcome | null)[] = [];
+  for (let i = 0; i < prUrls.length; i += CHUNK) {
+    const batch = prUrls.slice(i, i + CHUNK).map(async (url): Promise<PrOutcome | null> => {
+      const ref = refFromPrUrl(url);
+      if (!ref) return null;
+      try {
+        const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat);
+        const status = (raw.status ?? "").toLowerCase();
+        const threads = await adoGet<{ value?: RawThread[] }>(
+          `${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}/threads?${API}`,
+          pat
+        );
+        // threadContext is only present on threads anchored to a file — i.e. real
+        // review comments, not ADO's own vote/status system threads.
+        const reviewComments = (threads.value ?? []).filter(
+          (th) => th.threadContext && (th.comments ?? []).some((c) => !c.isDeleted && c.commentType !== "system")
+        ).length;
+        return { merged: status === "completed", abandoned: status === "abandoned", reviewComments };
+      } catch {
+        return null;
+      }
+    });
+    out.push(...(await Promise.all(batch)));
+  }
+  return out;
 }
 
 // ---- Commits tab ----

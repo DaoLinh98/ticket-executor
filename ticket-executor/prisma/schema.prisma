@@ -24,6 +24,11 @@ model Setting {
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
   concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
+  // Dashboard ROI inputs. hourlyRateUsd = 0 (default) hides the ROI tile entirely,
+  // since a made-up rate would be worse than no number at all. hoursPerStoryPoint
+  // converts point-sized tickets to hours when the provider has no hour estimate.
+  hourlyRateUsd  Float    @default(0)
+  hoursPerStoryPoint Float @default(6)
   // true → multi-ticket mode: multi-select/batch runs allowed, each execution
   // isolated in its own git worktree. false → single-ticket mode: only one
   // ticket may run at a time, and it runs directly in rootRepo (no worktree).
@@ -58,6 +63,11 @@ model Execution {
   // Setting.provider only reflects the current selection, not each run's).
   provider     String    @default("")
   status       String    @default("running") // running | awaiting-approval | completed | failed
+  // Why a non-completed run ended: "" (plain error) | "cancelled" (user killed it)
+  // | "plan-rejected" (reviewer discarded the plan). status stays "failed" for all
+  // three so the UI's retry affordance is unchanged; the dashboard uses this to
+  // avoid scoring a human's decision as an agent failure.
+  endReason    String    @default("")
   command      String
   // Two-phase (implement-ticket-v3) run state. sessionId + worktreePath are what
   // let an approval resume the same Claude session after a server restart, when
@@ -71,6 +81,16 @@ model Execution {
   phase        String    @default("implement") // plan | implement
   planStatus   String    @default("none") // none | pending | approved | rejected
   planMarkdown String    @default("")
+  // Plan-gate accounting. parkedAt is set while the run waits at the gate and
+  // cleared on resume, with the elapsed time folded into humanWaitMs — so
+  // "agent was computing" and "a human hadn't answered" stay separable even
+  // across several revise rounds.
+  parkedAt     DateTime?
+  humanWaitMs  Int       @default(0)
+  planRevisions Int      @default(0)
+  // Set when the Entry had to be rebuilt from this row because the in-process
+  // store was lost (server restart) — a session a bare terminal would have dropped.
+  resumedAfterRestart Boolean @default(false)
   resultText   String    @default("")
   errorMessage String    @default("")
   logLines     String    @default("[]") // JSON-encoded LogLine[]
@@ -79,7 +99,16 @@ model Execution {
   branch       String    @default("")
   model        String    @default("")
   effort       String    @default("")
+  // The team's own estimate for this ticket, in hours, snapshotted when the run
+  // started (0 = the ticket was never sized). Snapshotted rather than read live
+  // because re-estimating a ticket later must not rewrite past runs' history.
+  estimateHours Float    @default(0)
   filesChanged String    @default("[]") // JSON-encoded FileChange[]
+  // Scalar summary of filesChanged, denormalized at finish() so the dashboard can
+  // aggregate change size without loading every run's (large) diff blob.
+  filesTouched Int       @default(0)
+  linesAdded   Int       @default(0)
+  linesDeleted Int       @default(0)
   // Token & cost usage reported by the Claude CLI's final `result` event,
   // accumulated across all turns of the run. Collected from new runs only.
   costUsd             Float @default(0)
@@ -93,6 +122,22 @@ model Execution {
   completedAt  DateTime?
 
   @@index([adoTicketId])
+}
+
+// A run request the preflight checks rejected before the Claude CLI was ever
+// spawned. Recorded because "the run that never had to burn tokens" is only
+// visible as a metric if the refusal is persisted — the request itself just
+// returns a 400 and disappears.
+model BlockedAttempt {
+  id          String   @id @default(cuid())
+  ticketId    String
+  provider    String   @default("")
+  projectName String   @default("")
+  reason      String   // root-repo | agent-access | single-ticket-mode
+  detail      String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // Distinct values ever used for Root Repo / Project / Skill fields, so the

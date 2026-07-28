@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import type { CountEntry, DashboardMetrics } from "@/lib/executionStore";
-import { COLORS, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import type { CountEntry, DashboardMetrics, SkillConsistency } from "@/lib/executionStore";
+import { COLORS, card, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -17,27 +17,57 @@ const fmtMs = (ms: number) => {
   const m = Math.floor(s / 60);
   return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 };
+const fmtHours = (h: number) => (h >= 10 ? `${h.toFixed(0)}h` : h >= 1 ? `${h.toFixed(1)}h` : `${Math.round(h * 60)}m`);
+const fmtX = (n: number) => `${n.toFixed(2)}×`;
+
+// Lookback windows offered in the header. Label → days; "" = all time.
+const RANGES: Record<string, number> = {
+  "Last 7 days": 7,
+  "Last 30 days": 30,
+  "Last 90 days": 90,
+};
 
 const sectionHeading: CSSProperties = {
   margin: "0 0 14px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px",
   fontWeight: 700, letterSpacing: ".16em", color: COLORS.faint,
 };
 
-function KpiTile({ label, value, sub, tone, index = 0 }: { label: string; value: string; sub?: string; tone?: string; index?: number }) {
+// The band that opens each of the three tiers (VALUE / QUALITY / OPERATIONS).
+// Same type treatment as sectionHeading, one step up, with a rule to its right.
+function TierHeading({ n, title, blurb }: { n: string; title: string; blurb: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: "6px 0 -8px" }}>
+      <span style={{ ...pill({ color: COLORS.accent, border: COLORS.border, size: "xs", weight: 700 }) }}>{n}</span>
+      <span style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "12.5px", fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
+      <span style={{ fontSize: "11.5px", color: COLORS.textMuted, flex: 1, minWidth: 0 }}>{blurb}</span>
+    </div>
+  );
+}
+
+function KpiTile({
+  label, value, sub, hint, tone, index = 0, big = false,
+}: {
+  label: string; value: string; sub?: string; hint?: string; tone?: string; index?: number; big?: boolean;
+}) {
   return (
     <div
       style={{
-        padding: "16px 18px", borderRadius: "13px", display: "flex", flexDirection: "column", gap: "8px",
+        padding: big ? "18px 20px" : "16px 18px", borderRadius: "13px", display: "flex", flexDirection: "column", gap: "8px",
         transition: "transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s",
-        animation: "fadeUp .45s both", animationDelay: `${index * 55}ms`,
-        ...ringBorder({ fill: COLORS.panelBg, duration: 4.2 + index * 0.3, shape: "none" }),
+        ...ringBorder({
+          fill: COLORS.panelBg, duration: 4.2 + index * 0.3, shape: "none",
+          extraAnimation: "fadeUp .45s both", extraAnimationDelay: `${index * 55}ms`,
+        }),
       }}
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 14px 34px -20px var(--accent)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
     >
       <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: big ? "34px" : "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: "11.5px", color: COLORS.textDim }}>{sub}</div>}
+      {/* The comparison baseline, stated on the tile itself — a leverage number
+          means nothing without saying what it is leverage *over*. */}
+      {hint && <div style={{ fontSize: "10.5px", color: COLORS.textMuted, fontStyle: "italic" }}>{hint}</div>}
     </div>
   );
 }
@@ -50,7 +80,7 @@ function BarList({ rows, color }: { rows: CountEntry[]; color: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
       {rows.map((r) => (
         <div key={r.key} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "34%", minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</div>
+          <div style={{ width: "34%", minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</div>
           <div style={{ flex: 1, height: "9px", borderRadius: "999px", background: "rgba(255,255,255,.04)", overflow: "hidden" }}>
             <div style={{ width: `${(r.count / max) * 100}%`, height: "100%", borderRadius: "999px", background: color, transformOrigin: "left", animation: "growX .5s cubic-bezier(.16,1,.3,1) both" }} />
           </div>
@@ -61,15 +91,96 @@ function BarList({ rows, color }: { rows: CountEntry[]; color: string }) {
   );
 }
 
-// Cost-over-time line + area chart (inline SVG, no dependency).
+// What GET /api/dashboard/funnel returns — the provider-resolved half of the
+// funnel, loaded separately so PR round-trips never delay the main metrics.
+type FunnelData = {
+  prCreated: number;
+  merged: number;
+  mergedClean: number;
+  sampled: number;
+  providerBacked: boolean;
+  notice?: string;
+  error?: string;
+};
+
+// Delivery funnel: each stage as a proportion of the first. Stages the provider
+// hasn't been polled for render as an explicit "not measured" slot rather than a
+// zero, so an unwired (or still-loading) stage never reads as a failure.
+function Funnel({ f, live }: { f: DashboardMetrics["funnel"]; live: FunnelData | null }) {
+  const backed = live?.providerBacked ?? false;
+  const stages = [
+    { label: "Runs", n: f.runs, c: COLORS.indigo, known: true },
+    { label: "PR created", n: f.prCreated, c: COLORS.info, known: true },
+    { label: "Merged", n: live?.merged ?? 0, c: COLORS.success, known: backed },
+    { label: "Merged clean", n: live?.mergedClean ?? 0, c: COLORS.accent, known: backed },
+  ];
+  const base = Math.max(1, f.runs);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      {stages.map((s, i) => (
+        <div key={s.label} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ width: "92px", fontSize: "11.5px", color: COLORS.textDim, fontWeight: 600 }}>{s.label}</div>
+          <div style={{ flex: 1, height: "13px", borderRadius: "999px", background: "rgba(255,255,255,.04)", overflow: "hidden" }}>
+            {s.known && (
+              <div style={{ width: `${(s.n / base) * 100}%`, height: "100%", borderRadius: "999px", background: s.c, animation: "growX .5s cubic-bezier(.16,1,.3,1) both", animationDelay: `${i * 70}ms` }} />
+            )}
+          </div>
+          <div style={{ width: "82px", textAlign: "right", fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 600, color: s.known ? COLORS.text : COLORS.faint }}>
+            {s.known ? `${s.n} · ${fmtPct(s.n / base)}` : live ? "not measured" : "…"}
+          </div>
+        </div>
+      ))}
+      {(live?.notice || live?.error) && (
+        <div style={{ fontSize: "11px", color: live.error ? COLORS.danger : COLORS.textMuted, marginTop: "2px" }}>
+          {live.error ?? live.notice}
+        </div>
+      )}
+      {backed && live && live.sampled > 0 && (
+        <div style={{ fontSize: "11px", color: COLORS.textMuted }}>
+          {live.sampled} PR{live.sampled === 1 ? "" : "s"} resolved against the provider.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-skill duration spread. A standardized skill should be predictable; a wide
+// CV means the workflow is not actually repeatable yet.
+function ConsistencyTable({ rows }: { rows: SkillConsistency[] }) {
+  if (!rows.length) return <div style={{ fontSize: "12.5px", color: COLORS.faint }}>No completed runs yet.</div>;
+  const tone = (cv: number) => (cv <= 0.35 ? COLORS.success : cv <= 0.7 ? COLORS.warning : COLORS.danger);
+  const verdict = (cv: number) => (cv <= 0.35 ? "predictable" : cv <= 0.7 ? "variable" : "erratic");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      {rows.map((r) => (
+        <div key={r.skill} style={{ ...card({ padding: "9px 12px" }), display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.skill}</div>
+          <div style={{ fontSize: "11px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{r.count} runs</div>
+          <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: COLORS.textDim, whiteSpace: "nowrap" }}>
+            p50 {fmtMs(r.p50Ms)} · p95 {fmtMs(r.p95Ms)}
+          </div>
+          <span style={pill({ color: tone(r.cv), border: COLORS.border, size: "xs" })}>
+            CV {r.cv.toFixed(2)} · {verdict(r.cv)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Cost-over-time line + area chart, with completed runs per day overlaid on its
+// own normalized scale — cost alone reads as spend, cost against output reads as
+// efficiency.
 function CostTrend({ trend }: { trend: DashboardMetrics["cost"]["trend"] }) {
   if (!trend.length) return <div style={{ fontSize: "12.5px", color: COLORS.faint }}>No cost data yet.</div>;
   const W = 640, H = 160, PAD = 8;
-  const max = Math.max(...trend.map((t) => t.costUsd), 0.0001);
+  const maxCost = Math.max(...trend.map((t) => t.costUsd), 0.0001);
+  const maxShipped = Math.max(...trend.map((t) => t.shipped), 1);
   const n = trend.length;
   const x = (i: number) => (n === 1 ? W / 2 : PAD + (i * (W - 2 * PAD)) / (n - 1));
-  const y = (v: number) => H - PAD - (v / max) * (H - 2 * PAD);
-  const pts = trend.map((t, i) => `${x(i)},${y(t.costUsd)}`).join(" ");
+  const y = (v: number, max: number) => H - PAD - (v / max) * (H - 2 * PAD);
+  const pts = trend.map((t, i) => `${x(i)},${y(t.costUsd, maxCost)}`).join(" ");
+  const shippedPts = trend.map((t, i) => `${x(i)},${y(t.shipped, maxShipped)}`).join(" ");
   const area = `${PAD},${H - PAD} ${pts} ${x(n - 1)},${H - PAD}`;
   return (
     <div>
@@ -81,13 +192,18 @@ function CostTrend({ trend }: { trend: DashboardMetrics["cost"]["trend"] }) {
           </linearGradient>
         </defs>
         <polygon points={area} fill="url(#costFill)" />
+        <polyline points={shippedPts} fill="none" stroke={COLORS.success} strokeWidth="1.6" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" opacity="0.85" />
         <polyline points={pts} fill="none" stroke={COLORS.accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {trend.map((t, i) => (
-          <circle key={t.date} cx={x(i)} cy={y(t.costUsd)} r="2.6" fill={COLORS.accent} />
+          <circle key={t.date} cx={x(i)} cy={y(t.costUsd, maxCost)} r="2.6" fill={COLORS.accent} />
         ))}
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "10.5px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", fontSize: "10.5px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>
         <span>{trend[0].date}</span>
+        <span style={{ display: "flex", gap: "12px", fontFamily: "inherit" }}>
+          <span style={{ color: COLORS.accent }}>— cost/day</span>
+          <span style={{ color: COLORS.success }}>-- runs completed/day</span>
+        </span>
         <span>{trend[trend.length - 1].date}</span>
       </div>
     </div>
@@ -99,6 +215,7 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
   const segs = [
     { label: "Completed", n: r.completed, c: COLORS.success },
     { label: "Failed", n: r.failed, c: COLORS.danger },
+    { label: "Cancelled", n: r.cancelled, c: COLORS.textMuted },
     { label: "Running", n: r.running, c: COLORS.warning },
     { label: "Awaiting", n: r.awaitingApproval, c: COLORS.indigo },
   ].filter((s) => s.n > 0);
@@ -125,18 +242,25 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardMetrics | null>(null);
+  const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
+  const [rangeLabel, setRangeLabel] = useState("");
+
+  const query = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (provider) qs.set("provider", provider);
+    if (project) qs.set("project", project);
+    if (rangeLabel && RANGES[rangeLabel]) qs.set("days", String(RANGES[rangeLabel]));
+    return qs.toString();
+  }, [provider, project, rangeLabel]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams();
-      if (provider) qs.set("provider", provider);
-      if (project) qs.set("project", project);
-      const res = await fetch(`/api/dashboard?${qs.toString()}`, { cache: "no-store" });
+      const res = await fetch(`/api/dashboard?${query()}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load metrics");
       setData(json as DashboardMetrics);
@@ -146,11 +270,31 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [provider, project]);
+  }, [query]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The funnel talks to the provider (one or two round-trips per PR), so it is
+  // fetched on its own and merged in when it lands — a slow or unreachable
+  // provider must never hold up the rest of the dashboard.
+  useEffect(() => {
+    let cancelled = false;
+    setFunnel(null);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/dashboard/funnel?${query()}`, { cache: "no-store" });
+        const json = await res.json();
+        if (!cancelled) setFunnel(res.ok ? (json as FunnelData) : { ...json, providerBacked: false, prCreated: 0, merged: 0, mergedClean: 0, sampled: 0 });
+      } catch (e) {
+        if (!cancelled) {
+          setFunnel({ prCreated: 0, merged: 0, mergedClean: 0, sampled: 0, providerBacked: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [query]);
 
   // Same rounded-panel-with-spinning-ring treatment as the log panel in ExecutionTab —
   // shape:"none" keeps the ring's animated conic-gradient background while letting us
@@ -180,6 +324,9 @@ export default function DashboardPage() {
     background: "linear-gradient(90deg,transparent,var(--accent),transparent)", opacity: 0.55,
   };
   const sectionDelay = (i: number) => ({ animation: "fadeUp .45s both", animationDelay: `${i * 70}ms` } as CSSProperties);
+  // Tier 3 is reference material, not the argument — dim it so the eye lands on
+  // tiers 1 and 2 first.
+  const opsTier: CSSProperties = { display: "flex", flexDirection: "column", gap: "16px", opacity: 0.86 };
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
@@ -194,10 +341,13 @@ export default function DashboardPage() {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <div style={{ width: "200px" }}>
+        <div style={{ width: "170px" }}>
+          <SelectMenu variant="filter" alwaysGlow value={rangeLabel} onChange={setRangeLabel} options={Object.keys(RANGES)} allLabel="Range: All time" ariaLabel="Filter by time range" />
+        </div>
+        <div style={{ width: "190px" }}>
           <SelectMenu variant="filter" alwaysGlow value={provider} onChange={setProvider} options={data?.filters.providers ?? []} allLabel="Provider: All" ariaLabel="Filter by provider" />
         </div>
-        <div style={{ width: "220px" }}>
+        <div style={{ width: "210px" }}>
           <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
       </header>
@@ -217,84 +367,177 @@ export default function DashboardPage() {
 
           {data && (
             <>
-              {/* KPI tiles */}
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "12px", ...sectionDelay(0) }}>
-                <KpiTile index={0} label="TOTAL RUNS" value={`${data.volume.total}`} sub={`${data.reliability.running} running · ${data.reliability.awaitingApproval} awaiting`} />
-                <KpiTile index={1} label="SUCCESS RATE" value={fmtPct(data.reliability.successRate)} tone={COLORS.success} sub={`${data.reliability.completed} ok · ${data.reliability.failed} failed`} />
-                <KpiTile index={2} label="AVG DURATION" value={data.speed.count ? fmtMs(data.speed.avgMs) : "—"} sub={data.speed.count ? `p50 ${fmtMs(data.speed.p50Ms)} · p95 ${fmtMs(data.speed.p95Ms)}` : "no completed runs"} />
-                <KpiTile index={3} label="TOTAL SPEND" value={fmtUsd(data.cost.totalUsd)} tone={COLORS.accent} sub={`${data.cost.withUsageCount} runs w/ usage`} />
-                <KpiTile index={4} label="AVG COST / RUN" value={fmtUsd(data.cost.avgUsdPerRun)} sub={`${fmtTokens(data.cost.avgTokensPerRun)} tokens/run`} />
-                <KpiTile index={5} label="CACHE HIT RATIO" value={fmtPct(data.efficiency.cacheHitRatio)} tone={COLORS.info} sub={`${fmtTokens(data.efficiency.cacheReadTokens)} cached reads`} />
+              {/* ---------- TIER 1 · VALUE ---------- */}
+              <TierHeading n="01" title="VALUE" blurb="What this app adds over driving the Claude CLI by hand, one session at a time." />
+
+              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", ...sectionDelay(0) }}>
+                <KpiTile big index={0} label="COMPRESSION" value={fmtX(data.leverage.compressionFactor)} tone={COLORS.accent}
+                  sub={`peak ${data.leverage.concurrentPeak} runs in flight`}
+                  hint="vs. one sequential CLI session" />
+                <KpiTile big index={1} label="HOURS SAVED" value={fmtHours(data.leverage.hoursSaved)} tone={COLORS.success}
+                  sub={`${fmtHours(data.leverage.wallClockHours)} wall-clock`}
+                  hint="time overlap bought you" />
+                <KpiTile big index={2} label="AGENT HOURS" value={fmtHours(data.leverage.agentActiveHours)}
+                  sub={`${fmtHours(data.leverage.humanWaitHours)} waiting on review`}
+                  hint="CLI compute time delivered" />
+                <KpiTile big index={3} label="TICKETS SHIPPED" value={`${data.quality.ticketsShipped}`}
+                  sub={`of ${data.quality.ticketsAttempted} attempted`}
+                  hint={`${fmtUsd(data.cost.costPerShippedTicket)} per shipped ticket`} />
               </section>
 
-              {/* Reliability + Speed */}
-              <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(1) }}>
-                <div style={panelStyle(3.8)}>
-                  <h3 style={sectionHeading}>RELIABILITY</h3>
-                  <StatusBar r={data.reliability} />
-                </div>
-                <div style={panelStyle(4.2)}>
-                  <h3 style={sectionHeading}>SPEED (COMPLETED RUNS)</h3>
-                  <div style={{ display: "flex", gap: "24px" }}>
+              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", ...sectionDelay(1) }}>
+                <KpiTile index={4} label="BLOCKED BEFORE SPAWN" value={`${data.leverage.blockedBeforeSpawn}`} tone={COLORS.warning}
+                  sub={`≈ ${fmtUsd(data.leverage.wasteAvertedUsd)} of tokens not burned`}
+                  hint="preflight caught it; a bare CLI would have run and failed" />
+                <KpiTile index={5} label="SESSIONS RECOVERED" value={`${data.leverage.sessionsRecovered}`} tone={COLORS.info}
+                  sub="parked plans resumed after a restart"
+                  hint="a closed terminal loses these" />
+                <KpiTile index={6} label="SUPERVISION LOAD" value={fmtPct(data.leverage.humanWaitHours / Math.max(0.0001, data.leverage.agentActiveHours + data.leverage.humanWaitHours))}
+                  sub="of run wall-clock spent waiting on a human"
+                  hint="lower = the agent runs unattended longer" />
+              </section>
+
+              {/* A different baseline from everything above it — priced against the
+                  team's own estimates, i.e. not using an agent at all. Shown only
+                  when a real hourly rate is configured; a guessed one would be
+                  worse than no number. */}
+              {data.roi.configured && (
+                <section style={{ ...tintedCard("accent"), ...sectionDelay(2) }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px", flexWrap: "wrap" }}>
+                    <h3 style={{ ...sectionHeading, margin: 0 }}>ESTIMATED VALUE</h3>
+                    <span style={{ fontSize: "11px", color: COLORS.textMuted, fontStyle: "italic" }}>
+                      vs. not using an agent at all — priced from your own ticket estimates at {fmtUsd(data.roi.hourlyRateUsd)}/h
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "16px" }}>
                     {[
-                      { l: "AVG", v: data.speed.avgMs },
-                      { l: "P50", v: data.speed.p50Ms },
-                      { l: "P95", v: data.speed.p95Ms },
-                    ].map((s) => (
-                      <div key={s.l}>
-                        <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{s.l}</div>
-                        <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "20px", fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
+                      { l: "ESTIMATED HOURS", v: fmtHours(data.roi.estimatedHours), c: COLORS.text },
+                      { l: "VALUE DELIVERED", v: fmtUsd(data.roi.estimatedValueUsd), c: COLORS.success },
+                      { l: "TOKEN SPEND", v: fmtUsd(data.roi.tokenSpendUsd), c: COLORS.accent },
+                      { l: "NET", v: fmtUsd(data.roi.netUsd), c: data.roi.netUsd >= 0 ? COLORS.success : COLORS.danger },
+                      { l: "RETURN", v: data.roi.multiple ? fmtX(data.roi.multiple) : "—", c: COLORS.text },
+                    ].map((t) => (
+                      <div key={t.l}>
+                        <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
+                        <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "20px", fontWeight: 700, color: t.c }}>{t.v}</div>
                       </div>
                     ))}
                   </div>
-                  <div style={{ fontSize: "11.5px", color: COLORS.textDim, marginTop: "14px" }}>{data.speed.count} completed run{data.speed.count === 1 ? "" : "s"} measured</div>
+                  {/* Coverage is the honesty check: a big number from two sized
+                      tickets out of forty is not a result. */}
+                  <div style={{ fontSize: "11.5px", color: COLORS.textDim, marginTop: "14px" }}>
+                    Based on {data.roi.sizedTickets} of {data.quality.ticketsShipped} shipped tickets that carried an estimate ({fmtPct(data.roi.coverage)} coverage).
+                    {data.roi.coverage < 0.5 && " Size more tickets before quoting this figure."}
+                  </div>
+                </section>
+              )}
+
+              {/* ---------- TIER 2 · QUALITY ---------- */}
+              <TierHeading n="02" title="QUALITY" blurb="Measured per ticket, not per run — rework is exactly what a per-run view hides." />
+
+              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", ...sectionDelay(2) }}>
+                <KpiTile index={7} label="FIRST-PASS RATE" value={fmtPct(data.quality.firstPassRate)} tone={COLORS.success}
+                  sub={`${data.quality.ticketsAttempted} tickets attempted`}
+                  hint="shipped on the first run, no retry" />
+                <KpiTile index={8} label="REWORK FACTOR" value={data.quality.ticketsAttempted ? `${data.quality.reworkFactor.toFixed(2)}×` : "—"}
+                  sub={`${data.quality.implementRuns} implement runs`}
+                  hint="1.00× would mean no ticket was ever re-run" />
+                <KpiTile index={9} label="PLAN APPROVAL" value={data.quality.planReviewedCount ? fmtPct(data.quality.planApprovalRate) : "—"} tone={COLORS.indigo}
+                  sub={`${data.quality.planReviewedCount} plans · ${data.quality.avgPlanRevisions.toFixed(2)} revisions each`}
+                  hint="did the agent read the ticket right?" />
+                <KpiTile index={10} label="REVIEW-FIX RATIO" value={data.quality.implementRuns ? fmtPct(data.quality.reviewFixRatio) : "—"} tone={COLORS.warning}
+                  sub={`${data.quality.fixReviewRuns} fix-review runs`}
+                  hint="lower = less reviewer pushback per feature" />
+                <KpiTile index={11} label="CHANGE SIZE" value={data.quality.avgFilesPerRun ? `${data.quality.avgFilesPerRun.toFixed(1)} files` : "—"}
+                  sub={data.quality.avgLinesPerRun ? `${Math.round(data.quality.avgLinesPerRun)} lines changed per run` : "no diffs recorded"}
+                  hint="real work, not a one-line edit" />
+              </section>
+
+              <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(3) }}>
+                <div style={panelStyle(3.8)}>
+                  <h3 style={sectionHeading}>DELIVERY FUNNEL</h3>
+                  <Funnel f={data.funnel} live={funnel} />
+                </div>
+                <div style={panelStyle(4.2)}>
+                  <h3 style={sectionHeading}>CONSISTENCY BY SKILL</h3>
+                  <ConsistencyTable rows={data.consistency} />
                 </div>
               </section>
 
-              {/* Cost trend — the hero chart, same scanline + top-accent-line + spinning ring
-                  treatment as the live-log panel in ExecutionTab. */}
-              <section style={heroPanelStyle(2)}>
-                <div style={scanlineOverlay} />
-                <div style={topAccentLine} />
-                <div style={{ position: "relative", zIndex: 1 }}>
-                  <h3 style={sectionHeading}>COST OVER TIME (USD / DAY)</h3>
-                  <CostTrend trend={data.cost.trend} />
-                </div>
-              </section>
+              {/* ---------- TIER 3 · OPERATIONS ---------- */}
+              <TierHeading n="03" title="OPERATIONS" blurb="Day-to-day running of the engine: spend, reliability, and where the runs went." />
 
-              {/* Token breakdown */}
-              <section style={panelStyle(4.6, 3)}>
-                <h3 style={sectionHeading}>TOKEN USAGE</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "16px" }}>
-                  {[
-                    { l: "INPUT", v: data.cost.totalInputTokens },
-                    { l: "OUTPUT", v: data.cost.totalOutputTokens },
-                    { l: "CACHE READ", v: data.efficiency.cacheReadTokens },
-                    { l: "TOTAL (IN+OUT)", v: data.cost.totalTokens },
-                  ].map((t) => (
-                    <div key={t.l}>
-                      <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
-                      <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "18px", fontWeight: 700, color: COLORS.text }}>{fmtTokens(t.v)}</div>
+              <div style={opsTier}>
+                {/* Cost trend — the hero chart, same scanline + top-accent-line + spinning ring
+                    treatment as the live-log panel in ExecutionTab. */}
+                <section style={heroPanelStyle(4)}>
+                  <div style={scanlineOverlay} />
+                  <div style={topAccentLine} />
+                  <div style={{ position: "relative", zIndex: 1 }}>
+                    <h3 style={sectionHeading}>COST OVER TIME vs. RUNS COMPLETED</h3>
+                    <CostTrend trend={data.cost.trend} />
+                  </div>
+                </section>
+
+                <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                  <div style={panelStyle(3.6)}>
+                    <h3 style={sectionHeading}>RELIABILITY</h3>
+                    <StatusBar r={data.reliability} />
+                  </div>
+                  <div style={panelStyle(4.4)}>
+                    <h3 style={sectionHeading}>SPEED (COMPLETED RUNS)</h3>
+                    <div style={{ display: "flex", gap: "24px" }}>
+                      {[
+                        { l: "AVG", v: data.speed.avgMs },
+                        { l: "P50", v: data.speed.p50Ms },
+                        { l: "P95", v: data.speed.p95Ms },
+                      ].map((s) => (
+                        <div key={s.l}>
+                          <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{s.l}</div>
+                          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "20px", fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </section>
+                    <div style={{ fontSize: "11.5px", color: COLORS.textDim, marginTop: "14px" }}>{data.speed.count} completed run{data.speed.count === 1 ? "" : "s"} measured</div>
+                  </div>
+                </section>
 
-              {/* Volume breakdowns */}
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", ...sectionDelay(4) }}>
-                <div style={panelStyle(3.6)}>
-                  <h3 style={sectionHeading}>RUNS BY PROVIDER</h3>
-                  <BarList rows={data.volume.byProvider} color={COLORS.indigo} />
-                </div>
-                <div style={panelStyle(4.4)}>
-                  <h3 style={sectionHeading}>RUNS BY PROJECT</h3>
-                  <BarList rows={data.volume.byProject} color={COLORS.info} />
-                </div>
-                <div style={panelStyle(5.0)}>
-                  <h3 style={sectionHeading}>RUNS BY SKILL</h3>
-                  <BarList rows={data.volume.bySkill} color={COLORS.accent} />
-                </div>
-              </section>
+                {/* Spend & tokens condensed to one strip — needed to run the thing,
+                    but it is not the argument for using it. */}
+                <section style={panelStyle(4.6)}>
+                  <h3 style={sectionHeading}>SPEND & TOKENS</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "16px" }}>
+                    {[
+                      { l: "TOTAL SPEND", v: fmtUsd(data.cost.totalUsd) },
+                      { l: "PER RUN", v: fmtUsd(data.cost.avgUsdPerRun) },
+                      { l: "PER TICKET", v: fmtUsd(data.cost.costPerShippedTicket) },
+                      { l: "IN / OUT", v: `${fmtTokens(data.cost.totalInputTokens)} / ${fmtTokens(data.cost.totalOutputTokens)}` },
+                      { l: "CACHE HIT", v: fmtPct(data.efficiency.cacheHitRatio) },
+                      { l: "AVG TURNS", v: data.ops.avgTurns.toFixed(1) },
+                    ].map((t) => (
+                      <div key={t.l}>
+                        <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
+                        <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "16px", fontWeight: 700, color: COLORS.text }}>{t.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
+                  <div style={panelStyle(3.6)}>
+                    <h3 style={sectionHeading}>PROVIDER COVERAGE</h3>
+                    <BarList rows={data.volume.byProvider} color={COLORS.indigo} />
+                  </div>
+                  <div style={panelStyle(4.4)}>
+                    <h3 style={sectionHeading}>RUNS BY PROJECT</h3>
+                    <BarList rows={data.volume.byProject} color={COLORS.info} />
+                  </div>
+                  <div style={panelStyle(5.0)}>
+                    <h3 style={sectionHeading}>RUNS BY SKILL</h3>
+                    <BarList rows={data.volume.bySkill} color={COLORS.accent} />
+                  </div>
+                </section>
+              </div>
             </>
           )}
         </div>

@@ -9,7 +9,7 @@ import type { ExecPhase, ExecStatus, PlanStatus } from "../types";
 import { isTwoPhaseSkill, PLAN_GATE_STEP, STEPS } from "../ui";
 import { commonArgs, runTurn } from "./claudeCli";
 import { cleanPath, fmtDuration } from "./format";
-import { collectFileChanges } from "./git";
+import { collectFileChanges, summarizeChanges } from "./git";
 import { store } from "./store";
 import type { Entry, TurnState } from "./types";
 
@@ -61,6 +61,12 @@ async function persist(entry: Entry) {
         prUrl: entry.prUrl,
         branch: entry.branch,
         filesChanged: JSON.stringify(entry.filesChanged),
+        ...summarizeChanges(entry.filesChanged),
+        endReason: entry.endReason,
+        parkedAt: entry.parkedAt ? new Date(entry.parkedAt) : null,
+        humanWaitMs: entry.humanWaitMs,
+        planRevisions: entry.planRevisions,
+        resumedAfterRestart: entry.resumedAfterRestart,
         sessionId: entry.sessionId,
         worktreePath: entry.cwd,
         rootRepo: entry.rootRepo,
@@ -82,10 +88,17 @@ async function persist(entry: Entry) {
   }
 }
 
-async function finish(entry: Entry, status: ExecStatus, error: string) {
+async function finish(entry: Entry, status: ExecStatus, error: string, endReason = "") {
   entry.status = status;
   entry.error = error;
+  entry.endReason = endReason;
   entry.completedAt = Date.now();
+  // A run killed while parked never resumes, so fold its outstanding wait in here
+  // rather than losing it.
+  if (entry.parkedAt) {
+    entry.humanWaitMs += Math.max(0, Date.now() - entry.parkedAt);
+    entry.parkedAt = null;
+  }
   if (status === "completed") entry.currentStep = STEPS.length;
   if (status === "completed" && entry.baseSha) entry.filesChanged = collectFileChanges(entry.cwd, entry.baseSha);
   entry.logLines.push({
@@ -157,6 +170,7 @@ async function park(entry: Entry, planMarkdown: string) {
   entry.phase = "plan";
   entry.planStatus = "pending";
   entry.planMarkdown = planMarkdown;
+  entry.parkedAt = Date.now();
   entry.currentStep = PLAN_GATE_STEP;
   entry.logLines.push({ text: "⏸ Plan ready — waiting for your review", kind: "step" });
   await persist(entry);
@@ -205,6 +219,8 @@ export async function startExecution(params: {
   provider?: string;
   model?: string;
   effort?: string;
+  /** The team's estimate for this ticket in hours (0 = never sized). */
+  estimateHours?: number;
   // true (default) → isolate the run in its own git worktree, so it can run
   // concurrently with other tickets. false (single-ticket mode) → run
   // directly in rootRepo; the caller guarantees no other run is in flight.
@@ -228,8 +244,9 @@ export async function startExecution(params: {
     id: "", ticketId, project, skill, model, effort, command: "",
     status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
     currentStep: 0, cwd: rootRepo, baseSha: "", filesChanged: [], startedAt: Date.now(), completedAt: null,
-    child: null, cancelled: false,
+    child: null, cancelled: false, endReason: "",
     sessionId, phase: twoPhase ? "plan" : "implement", planStatus: "none", planMarkdown: "",
+    parkedAt: null, humanWaitMs: 0, planRevisions: 0, resumedAfterRestart: false,
     rootRepo, provider, mcpConfigPath: "",
     costUsd: 0, inputTokens: 0, outputTokens: 0,
     cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
@@ -241,6 +258,7 @@ export async function startExecution(params: {
   const row = await prisma.execution.create({
     data: {
       adoTicketId: ticketId, projectName: project, skillName: skill, model, effort,
+      estimateHours: Number.isFinite(params.estimateHours) ? Math.max(0, params.estimateHours!) : 0,
       status: "running", command, sessionId, phase: entry.phase,
       planStatus: twoPhase ? "pending" : "none", provider,
     },
@@ -293,7 +311,7 @@ export async function startExecution(params: {
     accumulateUsage(entry, ts);
 
     if (entry.cancelled) {
-      await finish(entry, "failed", "Cancelled by user");
+      await finish(entry, "failed", "Cancelled by user", "cancelled");
       return;
     }
     if (ts.isError) {
@@ -335,9 +353,13 @@ async function rehydrate(id: string): Promise<Entry | null> {
     prUrl: r.prUrl, branch: r.branch, currentStep: r.currentStep, cwd: r.worktreePath,
     baseSha: "", filesChanged: [], startedAt: r.startedAt.getTime(),
     completedAt: r.completedAt ? r.completedAt.getTime() : null,
-    child: null, cancelled: false,
+    child: null, cancelled: false, endReason: r.endReason,
     sessionId: r.sessionId, phase: r.phase as ExecPhase, planStatus: r.planStatus as PlanStatus,
     planMarkdown: r.planMarkdown,
+    parkedAt: r.parkedAt ? r.parkedAt.getTime() : null,
+    humanWaitMs: r.humanWaitMs, planRevisions: r.planRevisions,
+    // This rebuild IS the recovery — the in-process entry was gone.
+    resumedAfterRestart: true,
     // Rows from before the rootRepo column existed isolated every run, so the
     // worktree's repo is two levels up from it; fall back to that derivation only then.
     rootRepo: r.rootRepo || path.dirname(path.dirname(r.worktreePath)),
@@ -385,7 +407,7 @@ export async function resolvePlan(
 
   if (action === "cancel") {
     entry.planStatus = "rejected";
-    await finish(entry, "failed", "Plan rejected — run cancelled by reviewer.");
+    await finish(entry, "failed", "Plan rejected — run cancelled by reviewer.", "plan-rejected");
     return { ok: true };
   }
 
@@ -394,6 +416,13 @@ export async function resolvePlan(
     ...(entry.effort ? ["--effort", entry.effort] : []),
   ];
   const approving = action === "approve";
+
+  // The run is leaving the gate either way — bank the time it spent waiting on
+  // this reviewer before it starts computing again.
+  if (entry.parkedAt) {
+    entry.humanWaitMs += Math.max(0, Date.now() - entry.parkedAt);
+    entry.parkedAt = null;
+  }
 
   if (approving) {
     entry.planStatus = "approved";
@@ -411,6 +440,7 @@ export async function resolvePlan(
     }
     entry.planStatus = "rejected";
     entry.phase = "plan";
+    entry.planRevisions += 1;
     entry.currentStep = 3; // back to "Draft plan"
     entry.logLines.push({ text: "↻ Changes requested — re-planning", kind: "step" });
   }
@@ -431,7 +461,7 @@ export async function resolvePlan(
     accumulateUsage(entry, ts);
 
     if (entry.cancelled) {
-      await finish(entry, "failed", "Cancelled by user");
+      await finish(entry, "failed", "Cancelled by user", "cancelled");
       return;
     }
     if (ts.isError) {

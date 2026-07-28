@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Execution" ADD COLUMN     "estimateHours" DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "Setting" ADD COLUMN     "hourlyRateUsd" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "hoursPerStoryPoint" DOUBLE PRECISION NOT NULL DEFAULT 6;

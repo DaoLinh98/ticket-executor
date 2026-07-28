@@ -15,7 +15,7 @@ const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
   animatedBackground: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
-  manageMcp: true,
+  manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
 };
 
 // Reusable pill toggle (ported from the old SettingsModal, deduplicated).
@@ -232,6 +232,20 @@ export default function SettingsPage() {
                   <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Runs beyond this limit wait in a queue until a slot frees up.</span>
                 </label>
               </div>
+            </div>
+
+            <div style={divider} />
+            <div style={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabel()}>BLENDED HOURLY RATE (USD)</span>
+                <input type="number" min={0} step={1} value={settings.hourlyRateUsd} onChange={(e) => setSettings((s) => ({ ...s, hourlyRateUsd: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
+                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5, maxWidth: "320px" }}>Prices the Dashboard&apos;s ROI tile against your team&apos;s own ticket estimates. Leave at 0 to hide that tile rather than publish a guessed number.</span>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabel()}>HOURS PER STORY POINT</span>
+                <input type="number" min={0} step={0.5} value={settings.hoursPerStoryPoint} onChange={(e) => setSettings((s) => ({ ...s, hoursPerStoryPoint: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
+                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5, maxWidth: "320px" }}>Used only when a ticket carries story points instead of an hour estimate.</span>
+              </label>
             </div>
 
             <div style={divider} />

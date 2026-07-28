@@ -55,6 +55,9 @@ export type SettingsView = {
   multiTicketMode: boolean;
   /** Let the app generate the provider's MCP config for each run (see lib/mcp.ts). */
   manageMcp: boolean;
+  /** Dashboard ROI inputs. 0 hides the ROI tile rather than showing a made-up number. */
+  hourlyRateUsd: number;
+  hoursPerStoryPoint: number;
 };
 
 // The detail-pane tabs.

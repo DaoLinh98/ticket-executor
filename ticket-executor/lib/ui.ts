@@ -160,6 +160,9 @@ export const COLORS = {
   info: "#5B9DFF",
   indigo: "#9BA6E8",
   text: "#ECEEF3",
+  /** One step below `text` — list labels and secondary button copy. Was an
+   *  inline literal in several places before it was named here. */
+  textSoft: "#C7CCD8",
   textDim: "#8A90A0",
   textMuted: "#6B7283",
   faint: "#5B6273",
