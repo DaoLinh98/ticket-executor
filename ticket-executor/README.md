@@ -168,13 +168,25 @@ then fails — so this is not optional.
   claude mcp add azure-devops -s user -e AZURE_DEVOPS_TOKEN=<PAT> -- npx -y @azure-devops/mcp@2 <your-org>
   ```
 
-Either way System Check verifies the result (§8). Two things worth knowing:
+Either way System Check verifies the result (§8). Three things worth knowing:
 
 - The generated config is written to a temp file for the length of one turn and
   deleted afterwards — it holds the PAT in clear text, so it is never written
   inside the repo (where a run's own `git add` could pick it up).
 - `CLAUDE_MCP_CONFIG` overrides all of this and comes with
   `--strict-mcp-config`, so that file must declare the provider's server itself.
+- **Recommended:** install the server once to make every turn start faster.
+
+  ```bash
+  npm i -g @azure-devops/mcp@2
+  ```
+
+  A run spawns a fresh CLI process per turn, and `npx -y` re-resolves the package
+  against the registry each time (measured on Windows: ~6.9s cold, ~3.4s warm,
+  versus ~1.0s starting the installed copy directly). The app picks the global
+  install up automatically when its major version matches, and falls back to
+  `npx` otherwise — so this is purely an optimisation, never a requirement.
+  System Check's "MCP server package resolves" row tells you which path is live.
 
 ## 7. Start the app
 

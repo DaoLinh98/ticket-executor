@@ -131,7 +131,10 @@ async function prepareMcp(entry: Entry) {
       cwd: entry.cwd,
     });
     entry.mcpConfigPath = writeRunMcpConfig(entry.id, decision);
-    entry.logLines.push({ text: `● MCP: ${decision.detail}`, kind: "step" });
+    entry.logLines.push({
+      text: `● MCP: ${decision.detail}${entry.mcpConfigPath ? " Only this server is loaded (--strict-mcp-config)." : ""}`,
+      kind: "step",
+    });
     if (decision.blocker) entry.logLines.push({ text: `⚠ ${decision.blocker}`, kind: "err" });
   } catch (e) {
     entry.mcpConfigPath = "";
@@ -184,6 +187,36 @@ function readPlan(cwd: string): string {
   }
 }
 
+// The run writes two things into the developer's repo that must never reach a
+// commit: the plan-gate contract (`.te/`) and the isolated worktrees
+// (`.te-worktrees/`). Ignoring them is done here rather than left to the skill:
+// an agent that forgets commits the plan, and a stale worktree left by a
+// crashed run would otherwise show up as untracked noise in every later diff.
+// `.git/info/exclude` (not `.gitignore`) because that file is the project's own
+// tracked file — the app has no business editing it. `--git-common-dir`
+// resolves to the main repo even when called from inside a worktree, and
+// info/exclude is shared by every worktree of the repo.
+const TE_EXCLUDES = ["/.te/", "/.te-worktrees/"];
+
+function excludeTeArtifacts(rootRepo: string) {
+  try {
+    const common = execSync(`git -C "${rootRepo}" rev-parse --path-format=absolute --git-common-dir`)
+      .toString()
+      .trim();
+    if (!common) return;
+    const file = path.join(common, "info", "exclude");
+    const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const lines = current.split(/\r?\n/).map((l) => l.trim());
+    const missing = TE_EXCLUDES.filter((p) => !lines.includes(p));
+    if (!missing.length) return;
+    mkdirSync(path.dirname(file), { recursive: true });
+    const prefix = current && !current.endsWith("\n") ? "\n" : "";
+    writeFileSync(file, `${current}${prefix}# Ticket Executor run artifacts\n${missing.join("\n")}\n`, "utf8");
+  } catch {
+    /* not a git repo, or read-only .git — the skill's own exclude rule still applies */
+  }
+}
+
 function writePlan(cwd: string, markdown: string) {
   mkdirSync(path.join(cwd, ".te"), { recursive: true });
   writeFileSync(path.join(cwd, PLAN_FILE), markdown, "utf8");
@@ -191,27 +224,38 @@ function writePlan(cwd: string, markdown: string) {
 
 // ---- prompts ----
 
+// The ticket is addressed by its provider URL when we know it: a URL names the
+// org/project/work item unambiguously, so the skill can open it directly instead
+// of searching the tracker for an id that several projects may share. Falls back
+// to the raw id when the caller passed no URL.
 function basePrompt(entry: Entry, prUrl: string, mode: string) {
-  const target = prUrl ? `PR: ${prUrl} - Ticket ID: ${entry.ticketId}` : `ID: ${entry.ticketId}`;
+  const ticket = `Ticket: ${entry.ticketUrl || entry.ticketId}`;
+  const target = prUrl ? `PR: ${prUrl} - ${ticket}` : ticket;
   return `/${entry.skill} Provider: ${entry.provider} - ${target} - Project name: ${entry.project}${mode ? ` - Mode: ${mode}` : ""}`;
 }
 
 // The plan file on disk may have been edited by the reviewer, so the resume
 // prompt has to say plainly that the file — not what the session already
 // "remembers" proposing — is what gets built.
+// Both resume prompts open with the same `Mode:` token the first turn used: the
+// skill's mode table treats an absent Mode as "plan then implement in one go",
+// so leaving it out would contradict the prose that follows.
 const IMPLEMENT_PROMPT =
-  "The plan has been reviewed and approved. Re-read .te/plan.md from disk now — the reviewer may have edited it, " +
+  "Mode: implement. The plan has been reviewed and approved. Re-read .te/plan.md from disk now — the reviewer may have edited it, " +
   "and where that file differs from the plan you proposed earlier, the file wins. Then run the implement phase " +
-  "end-to-end: create the branch, implement the approved plan, verify, commit, push, and open the PR. Do not ask for confirmation.";
+  "end-to-end: create the branch, implement the approved plan, verify, commit, push, and open the PR. Do not ask for confirmation. " +
+  "You already explored this codebase in the plan phase — do not re-read files you have already read this session.";
 
 const REPLAN_PROMPT =
-  "The plan was rejected. Read .te/feedback.md for the reviewer's reason, then rewrite .te/plan.md to address it. " +
-  "Stay in plan mode: no source edits, no branch, no commit.";
+  "Mode: replan. The plan was rejected. Read .te/feedback.md for the reviewer's reason, then rewrite .te/plan.md to address it. " +
+  "Stay in plan mode: no source edits, no branch, no commit. Re-read only the code the feedback actually questions.";
 
 // ---- lifecycle ----
 
 export async function startExecution(params: {
   ticketId: string;
+  /** Provider deep link to the ticket; the prompt prefers it over the raw id. */
+  ticketUrl?: string;
   skill: string;
   project: string;
   rootRepo: string;
@@ -227,6 +271,7 @@ export async function startExecution(params: {
   isolate?: boolean;
 }): Promise<string> {
   const ticketId = cleanPath(params.ticketId);
+  const ticketUrl = params.ticketUrl ? cleanPath(params.ticketUrl) : "";
   const skill = cleanPath(params.skill);
   const project = cleanPath(params.project);
   const rootRepo = cleanPath(params.rootRepo);
@@ -241,7 +286,7 @@ export async function startExecution(params: {
   const modelArgs = [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])];
 
   const entry: Entry = {
-    id: "", ticketId, project, skill, model, effort, command: "",
+    id: "", ticketId, ticketUrl, project, skill, model, effort, command: "",
     status: "running", logLines: [], resultText: "", error: "", prUrl: "", branch: "",
     currentStep: 0, cwd: rootRepo, baseSha: "", filesChanged: [], startedAt: Date.now(), completedAt: null,
     child: null, cancelled: false, endReason: "",
@@ -272,6 +317,8 @@ export async function startExecution(params: {
     await finish(entry, "failed", `Project folder not found: ${rootRepo}. Set the correct Root repo / Project on the Overview tab.`);
     return id;
   }
+
+  excludeTeArtifacts(rootRepo);
 
   if (isolate) {
     // Isolate the run in a fresh git worktree so concurrent executions against the same
@@ -304,7 +351,7 @@ export async function startExecution(params: {
   void (async () => {
     await prepareMcp(entry);
     const ts = await runTurn(entry, [
-      "-p", prompt, "--session-id", sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath),
+      "-p", prompt, "--session-id", sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath, entry.cwd),
     ]);
     releaseMcp(entry);
     if (ts.resultText) entry.resultText = ts.resultText;
@@ -347,7 +394,9 @@ async function rehydrate(id: string): Promise<Entry | null> {
     /* start with an empty log rather than failing the resume */
   }
   const entry: Entry = {
-    id: r.id, ticketId: r.adoTicketId, project: r.projectName, skill: r.skillName,
+    // ticketUrl is not persisted: only the first turn addresses the ticket, and a
+    // rehydrated run only ever resumes with the Mode: implement/replan prompts.
+    id: r.id, ticketId: r.adoTicketId, ticketUrl: "", project: r.projectName, skill: r.skillName,
     model: r.model, effort: r.effort, command: r.command,
     status: r.status as ExecStatus, logLines, resultText: r.resultText, error: r.errorMessage,
     prUrl: r.prUrl, branch: r.branch, currentStep: r.currentStep, cwd: r.worktreePath,
@@ -454,7 +503,7 @@ export async function resolvePlan(
   void (async () => {
     await prepareMcp(entry);
     const ts = await runTurn(entry, [
-      "-p", prompt, "--resume", entry.sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath),
+      "-p", prompt, "--resume", entry.sessionId, ...modelArgs, ...commonArgs(entry.mcpConfigPath, entry.cwd),
     ]);
     releaseMcp(entry);
     if (ts.resultText) entry.resultText = ts.resultText;
