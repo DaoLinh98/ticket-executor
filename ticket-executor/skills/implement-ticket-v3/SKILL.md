@@ -1,7 +1,7 @@
 ---
 name: implement-ticket-v3
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab in two phases — draft a reviewable plan first, then implement it end-to-end (branch, code, verify, commit, push, PR) after the plan is approved
-version: 1.0.0
+version: 1.2.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations.
@@ -26,15 +26,19 @@ Each phase runs non-interactively (no human is available mid-turn). Never end a 
 - If ticket info is incomplete or a requirement is ambiguous: do not stop and ask. Pick the most reasonable interpretation given the ticket, AC, discussion, and existing code patterns, proceed with it, and record the assumption (in `.te/plan.md` during `plan`, in the output table during `implement`).
 - Only stop short of the phase's deliverable on a hard external blocker (missing credentials, repo doesn't exist, tests fail for reasons unrelated to your change and you can't fix them) — explain the blocker plainly instead of asking a question.
 
+## Working rules (these bound cost — they override any habit to be thorough)
+
+- **The ticket is given, never inferred.** $ARGUMENTS always carries `Ticket: <url>` — the provider's deep link to the work item (an older caller may pass a bare id instead). Take the id from the end of that URL and open the ticket directly; if `Ticket:` is absent, stop immediately and say the ticket is missing — never search the tracker for a plausible ticket, and never pick a default project or id.
+- **Attachments stay out of the repo.** Work-item comments often link images/PDFs. Read the comment *text* first; that is almost always enough. Only when an Acceptance Criterion genuinely cannot be understood without one, download that single file into the OS temp directory (`%TEMP%` / `$TMPDIR`) and read it from there — never into the repo, never in bulk, never a whole comment's attachment list. Attachments are the most expensive thing this skill can read.
+- **Locate before you read.** Use grep/glob to find the relevant symbols, then open only the files you will change plus their direct call sites. Never read a file twice in one session, and never read `node_modules/`, `.next/`, `dist/`, build output, lockfiles, or `.te-worktrees/`.
+- **Keep command output small.** Prefer the narrowest check that proves the change (one test file, then a type-check) over a full build; when a command is unavoidably chatty, filter or tail its output instead of streaming all of it back.
+- **The two phases share one session.** In `implement`, do not re-explore what you already read while planning.
+
 ## Provider (read this before touching the tracker)
 
-$ARGUMENTS carries the provider explicitly as `Provider: <id>` (one of `azure-devops`, `github`, `gitlab`, `jira`). Parse it first — it decides which tool/CLI you use for every step below. If `Provider:` is missing (older caller), infer it from the ticket ID shape and fall back to `azure-devops`:
+$ARGUMENTS carries the provider explicitly as `Provider: <id>` (one of `azure-devops`, `github`, `gitlab`, `jira`). Parse it first — it decides which tool/CLI you use for every step below. Only if it is absent (older caller), infer it once from `git remote -v` and fall back to `azure-devops`; do not re-derive it later.
 
-- Plain numeric ID (e.g. `12345`) → `azure-devops`.
-- `owner/repo#123`, or a bare `#123` when a GitHub remote is evident (`git remote -v` shows `github.com`) → `github`.
-- `owner/repo!123`, or a bare `!123` when a GitLab remote is evident → `gitlab`.
-
-If the inferred/declared provider doesn't match reality once you start (e.g. `gh`/`glab` isn't authenticated, or ADO MCP has no such work item), don't ask — try the other provider whose remote matches `git remote -v`, note the mismatch as an assumption, and continue.
+If the declared provider turns out not to work (e.g. `gh`/`glab` isn't authenticated, or ADO MCP has no such work item), don't ask and don't retry it repeatedly — try the provider matching the git remote once, note the mismatch as an assumption, and continue.
 
 Per-provider mapping for every step in this skill:
 
@@ -50,20 +54,20 @@ If a provider-specific CLI/MCP tool isn't available in the environment, fall bac
 
 ## Context
 
-If $ARGUMENTS has no ticket ID, use the most reasonable default project/ID you can infer; otherwise proceed with what's given. For `azure-devops`, look up the ticket via Azure DevOps MCP in the 'Application Support' or 'RIS' project. For `github`/`gitlab`, use the project/repo name passed as `Project name:` (or the current repo if none given). Collect: title, description, Acceptance Criteria, discussion comments (Ken Nguyen is me), linked items.
+Look the ticket up in the project passed as `Project name:` — that value is authoritative, never substitute another project. Collect, in one pass: title, description, Acceptance Criteria, discussion comments, linked items. Fetch each of those once; do not re-fetch the work item later in the run.
 
-Also read root-level guidance (`CLAUDE.md`, `SKILL.md`, other instruction files) to understand structure, conventions, and existing patterns before implementing.
+Also read the repository's root instruction files (`CLAUDE.md`, `AGENTS.md`) if present — root only, and only once. Do not walk `docs/` or read project documentation that the ticket doesn't point you at.
 
 ---
 
 ## Phase: plan
 
 1. Parse `Provider:` from $ARGUMENTS (or infer it) and retrieve the ticket via that provider's tool — description, Acceptance Criteria, discussion.
-2. Read root-level `CLAUDE.md`/`SKILL.md` and explore the code areas the ticket touches. Read the real files; do not plan against assumptions about what the code looks like.
+2. Read root-level `CLAUDE.md`/`AGENTS.md`, then explore only the code areas the ticket touches: grep for the symbols involved, and read the files you expect to change plus their direct call sites. Read real files — do not plan against assumptions — but scale the reading to the ticket: a one-point change does not justify a codebase tour.
 3. Write the plan to **`.te/plan.md`** (create the `.te/` directory if needed) using the template below. This file is the deliverable — a human reads and may edit it before the implement phase runs.
 4. End the turn with a one-paragraph summary. Do not ask whether to proceed.
 
-`.te/plan.md` template — keep it markdown, concrete, and reviewable. Name real files and real functions; a plan a reviewer can't check against the code is useless:
+`.te/plan.md` template — keep it markdown, concrete, and reviewable. Name real files and real functions; a plan a reviewer can't check against the code is useless. Keep it under ~120 lines: it is a plan, not a design document, and it must not restate the ticket or paste code:
 
 ```markdown
 # Plan — #<ticket id> <ticket title>
@@ -110,12 +114,12 @@ The plan you proposed was rejected. Read **`.te/feedback.md`** — it holds the 
 2. Create a branch from `main`: `feature/[ID]-[short-description]` for a feature/User Story, `bug/[ID]-[short-description]` for a Bug.
 3. Implement the plan, preserving existing behavior unless the ticket explicitly requires otherwise.
 4. Add/update unit tests when the change affects business logic, validation, mapping, branching, or edge cases — follow existing test style.
-5. Run relevant tests/build; compare the result against the ticket + Acceptance Criteria. Fix failures you caused before moving on.
+5. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Compare the result against the ticket + Acceptance Criteria and fix failures you caused before moving on.
 6. Commit with a clear message, push the branch, and open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket.
 
 If executing the plan surfaces something the plan got wrong (a file that doesn't exist, an approach that can't work), do not stop and do not silently follow the broken plan: implement the smallest correct deviation, and record it in "Notes/Assumptions" as a deviation from the approved plan.
 
-Do not commit `.te/` — add it to `.git/info/exclude` (not `.gitignore`, which is a tracked project file) if it would otherwise be picked up.
+Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's `.git/info/exclude`, so if either shows up in `git status` something is wrong — leave it out of the commit rather than "fixing" it by editing `.gitignore`, which is a tracked project file.
 
 ## Rules
 

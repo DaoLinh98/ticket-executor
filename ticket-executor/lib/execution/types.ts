@@ -5,6 +5,9 @@ import type { ExecPhase, ExecStatus, FileChange, LogLine, PlanStatus } from "../
 export type Entry = {
   id: string;
   ticketId: string;
+  /** Deep link to the ticket in the provider, as the skills receive it. Empty
+   *  when the caller had no URL — the prompt then falls back to the raw id. */
+  ticketUrl: string;
   project: string;
   skill: string;
   model: string;

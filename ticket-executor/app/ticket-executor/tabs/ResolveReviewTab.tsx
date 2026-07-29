@@ -29,12 +29,25 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
       ) : (
         <>
           <section style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "10px" }}>
-            <div style={card()}>
-              <div style={cardLabel}>PULL REQUEST</div>
-              <a href={review.pr.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#9BA6E8", textDecoration: "none" }}>
-                PR #{review.pr.id} — {review.pr.branch}
+            {/* The whole card is the link, not just the text — a click landing on
+                the card's padding used to do nothing at all. Falls back to plain
+                text when the provider gave us no URL, so a click can never
+                navigate somewhere wrong. */}
+            {review.pr.url ? (
+              <a href={review.pr.url} target="_blank" rel="noopener noreferrer" style={{ ...card(), display: "block", textDecoration: "none" }}>
+                <div style={cardLabel}>PULL REQUEST</div>
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#9BA6E8" }}>
+                  PR #{review.pr.id} — {review.pr.branch}
+                </span>
               </a>
-            </div>
+            ) : (
+              <div style={card()}>
+                <div style={cardLabel}>PULL REQUEST</div>
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", color: "#9BA6E8" }}>
+                  PR #{review.pr.id} — {review.pr.branch}
+                </span>
+              </div>
+            )}
             <div style={card()}>
               <div style={cardLabel}>STATUS</div>
               <span style={statusPill(review.pr.status)}>{review.pr.status}</span>

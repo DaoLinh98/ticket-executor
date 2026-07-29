@@ -449,8 +449,27 @@ type RawPullRequest = {
   sourceRefName?: string;
   targetRefName?: string;
   creationDate?: string;
-  repository?: { name?: string };
+  repository?: { name?: string; webUrl?: string };
 };
+
+/** The PR's page in the web UI.
+ *
+ *  Built from `repository.webUrl` when ADO returns it, because that is the one
+ *  value guaranteed to name the repo the PR actually lives in. The hand-built
+ *  form is only a fallback, and it is *never* built from a partial ref: an empty
+ *  repo segment yields `.../_git//pullrequest/<n>`, which ADO answers with the
+ *  project's pull-request *list* — the wrong-link bug this replaced. When
+ *  nothing resolves, prefer the URL the run itself recorded over a guess. */
+function prWebUrl(org: string, project: string, raw: RawPullRequest, fallbackPrUrl?: string | null): string {
+  const id = raw.pullRequestId;
+  const repoWeb = raw.repository?.webUrl;
+  if (repoWeb) return `${repoWeb.replace(/\/+$/, "")}/pullrequest/${id}`;
+  const repoName = raw.repository?.name;
+  if (repoName && project) {
+    return `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repoName)}/pullrequest/${id}`;
+  }
+  return fallbackPrUrl ?? "";
+}
 
 function prStatusLabel(raw: RawPullRequest): string {
   const status = (raw.status ?? "").toLowerCase();
@@ -489,9 +508,7 @@ export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: str
   const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat);
   const pr: PullRequestOverview = {
     id: String(raw.pullRequestId),
-    url: `https://dev.azure.com/${org}/${encodeURIComponent(ref.project ?? project)}/_git/${encodeURIComponent(
-      raw.repository?.name ?? ""
-    )}/pullrequest/${raw.pullRequestId}`,
+    url: prWebUrl(org, ref.project ?? project, raw, fallbackPrUrl),
     title: raw.title ?? "",
     status: prStatusLabel(raw),
     branch: (raw.sourceRefName ?? "").replace(/^refs\/heads\//, ""),

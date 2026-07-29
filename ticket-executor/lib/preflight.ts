@@ -25,6 +25,7 @@ import {
   hasBinary,
   healthOf,
   mcpAddHint,
+  managedGlobalInstall,
   mcpListHealth,
   mcpProbeKey,
   mcpTemplate,
@@ -454,16 +455,26 @@ async function agentAccessChecks(deep: boolean): Promise<{ checks: Check[]; prob
 
   if (deep) {
     if (decision.mode === "managed") {
-      // The generated server is invisible to `claude mcp list`, so what is worth
-      // proving is that npx will be able to fetch its package.
       const pkg = MANAGED_PACKAGES[provider];
-      if (pkg) {
+      const installed = managedGlobalInstall(provider);
+      if (installed) {
+        // Nothing to resolve: the run starts the installed entry point directly,
+        // which is also what keeps ~7s of npx resolution out of every turn.
+        checks.push({
+          id: "mcp-package", group: "agent-access", label: "MCP server package resolves", level: "blocker",
+          status: "pass",
+          message: `Installed globally (v${installed.version}) — started directly, no npx resolution per turn.`,
+        });
+      } else if (pkg) {
+        // The generated server is invisible to `claude mcp list`, so what is worth
+        // proving is that npx will be able to fetch its package.
         const r = await packageResolvable(pkg);
         checks.push(
           r.ok
             ? {
                 id: "mcp-package", group: "agent-access", label: "MCP server package resolves", level: "blocker",
-                status: "pass", message: r.message,
+                status: "pass",
+                message: `${r.message} Started via npx, which re-resolves it every turn (~7s); \`npm i -g ${pkg}\` removes that.`,
               }
             : {
                 id: "mcp-package", group: "agent-access", label: "MCP server package resolves", level: "blocker",

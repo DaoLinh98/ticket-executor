@@ -951,6 +951,8 @@ export default function TicketExecutor() {
             model,
             effort,
             title: t.title,
+            // The skill addresses the ticket by its provider URL, not the bare id.
+            ticketUrl: t.url,
             provider: settings.provider,
             // Snapshot the team's own sizing alongside the run, for the dashboard's
             // estimate-vs-actual comparison. Absent on unsized tickets.

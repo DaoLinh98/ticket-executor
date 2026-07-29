@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import path from "path";
 import { detectArtifacts, stripAnsi } from "./format";
 import { bump, stepForTool } from "./steps";
 import type { Entry, TurnState } from "./types";
@@ -8,13 +11,65 @@ export const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MCP_CONFIG = process.env.CLAUDE_MCP_CONFIG || ""; // path to MCP json; empty = inherit
 const MAX_BUDGET = process.env.CLAUDE_MAX_BUDGET_USD || ""; // e.g. "5"
 const EXTRA = (process.env.CLAUDE_EXTRA_ARGS ?? "").split(" ").filter(Boolean);
+// Escape hatch: keep the machine's plugins loaded for runs (see disablePluginArgs).
+const KEEP_PLUGINS = /^(1|true)$/i.test(process.env.CLAUDE_KEEP_PLUGINS ?? "");
 
-/** `mcpConfigPath` is the app-generated provider MCP config for this turn (see
- *  lib/mcp.ts). It is *added* to whatever the CLI resolves on its own — no
- *  --strict-mcp-config — so the machine's other servers keep working. An
- *  explicit CLAUDE_MCP_CONFIG still wins: it is a deliberate override, and it
- *  keeps its strict semantics. */
-export function commonArgs(mcpConfigPath?: string): string[] {
+// A run's system prompt is paid for on every turn, and on a developer machine
+// most of it is context the four skills never use. Measured on this machine with
+// a one-word prompt (cache_creation_input_tokens):
+//   inherit everything ........ 26,832
+//   + --strict-mcp-config ..... 11,308   (-15,524: every other MCP server's tools)
+//   + plugins disabled .........  5,964   (-5,344: plugin skills/commands/hooks)
+// Both cuts are applied below. Skills installed in ~/.claude/skills — which is
+// where this app installs its four — are *not* plugin-provided and still load.
+
+/** Every plugin key the CLI would enable for a run in `cwd`, across the settings
+ *  files it merges. Keys look like `<plugin>@<marketplace>`; a value of `false`
+ *  already means disabled, so those are skipped. */
+function enabledPluginKeys(cwd: string): string[] {
+  const files = [
+    path.join(homedir(), ".claude", "settings.json"),
+    path.join(homedir(), ".claude", "settings.local.json"),
+    path.join(cwd, ".claude", "settings.json"),
+    path.join(cwd, ".claude", "settings.local.json"),
+  ];
+  const keys = new Set<string>();
+  for (const f of files) {
+    try {
+      if (!existsSync(f)) continue;
+      const json = JSON.parse(readFileSync(f, "utf8")) as { enabledPlugins?: Record<string, unknown> };
+      for (const [k, v] of Object.entries(json.enabledPlugins ?? {})) {
+        if (v !== false) keys.add(k);
+      }
+    } catch {
+      /* unreadable or malformed settings — nothing to turn off from it */
+    }
+  }
+  return [...keys];
+}
+
+/** `--settings` with every plugin explicitly switched off. It is an *overlay*:
+ *  only `enabledPlugins` is overridden, so the user's other settings still
+ *  apply. Runs are non-interactive and drive one known skill, so a plugin's
+ *  extra skills, slash commands, MCP servers and hooks are pure overhead here —
+ *  but a developer who deliberately relies on one can set CLAUDE_KEEP_PLUGINS=1. */
+function disablePluginArgs(cwd: string): string[] {
+  if (KEEP_PLUGINS) return [];
+  const keys = enabledPluginKeys(cwd);
+  if (!keys.length) return [];
+  const enabledPlugins = Object.fromEntries(keys.map((k) => [k, false]));
+  return ["--settings", JSON.stringify({ enabledPlugins })];
+}
+
+/** `mcpConfigPath` is the MCP config written for this turn (see lib/mcp.ts) —
+ *  the app-generated provider server, or the user's own server pinned into a
+ *  single-server file. Either way it is passed with --strict-mcp-config so the
+ *  run sees *only* that server: the four skills need nothing but the provider
+ *  server plus git/gh/glab on the PATH. An explicit CLAUDE_MCP_CONFIG still
+ *  wins — a deliberate override, also strict. With no config path at all
+ *  (nothing pinnable, e.g. a remote server the CLI authenticates itself) the run
+ *  falls back to inheriting the machine's servers. */
+export function commonArgs(mcpConfigPath: string | undefined, cwd: string): string[] {
   const a = [
     "--output-format",
     "stream-json",
@@ -23,9 +78,9 @@ export function commonArgs(mcpConfigPath?: string): string[] {
     "--dangerously-skip-permissions",
   ];
   if (MCP_CONFIG) a.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
-  else if (mcpConfigPath) a.push("--mcp-config", mcpConfigPath);
+  else if (mcpConfigPath) a.push("--mcp-config", mcpConfigPath, "--strict-mcp-config");
   if (MAX_BUDGET) a.push("--max-budget-usd", MAX_BUDGET);
-  return [...a, ...EXTRA];
+  return [...a, ...disablePluginArgs(cwd), ...EXTRA];
 }
 
 // Parse one NDJSON line from `--output-format stream-json`, updating the entry live.

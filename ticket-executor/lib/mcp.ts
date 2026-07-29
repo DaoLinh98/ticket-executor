@@ -53,20 +53,27 @@ export type McpTemplate = {
 // Pinned to major 2: the `<org>` positional argument and the AZURE_DEVOPS_TOKEN
 // env var are that major's contract, and a silent major bump would break every
 // generated config at once.
-const ADO_MCP_PACKAGE = "@azure-devops/mcp@2";
+const ADO_MCP_NAME = "@azure-devops/mcp";
+const ADO_MCP_MAJOR = 2;
+const ADO_MCP_PACKAGE = `${ADO_MCP_NAME}@${ADO_MCP_MAJOR}`;
 
 const TEMPLATES: Record<string, McpTemplate> = {
   "azure-devops": {
     server: "azure-devops",
     hints: ["azure-devops", "azure_devops", "azuredevops", "ado"],
+    // Two ways to start the same server. `npx -y` needs no setup, which is why
+    // it is the fallback — but it re-resolves the package against the registry
+    // on *every* turn (measured: ~6.9s, even fully cached), and a run spawns a
+    // fresh CLI process per turn. A global install skips all of it, so it wins
+    // whenever one is present with a matching major.
     build: (org, pat) => {
       const slug = parseAdoUrl(org).org;
       if (!slug || !pat) return null;
-      return {
-        command: "npx",
-        args: ["-y", ADO_MCP_PACKAGE, slug],
-        env: { AZURE_DEVOPS_TOKEN: pat },
-      };
+      const env = { AZURE_DEVOPS_TOKEN: pat };
+      const installed = globalPackageEntry(ADO_MCP_NAME, ADO_MCP_MAJOR);
+      return installed
+        ? { command: process.execPath, args: [installed.entry, slug], env }
+        : { command: "npx", args: ["-y", ADO_MCP_PACKAGE, slug], env };
     },
   },
   github: {
@@ -94,6 +101,63 @@ export function mcpTemplate(provider: string): McpTemplate | null {
 
 /** The package the managed Azure DevOps server runs, for preflight to resolve. */
 export const MANAGED_PACKAGES: Record<string, string> = { "azure-devops": ADO_MCP_PACKAGE };
+
+// ---------------------------------------------------------------------------
+// globally installed server (the fast path)
+// ---------------------------------------------------------------------------
+
+/** Where `npm i -g` puts packages. `npm root -g` would be authoritative but
+ *  costs a process spawn, and this is consulted on every turn. */
+function globalNodeModulesDirs(): string[] {
+  const dirs: string[] = [];
+  const prefix = process.env.npm_config_prefix || process.env.NPM_CONFIG_PREFIX || "";
+  if (process.platform === "win32") {
+    if (prefix) dirs.push(path.join(prefix, "node_modules"));
+    if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm", "node_modules"));
+    dirs.push(path.join(path.dirname(process.execPath), "node_modules"));
+  } else {
+    if (prefix) dirs.push(path.join(prefix, "lib", "node_modules"));
+    dirs.push("/usr/local/lib/node_modules", "/usr/lib/node_modules");
+    dirs.push(path.join(path.dirname(path.dirname(process.execPath)), "lib", "node_modules"));
+  }
+  return dirs;
+}
+
+/** A globally installed `name` whose major matches, or null.
+ *
+ *  Resolves the package's *JS entry point* rather than the shim npm generates,
+ *  so the server is started as `node <entry>`: a `.cmd`/`.ps1` shim is a shell
+ *  script on Windows and would drag a shell into the spawn. The major check is
+ *  not optional — a globally installed v3 would take different arguments and
+ *  fail every run, so a mismatch falls back to the pinned `npx` form. */
+export function globalPackageEntry(name: string, major: number): { entry: string; version: string } | null {
+  for (const dir of globalNodeModulesDirs()) {
+    const pkgDir = path.join(dir, ...name.split("/"));
+    const manifest = path.join(pkgDir, "package.json");
+    try {
+      if (!existsSync(manifest)) continue;
+      const pkg = JSON.parse(readFileSync(manifest, "utf8")) as {
+        version?: string;
+        bin?: string | Record<string, string>;
+        main?: string;
+      };
+      const version = pkg.version ?? "";
+      if (parseInt(version.split(".")[0], 10) !== major) continue;
+      const rel = typeof pkg.bin === "string" ? pkg.bin : Object.values(pkg.bin ?? {})[0] || pkg.main;
+      if (!rel) continue;
+      const entry = path.join(pkgDir, rel);
+      if (existsSync(entry)) return { entry, version };
+    } catch {
+      /* unreadable/malformed install — treat as absent and let npx handle it */
+    }
+  }
+  return null;
+}
+
+/** The managed server's global install for this provider, when it has one. */
+export function managedGlobalInstall(provider: string): { entry: string; version: string } | null {
+  return provider === "azure-devops" ? globalPackageEntry(ADO_MCP_NAME, ADO_MCP_MAJOR) : null;
+}
 
 // ---------------------------------------------------------------------------
 // process helper
@@ -191,7 +255,12 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
-function collect(into: ConfiguredServer[], raw: unknown, source: string) {
+/** A scanned server plus its verbatim declaration. Server-only: `spec` still
+ *  holds `env`, so this shape must never be returned to the browser — that is
+ *  what `ConfiguredServer` is for. */
+type RawServer = ConfiguredServer & { spec: Record<string, unknown> };
+
+function collect(into: RawServer[], raw: unknown, source: string) {
   if (!raw || typeof raw !== "object") return;
   for (const [name, v] of Object.entries(raw as Record<string, unknown>)) {
     const s = (v ?? {}) as { command?: unknown; args?: unknown; url?: unknown; type?: unknown };
@@ -201,7 +270,7 @@ function collect(into: ConfiguredServer[], raw: unknown, source: string) {
         : [typeof s.command === "string" ? s.command : "", ...(Array.isArray(s.args) ? s.args.map(String) : [])]
             .filter(Boolean)
             .join(" ");
-    into.push({ name, source, commandLine });
+    into.push({ name, source, commandLine, spec: (v ?? {}) as Record<string, unknown> });
   }
 }
 
@@ -215,7 +284,13 @@ const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCas
  *  (they are configured, just not trusted yet) — mcpListHealth() is what tells
  *  the two apart. */
 export function scanConfiguredServers(cwd?: string): ConfiguredServer[] {
-  const found: ConfiguredServer[] = [];
+  // Drop `spec` on the way out: this list is rendered by System Check, and the
+  // ADO server keeps its PAT in `env`.
+  return scanRawServers(cwd).map(({ name, source, commandLine }) => ({ name, source, commandLine }));
+}
+
+function scanRawServers(cwd?: string): RawServer[] {
+  const found: RawServer[] = [];
   const home = homedir();
 
   const userSettings = path.join(home, ".claude", "settings.json");
@@ -246,10 +321,10 @@ export function scanConfiguredServers(cwd?: string): ConfiguredServer[] {
 
 /** Pick this provider's server out of a scanned list. Prefers an exact name
  *  match over a fuzzy command-line one. */
-export function matchProviderServer(provider: string, servers: ConfiguredServer[]): ConfiguredServer | null {
+export function matchProviderServer<T extends ConfiguredServer>(provider: string, servers: T[]): T | null {
   const t = mcpTemplate(provider);
   if (!t) return null;
-  const fuzzy = (s: ConfiguredServer) => {
+  const fuzzy = (s: T) => {
     const hay = `${s.name} ${s.commandLine}`.toLowerCase();
     return t.hints.some((h) => hay.includes(h));
   };
@@ -257,14 +332,14 @@ export function matchProviderServer(provider: string, servers: ConfiguredServer[
 }
 
 /** The user's own server for this provider, if any. */
-export function findProviderServer(provider: string, cwd?: string): ConfiguredServer | null {
-  return matchProviderServer(provider, scanConfiguredServers(cwd));
+export function findProviderServer(provider: string, cwd?: string): RawServer | null {
+  return matchProviderServer(provider, scanRawServers(cwd));
 }
 
 /** Only the servers declared by CLAUDE_MCP_CONFIG — the sole ones a run sees
  *  when that override is set (it comes with --strict-mcp-config). */
-function envOverrideServers(): ConfiguredServer[] {
-  const found: ConfiguredServer[] = [];
+function envOverrideServers(): RawServer[] {
+  const found: RawServer[] = [];
   collect(found, readJson(process.env.CLAUDE_MCP_CONFIG ?? "")?.mcpServers, "CLAUDE_MCP_CONFIG");
   return found;
 }
@@ -340,8 +415,14 @@ export type McpDecision = {
   blocker?: string;
   fix?: string;
   server?: string;
-  /** Only ever set for mode "managed" — the spec to write for the run. */
-  spec?: McpServerSpec;
+  /** The single server to write into this run's config, so the run can be given
+   *  --strict-mcp-config and load nothing else. Set for mode "managed" (built
+   *  from the stored credential) and for mode "user" when their own server is a
+   *  stdio one we can reproduce verbatim. Left unset for a remote/OAuth server,
+   *  whose credentials live in the CLI's own state rather than in the config —
+   *  pinning that into a fresh file could strip its auth, so such a run keeps
+   *  inheriting the machine's config instead. */
+  spec?: McpServerSpec | Record<string, unknown>;
 };
 
 /** Resolve how one run gets MCP access. Cheap (static config reads only), so
@@ -378,10 +459,14 @@ export async function resolveMcp(opts: {
 
   const existing = findProviderServer(provider, cwd);
   if (existing) {
+    const stdio = typeof existing.spec.command === "string" && !existing.spec.url;
     return {
       mode: "user",
-      detail: `Using your own "${existing.name}" server from ${existing.source}.`,
+      detail: stdio
+        ? `Using your own "${existing.name}" server from ${existing.source}.`
+        : `Using your own "${existing.name}" server from ${existing.source} — it is remote, so the run also loads this machine's other servers.`,
       server: existing.name,
+      spec: stdio ? existing.spec : undefined,
     };
   }
 
@@ -463,10 +548,11 @@ function sweepStale() {
   }
 }
 
-/** Write the run's MCP config and return its path, or "" if there is nothing to
- *  write (any mode other than "managed"). */
+/** Write the run's MCP config and return its path, or "" if the decision has no
+ *  pinnable server (see `McpDecision.spec`). The file is what lets the run be
+ *  started with --strict-mcp-config. */
 export function writeRunMcpConfig(runId: string, decision: McpDecision): string {
-  if (decision.mode !== "managed" || !decision.spec || !decision.server) return "";
+  if (!decision.spec || !decision.server) return "";
   try {
     mkdirSync(RUN_CONFIG_DIR, { recursive: true });
     sweepStale();

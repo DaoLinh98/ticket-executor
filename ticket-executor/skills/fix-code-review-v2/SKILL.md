@@ -1,10 +1,10 @@
 ---
 name: fix-code-review-v2
 description: Fully autonomously resolve open PR/MR review comments end-to-end across Azure DevOps, GitHub, or GitLab — read threads, validate, implement fixes, reply, and mark resolved — in a single non-interactive run
-version: 1.0.0
+version: 1.2.0
 ---
 
-Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket ID: <id> - Project name: <project>`) following the same implementation workflow/rules as `implement-ticket-v2`, then close the loop on the tracker yourself.
+Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket: <ticket-url> - Project name: <project>`, where `Ticket:` is the provider's deep link to the work item — an older caller may pass a bare id instead) then close the loop on the tracker yourself. Everything you need is in this file — do not load another skill to find the implementation rules.
 
 ## Goal
 
@@ -17,15 +17,19 @@ This skill may run non-interactively (no human available to answer mid-run). Nev
 - If a comment is ambiguous or under-specified, pick the most reasonable interpretation given the ticket, the surrounding code, and the reviewer's wording — implement it, and say so in the final summary.
 - Only leave a thread open (not resolved) when the finding is invalid, out of scope, or needs a human decision — in that case reply explaining why instead of guessing, but still reply (don't go silent).
 
+## Working rules (these bound cost — they override any habit to be thorough)
+
+- **The PR is given, never searched for.** $ARGUMENTS always carries `PR:`. If it doesn't, stop immediately and say so — never list a repo's pull requests looking for the right one.
+- **Attachments stay out of the repo.** Review comments and the linked ticket may embed images/PDFs. Read the text first; only when a finding is incomprehensible without it, download that one file into the OS temp directory (`%TEMP%` / `$TMPDIR`) and read it from there — never into the repo, never in bulk.
+- **Read only what the threads point at.** Each thread names a file and line: open that file and its direct call sites, nothing more. Never read a file twice in one session, and never read `node_modules/`, `.next/`, `dist/`, build output, lockfiles, or `.te-worktrees/`.
+- **Fetch the threads once.** Pull the full thread list in a single call and work from it; re-list only after posting replies, if you need to confirm final state.
+- **Keep command output small.** Prefer the narrowest check that proves the fix over a full build; filter or tail unavoidably chatty output.
+
 ## Provider (read this before touching the tracker)
 
-$ARGUMENTS carries the provider explicitly as `Provider: <id>` (one of `azure-devops`, `github`, `gitlab`). Parse it first — it decides which tool/CLI you use for every step below. If `Provider:` is missing (older caller), infer it from the `PR:` value shape and fall back to `azure-devops`:
+$ARGUMENTS carries the provider explicitly as `Provider: <id>` (one of `azure-devops`, `github`, `gitlab`). Parse it first — it decides which tool/CLI you use for every step below. Only if it is absent (older caller), infer it once from the `PR:` URL host, else from `git remote -v`, falling back to `azure-devops`.
 
-- ADO URL (`dev.azure.com/.../pullrequest/<n>`) or a plain numeric PR id with no repo host → `azure-devops`.
-- GitHub URL (`github.com/<owner>/<repo>/pull/<n>`), or a bare PR number when a GitHub remote is evident (`git remote -v` shows `github.com`) → `github`.
-- GitLab URL (`gitlab.com/.../-/merge_requests/<n>`), or a bare MR number when a GitLab remote is evident → `gitlab`.
-
-If the inferred/declared provider doesn't match reality once you start (e.g. `gh`/`glab` isn't authenticated, or ADO MCP has no such PR), don't ask — try the other provider whose remote matches `git remote -v`, note the mismatch as an assumption, and continue.
+If the declared provider turns out not to work (e.g. `gh`/`glab` isn't authenticated, or ADO MCP has no such PR), don't ask and don't retry it repeatedly — try the provider matching the git remote once, note the mismatch as an assumption, and continue.
 
 Per-provider mapping for every step in this skill:
 
@@ -42,15 +46,15 @@ If a provider-specific CLI/MCP tool isn't available in the environment, fall bac
 
 ## Context
 
-Parse `Provider:` from $ARGUMENTS (or infer it, see above), then look up the PR/MR and its threads via that provider's tool from the table above. If a ticket ID is given, look it up too (ADO MCP `wit_get_work_item` / `gh issue view` / `glab issue view`) to re-check description/AC/discussion and confirm intended scope. Read root-level `CLAUDE.md`/`SKILL.md` before implementing.
+Parse `Provider:` from $ARGUMENTS (or infer it, see above), then look up the PR/MR and its threads via that provider's tool from the table above. If a `Ticket:` link is given, open it too (ADO MCP `wit_get_work_item` / `gh issue view` / `glab issue view`) to re-check description/AC/discussion and confirm intended scope. Read root-level `CLAUDE.md`/`AGENTS.md` (root only, once) before implementing.
 
 ## Steps
 
 1. Parse `Provider:` from $ARGUMENTS (or infer it, see above).
 2. Fetch the PR/MR and every thread via that provider's tool; list open (active/pending/unresolved) threads with file, line, author, and comment text.
 3. Classify each: **Fix now** / **Reply only (invalid/out of scope)** / **Reply only (needs human decision — still leave open with an explanation)**.
-4. Implement valid fixes using `implement-ticket-v2`'s workflow on the PR/MR's existing branch (do not create a new branch): preserve behavior unless the ticket or finding requires a change, add/update tests for logic/validation/branching changes, follow existing test style.
-5. Run relevant tests/build; re-check the diff against the ticket and each addressed finding.
+4. Implement valid fixes on the PR/MR's existing branch (do not create a new branch): preserve behaviour unless the ticket or finding requires a change, add/update tests for logic/validation/branching changes following existing test style, and keep the diff to what the finding asks for.
+5. Verify with the narrowest check that proves the fixes — the affected test file(s), then a type-check, a full build only if nothing faster exists; re-check the diff against the ticket and each addressed finding.
 6. Commit and push the fixes to the PR/MR's branch.
 7. For every thread you fixed: reply via the provider's reply tool explaining what changed (file/line), then mark the thread resolved via the provider's resolve tool.
 8. For every thread you decided not to fix: reply via the provider's reply tool explaining why (invalid / out of scope / needs a decision) — leave its status as-is.

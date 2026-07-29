@@ -36,6 +36,9 @@ export async function POST(
     const project = String(body.projectName || "");
     const rootRepo = String(body.rootRepo || "");
     const prUrl = typeof body.prUrl === "string" ? body.prUrl : undefined;
+    // The provider deep link to the work item; the run's prompt addresses the
+    // ticket by URL when it is present.
+    const ticketUrl = typeof body.ticketUrl === "string" ? body.ticketUrl : undefined;
     const provider = String(body.provider || "azure-devops");
     const model = typeof body.model === "string" && body.model ? body.model : undefined;
     const effort = typeof body.effort === "string" && body.effort ? body.effort : undefined;
@@ -83,7 +86,7 @@ export async function POST(
       }
     }
 
-    const executionId = await startExecution({ ticketId: id, skill, project, rootRepo, prUrl, provider, model, effort, estimateHours, isolate: multiTicketMode });
+    const executionId = await startExecution({ ticketId: id, ticketUrl, skill, project, rootRepo, prUrl, provider, model, effort, estimateHours, isolate: multiTicketMode });
     // `warnings` are advisory: the run has started, but something worth showing
     // could not be verified up front.
     return NextResponse.json(
