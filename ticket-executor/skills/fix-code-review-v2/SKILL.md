@@ -1,7 +1,7 @@
 ---
 name: fix-code-review-v2
 description: Fully autonomously resolve open PR/MR review comments end-to-end across Azure DevOps, GitHub, or GitLab — read threads, validate, implement fixes, reply, and mark resolved — in a single non-interactive run
-version: 1.2.0
+version: 2.0.0
 ---
 
 Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket: <ticket-url> - Project name: <project>`, where `Ticket:` is the provider's deep link to the work item — an older caller may pass a bare id instead) then close the loop on the tracker yourself. Everything you need is in this file — do not load another skill to find the implementation rules.
@@ -69,28 +69,21 @@ Parse `Provider:` from $ARGUMENTS (or infer it, see above), then look up the PR/
 
 ## Output
 
-Return the final response. Use only these sections — omit any with nothing to report:
+The runner passes a JSON Schema and the CLI requires you to call
+`StructuredOutput` before the turn ends. **That call is your deliverable.** The
+prose in the transcript is for the human reading the log; the caller records and
+routes entirely on the structured fields.
 
-**Review Thread Decisions**
+Fill them honestly. In particular:
 
-| Thread (file:line) | Finding | Decision | Reply posted | Thread status set |
-|---|---|---|---|---|
-
-**Implementation Summary**
-
-| Area / File | Change | Verification Result |
-|---|---|---|
-
-**Tests / Verification**
-
-| Item | Result | Notes |
-|---|---|---|
-| Unit tests | Passed / Not run / Failed | |
-| Build | Passed / Not run / Failed | |
-
-**Notes/Assumptions** (only if you had to make a judgment call on ambiguous/missing info, including provider inference)
-
-| Assumption | Reasoning |
-|---|---|
-
-**Final Summary**: 1–2 sentences on how many threads were resolved vs. left open, and overall PR/MR readiness.
+- `verification.tests` / `verification.build` are `passed` **only** if you
+  actually ran them and they passed. Use `not-run` when there was nothing to run.
+  Never report `passed` for a check you did not run.
+- `committed` / `pushed` describe what really happened, not what you intended.
+- `blocked.is` is `true` only on a hard external blocker you cannot work around,
+  with a one-sentence `reason`. This ends the run cleanly instead of leaving a
+  half-done ticket.
+- `threadsReplied` and `threadsResolved` count the threads you actually wrote to
+  in this run. Read each thread before writing: this run can be retried after a
+  crash, and a duplicate reply on someone else's pull request cannot be taken
+  back. A thread you skipped because it already carried your reply is not counted.

@@ -2,9 +2,9 @@ import { spawn, type ChildProcess } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { detectArtifacts, stripAnsi } from "./format";
-import { bump, stepForTool } from "./steps";
-import type { Entry, TurnState } from "./types";
+import { stripAnsi } from "./format";
+import type { LiveRun, TurnUsage } from "./graph/types";
+import { ZERO_USAGE } from "./graph/types";
 
 // ---- optional guardrails via env ----
 export const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
@@ -61,30 +61,58 @@ function disablePluginArgs(cwd: string): string[] {
   return ["--settings", JSON.stringify({ enabledPlugins })];
 }
 
-/** `mcpConfigPath` is the MCP config written for this turn (see lib/mcp.ts) —
- *  the app-generated provider server, or the user's own server pinned into a
- *  single-server file. Either way it is passed with --strict-mcp-config so the
- *  run sees *only* that server: the four skills need nothing but the provider
- *  server plus git/gh/glab on the PATH. An explicit CLAUDE_MCP_CONFIG still
- *  wins — a deliberate override, also strict. With no config path at all
- *  (nothing pinnable, e.g. a remote server the CLI authenticates itself) the run
- *  falls back to inheriting the machine's servers. */
-export function commonArgs(mcpConfigPath: string | undefined, cwd: string): string[] {
-  const a = [
+export type TurnArgs = {
+  /** MCP config written for this turn (see lib/mcp.ts) — the app-generated
+   *  provider server, or the user's own server pinned into a single-server file.
+   *  Either way it is passed with --strict-mcp-config so the run sees *only* that
+   *  server: the four skills need nothing but the provider server plus git/gh/glab
+   *  on the PATH. An explicit CLAUDE_MCP_CONFIG still wins. With no config path at
+   *  all the run falls back to inheriting the machine's servers. */
+  mcpConfigPath: string;
+  cwd: string;
+  /** The node's output contract. Passed as --json-schema, which makes the CLI
+   *  force a StructuredOutput tool call and report the validated object on the
+   *  final `result` event. Required for agent nodes — a node with no declared
+   *  output gives its edges nothing to branch on. */
+  outputSchema: Record<string, unknown>;
+  /** Per-node ceiling; falls back to the process-wide CLAUDE_MAX_BUDGET_USD. */
+  budgetUsd?: number;
+};
+
+export function commonArgs(a: TurnArgs): string[] {
+  const args = [
     "--output-format",
     "stream-json",
     "--verbose",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
+    "--json-schema",
+    JSON.stringify(a.outputSchema),
   ];
-  if (MCP_CONFIG) a.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
-  else if (mcpConfigPath) a.push("--mcp-config", mcpConfigPath, "--strict-mcp-config");
-  if (MAX_BUDGET) a.push("--max-budget-usd", MAX_BUDGET);
-  return [...a, ...disablePluginArgs(cwd), ...EXTRA];
+  if (MCP_CONFIG) args.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
+  else if (a.mcpConfigPath) args.push("--mcp-config", a.mcpConfigPath, "--strict-mcp-config");
+  const budget = a.budgetUsd && a.budgetUsd > 0 ? String(a.budgetUsd) : MAX_BUDGET;
+  if (budget) args.push("--max-budget-usd", budget);
+  return [...args, ...disablePluginArgs(a.cwd), ...EXTRA];
 }
 
-// Parse one NDJSON line from `--output-format stream-json`, updating the entry live.
-function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) {
+/** What one Claude turn produced. `structured` is the validated object the CLI
+ *  reported; null means the turn ended without honouring its contract, which the
+ *  caller must treat as a failed node rather than guessing from `text`. */
+export type TurnResult = {
+  ok: boolean;
+  structured: Record<string, unknown> | null;
+  text: string;
+  error: string;
+  usage: TurnUsage;
+  /** The session the CLI actually recorded this turn under. Reported rather than
+   *  written straight onto the run: a `fresh` node opens its own session, which
+   *  must not overwrite the run's primary one that `resume` nodes depend on. */
+  sessionId: string;
+};
+
+// Parse one NDJSON line from `--output-format stream-json`, updating the live run.
+function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResult) {
   const type = obj.type;
 
   if (type === "system" && obj.subtype === "init") {
@@ -92,39 +120,36 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
     const sid = (obj as { session_id?: string }).session_id ?? "";
     // Trust the CLI's own id over the one we pre-assigned — --resume must use
     // exactly what the session was actually recorded under.
-    if (sid) entry.sessionId = sid;
-    entry.logLines.push({ text: `● Session started${model ? " — " + model : ""}`, kind: "step" });
-    if (entry.phase === "plan") bump(entry, 0);
+    if (sid) out.sessionId = sid;
+    live.logLines.push({ text: `● Session started${model ? " — " + model : ""}`, kind: "step" });
     return;
   }
+
   if (type === "assistant") {
     const msg = obj.message as { content?: Array<Record<string, unknown>> } | undefined;
     for (const block of msg?.content ?? []) {
       if (block.type === "text" && typeof block.text === "string") {
         const text = block.text.trim();
-        if (text) {
-          detectArtifacts(entry, text);
-          text.split(/\r?\n/).forEach((l) => l.trim() && entry.logLines.push({ text: l, kind: "muted" }));
-        }
+        if (text) text.split(/\r?\n/).forEach((l) => l.trim() && live.logLines.push({ text: l, kind: "muted" }));
       } else if (block.type === "tool_use") {
         const name = String(block.name ?? "");
         const input = (block.input ?? {}) as Record<string, unknown>;
-        const step = stepForTool(name, input, entry.phase);
-        bump(entry, step);
         let label = `✎ ${name}`;
         if (name.toLowerCase() === "bash" && typeof input.command === "string") {
-          const cmd = input.command as string;
-          detectArtifacts(entry, cmd);
-          label = `$ ${cmd.split(/\r?\n/)[0].slice(0, 160)}`;
-        } else if (typeof input.file_path === "string") label = `✎ ${name} ${input.file_path}`;
-        entry.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
+          label = `$ ${(input.command as string).split(/\r?\n/)[0].slice(0, 160)}`;
+        } else if (typeof input.file_path === "string") {
+          label = `✎ ${name} ${input.file_path}`;
+        }
+        live.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
       }
     }
     return;
   }
+
   if (type === "result") {
     const r = obj as {
       result?: string;
+      structured_output?: unknown;
       is_error?: boolean;
       total_cost_usd?: number;
       num_turns?: number;
@@ -136,45 +161,42 @@ function handleEvent(entry: Entry, obj: Record<string, unknown>, ts: TurnState) 
         cache_creation_input_tokens?: number;
       };
     };
-    if (typeof r.result === "string" && r.result.trim()) {
-      ts.resultText = r.result.trim();
-      detectArtifacts(entry, ts.resultText);
+    if (typeof r.result === "string" && r.result.trim()) out.text = r.result.trim();
+    if (r.structured_output && typeof r.structured_output === "object") {
+      out.structured = r.structured_output as Record<string, unknown>;
     }
-    ts.isError = !!r.is_error;
-    // Token & cost usage reported once on the final result event of the turn.
+    out.ok = !r.is_error;
     const u = r.usage ?? {};
-    ts.costUsd = typeof r.total_cost_usd === "number" ? r.total_cost_usd : 0;
-    ts.numTurns = typeof r.num_turns === "number" ? r.num_turns : 0;
-    ts.durationMs = typeof r.duration_ms === "number" ? r.duration_ms : 0;
-    ts.inputTokens = u.input_tokens ?? 0;
-    ts.outputTokens = u.output_tokens ?? 0;
-    ts.cacheReadTokens = u.cache_read_input_tokens ?? 0;
-    ts.cacheCreationTokens = u.cache_creation_input_tokens ?? 0;
+    out.usage = {
+      costUsd: typeof r.total_cost_usd === "number" ? r.total_cost_usd : 0,
+      numTurns: typeof r.num_turns === "number" ? r.num_turns : 0,
+      durationMs: typeof r.duration_ms === "number" ? r.duration_ms : 0,
+      inputTokens: u.input_tokens ?? 0,
+      outputTokens: u.output_tokens ?? 0,
+      cacheReadTokens: u.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+    };
   }
 }
 
-// Run one Claude turn; resolves when the process closes.
-export function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exitCode: number | null }> {
+/** Run one Claude turn; resolves when the process closes. */
+export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
   return new Promise((resolve) => {
-    const ts: TurnState = {
-      resultText: "", isError: false, errorDetail: "",
-      costUsd: 0, inputTokens: 0, outputTokens: 0,
-      cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
-    };
+    const out: TurnResult = { ok: false, structured: null, text: "", error: "", usage: { ...ZERO_USAGE }, sessionId: "" };
     let child: ChildProcess;
     try {
       child = spawn(CLAUDE_BIN, args, {
-        cwd: entry.cwd,
+        cwd: live.ctx.cwd,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
-      entry.logLines.push({ text: `✖ ${detail}`, kind: "err" });
-      resolve({ ...ts, isError: true, errorDetail: detail, exitCode: -1 });
+      live.logLines.push({ text: `✖ ${detail}`, kind: "err" });
+      resolve({ ...out, ok: false, error: detail });
       return;
     }
-    entry.child = child;
+    live.child = child;
 
     let buf = "";
     child.stdout!.on("data", (b: Buffer) => {
@@ -185,9 +207,9 @@ export function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exi
         const s = line.trim();
         if (!s) continue;
         try {
-          handleEvent(entry, JSON.parse(s), ts);
+          handleEvent(live, JSON.parse(s), out);
         } catch {
-          entry.logLines.push({ text: s.slice(0, 300), kind: "muted" }); // non-JSON noise
+          live.logLines.push({ text: s.slice(0, 300), kind: "muted" }); // non-JSON noise
         }
       }
     });
@@ -196,17 +218,19 @@ export function runTurn(entry: Entry, args: string[]): Promise<TurnState & { exi
       errTail = (errTail + stripAnsi(b.toString("utf8"))).slice(-2000);
     });
     child.on("error", (e) => {
-      entry.logLines.push({ text: `✖ ${e.message}`, kind: "err" });
-      resolve({ ...ts, isError: true, errorDetail: e.message, exitCode: -1 });
+      live.child = null;
+      live.logLines.push({ text: `✖ ${e.message}`, kind: "err" });
+      resolve({ ...out, ok: false, error: e.message });
     });
     child.on("close", (code) => {
-      entry.child = null;
-      if (code !== 0 && !ts.resultText) {
-        const detail = errTail.trim() || `claude exited with code ${code}`;
-        entry.logLines.push({ text: detail, kind: "err" });
-        ts.errorDetail = detail;
+      live.child = null;
+      if (code !== 0) {
+        const detail = out.text || errTail.trim() || `claude exited with code ${code}`;
+        live.logLines.push({ text: detail, kind: "err" });
+        resolve({ ...out, ok: false, error: detail });
+        return;
       }
-      resolve({ ...ts, isError: ts.isError || code !== 0, exitCode: code });
+      resolve(out);
     });
   });
 }

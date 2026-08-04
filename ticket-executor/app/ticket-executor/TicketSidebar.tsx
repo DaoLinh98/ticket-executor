@@ -2,9 +2,9 @@
 
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
-import type { ExecStatus, Ticket } from "@/lib/types";
+import type { Ticket, UiRunState } from "@/lib/types";
 import {
-  COLORS, EXEC_COLOR, avatar, card, ctaButtonStyle, execDot, initials, pill,
+  COLORS, RUN_COLOR, avatar, card, ctaButtonStyle, runDot, initials, pill,
   ringBorder, statusPill, tintedCard, typeBadge,
 } from "@/lib/ui";
 import { ACCENT } from "./constants";
@@ -41,7 +41,7 @@ type Props = {
   queuedIds: Set<string>;
   onRunSelected: () => void;
   selectedId: string;
-  execStatusOf: (id: string) => ExecStatus;
+  execStatusOf: (id: string) => UiRunState;
   getStatus: (t: Ticket) => string;
   onSelectTicket: (id: string, e?: MouseEvent) => void;
 };
@@ -186,12 +186,12 @@ export default function TicketSidebar({
                     title="Running"
                     style={{
                       width: "12px", height: "12px", borderRadius: "50%", flex: "0 0 auto",
-                      border: `1.6px solid ${EXEC_COLOR.running}33`, borderTopColor: EXEC_COLOR.running,
+                      border: `1.6px solid ${RUN_COLOR.running}33`, borderTopColor: RUN_COLOR.running,
                       animation: "spin .8s linear infinite",
                     }}
                   />
                 ) : (
-                  <span style={{ ...execDot(est) }} />
+                  <span style={{ ...runDot(est) }} />
                 )}
               </div>
               <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>

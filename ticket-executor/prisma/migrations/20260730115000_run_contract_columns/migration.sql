@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Run" ADD COLUMN     "branch" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "prUrl" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "resultText" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "skill" TEXT NOT NULL DEFAULT '';
+

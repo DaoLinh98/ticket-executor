@@ -24,14 +24,29 @@ export type TicketComment = {
   text: string; // plain text (may contain @mentions and newlines)
 };
 
-// "awaiting-approval": the plan phase finished and the run is parked, holding no
-// child process, until the user accepts / asks for changes / cancels the plan.
-export type ExecStatus = "not started" | "running" | "awaiting-approval" | "completed" | "failed";
+// Where a run is. This is the whole answer — there is deliberately no separate
+// phase/planStatus pair to keep consistent with it; which *node* the run sits on
+// carries that, and the node comes from the graph.
+//   waiting — parked at a gate (or held for human review after a crash on an
+//             external node). No child process is alive.
+export type RunState = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 
-// Which half of a two-phase (implement-ticket-v3) run the entry is in.
-export type ExecPhase = "plan" | "implement";
+/** RunState plus the one thing the engine has no opinion about: a ticket that
+ *  has never been run. "No run" is the absence of a Run row, not a sixth state,
+ *  so it exists only in the UI's vocabulary. */
+export type UiRunState = RunState | "none";
 
-export type PlanStatus = "none" | "pending" | "approved" | "rejected";
+/** Why a run ended somewhere other than plain success. `cancelled` and
+ *  `plan-rejected` are human decisions and must never be scored as agent
+ *  failures by anything computing a success rate. */
+export type EndReason =
+  | ""
+  | "cancelled"
+  | "plan-rejected"
+  | "blocked"
+  | "budget"
+  | "hop-limit"
+  | "needs-review";
 
 export type LogLine = { text: string; kind: string };
 
@@ -43,22 +58,9 @@ export type FileChange = {
   diff: string;
 };
 
-export type Execution = {
-  id: string;
-  adoTicketId: string;
-  projectName: string;
-  skillName: string;
-  model?: string;
-  effort?: string;
-  status: ExecStatus;
-  command: string;
-  logLines: LogLine[];
-  resultText: string;
-  errorMessage: string;
-  filesChanged?: FileChange[];
-  startedAt: string;
-  completedAt: string | null;
-};
+// The run's view model is not declared here: it is derived from the graph a run
+// is walking, so it lives next to that code as `RunView` in
+// lib/execution/queries.ts and reaches the UI through the API.
 
 export type PullRequestOverview = {
   id: string;

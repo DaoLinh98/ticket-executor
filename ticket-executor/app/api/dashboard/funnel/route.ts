@@ -22,18 +22,18 @@ export async function GET(req: Request) {
       : await prisma.setting.findUnique({ where: { id: "default" }, select: { provider: true } });
     const provider = normalizeProvider(providerParam ?? setting?.provider);
 
-    const rows = await prisma.execution.findMany({
+    const rows = await prisma.run.findMany({
       where: {
         NOT: { prUrl: "" },
         ...(days ? { startedAt: { gte: new Date(Date.now() - days * 86400000) } } : {}),
         ...(providerParam ? { provider: providerParam } : {}),
-        ...(project ? { projectName: project } : {}),
+        ...(project ? { project } : {}),
       },
       orderBy: { startedAt: "desc" },
       select: { prUrl: true },
     });
     // One PR can back several runs (a retry reuses it) — count each PR once.
-    const prUrls = [...new Set(rows.map((r) => r.prUrl))];
+    const prUrls: string[] = [...new Set(rows.map((r) => r.prUrl))];
 
     return NextResponse.json(await loadDeliveryFunnel(provider, prUrls));
   } catch (err) {

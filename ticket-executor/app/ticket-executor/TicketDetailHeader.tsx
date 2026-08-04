@@ -1,8 +1,8 @@
 "use client";
 
 import type { CSSProperties, MouseEvent, RefObject } from "react";
-import type { ExecStatus, Ticket } from "@/lib/types";
-import { COLORS, EXEC_LABEL, avatar, dropdownPanelStyle, execDot, initials, pill, ringBorder, statusPillActive, typeBadge } from "@/lib/ui";
+import type { Ticket, UiRunState } from "@/lib/types";
+import { COLORS, RUN_LABEL, avatar, dropdownPanelStyle, runDot, initials, pill, ringBorder, statusPillActive, typeBadge } from "@/lib/ui";
 import type { Action, TabId } from "./types";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
@@ -11,7 +11,7 @@ type Props = {
   ticket: Ticket;
   effStatus: string;
   projectName: string;
-  status: ExecStatus;
+  state: UiRunState;
   execPillStyle: CSSProperties;
   onOpenTicketLink: (e: MouseEvent) => void;
   // status dropdown
@@ -39,7 +39,7 @@ type Props = {
 // Ticket identity block (id / type / status menu / title / meta) and the tab bar
 // with its primary + secondary run buttons.
 export default function TicketDetailHeader({
-  ticket: t, effStatus, projectName, status: st, execPillStyle, onOpenTicketLink,
+  ticket: t, effStatus, projectName, state: st, execPillStyle, onOpenTicketLink,
   statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus,
   tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
@@ -73,7 +73,7 @@ export default function TicketDetailHeader({
       <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: "12.5px", color: "#8A90A0", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
-        <span style={execPillStyle}><span style={{ ...execDot(st), width: "7px", height: "7px" }} />{EXEC_LABEL[st]}</span>
+        <span style={execPillStyle}><span style={{ ...runDot(st), width: "7px", height: "7px" }} />{RUN_LABEL[st]}</span>
         {t.url && (
           <a
             href={t.url}

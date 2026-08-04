@@ -1,7 +1,7 @@
 ---
 name: fix-code-review-v3
-description: Resolve open PR/MR review comments across Azure DevOps, GitHub, or GitLab in two phases — draft a reviewable thread-resolution plan first, then execute it end-to-end (fix, reply, resolve) after the plan is approved
-version: 1.2.0
+description: Resolve open PR/MR review comments across Azure DevOps, GitHub, or GitLab in reviewable phases — draft a thread-resolution plan, apply the fixes locally once approved, then push and answer the threads as a separate final step
+version: 2.0.0
 ---
 
 Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket: <ticket-url> - Project name: <project>`, where `Ticket:` is the provider's deep link to the work item — an older caller may pass a bare id instead). Everything you need is in this file — do not load another skill to find the implementation rules. Unlike `fix-code-review-v2`, the work is split into a **plan phase** a human reviews and a **implement phase** that executes the approved plan.
@@ -12,13 +12,20 @@ Every open review thread on the PR/MR should end the run either resolved (fix ap
 
 ## Mode (read this first)
 
-$ARGUMENTS carries `Mode: <plan|replan|implement>`. It decides which half of this skill runs. Never run a phase other than the one requested.
+$ARGUMENTS carries `Mode: <plan|replan|implement|publish>`. It decides which phase of this skill runs. Never run a phase other than the one requested, and never do a later phase's work early "since you are already there" — the runner depends on the boundary between them.
 
 | Mode | What you do | What you must NOT do |
 |---|---|---|
 | `plan` | Fetch the PR/MR + its review threads, classify each, write `.te/plan.md` | Do not edit any source file. Do not commit, push, reply to a thread, or mark anything resolved. |
 | `replan` | Read `.te/feedback.md`, rewrite `.te/plan.md` to address it | Same prohibitions as `plan`. |
-| `implement` | Execute the approved `.te/plan.md` end-to-end | Do not re-litigate the plan or ask for confirmation. |
+| `implement` | Apply the approved fixes on the PR/MR's branch, verify, and **commit locally** | **Do NOT push. Do NOT reply to a thread. Do NOT resolve a thread.** Nothing may leave this machine. |
+| `publish` | Push the branch, reply to each thread you addressed, mark them resolved | Do not edit source. Do not commit. Do not re-verify. The fixes are already final. |
+
+**Why `implement` stops at a local commit.** A local commit is undone by resetting
+the branch; a push, a reply on someone else's PR, or a resolved thread is not. The
+runner may re-enter the implement phase — after a crash, or once a review step is
+added between fixing and answering — so everything irreversible is confined to
+`publish`, which runs once, at the end.
 | *(absent)* | Run `plan`, then immediately `implement` without stopping — the fully autonomous v2 behaviour | — |
 
 Each phase runs non-interactively (no human is available mid-turn). Never end a turn with a question or a "let me know" / "should I..." / "Would you like..." sentence.
@@ -112,13 +119,31 @@ The plan you proposed was rejected. Read **`.te/feedback.md`** — it holds the 
 1. Re-read `.te/plan.md`.
 2. For every thread marked **Fix now**: implement the change on the PR/MR's existing branch (do not create a new branch). Preserve behaviour unless the ticket or finding requires a change, add/update tests for logic/validation/branching changes following existing test style, and keep the diff to what the finding asks for.
 3. Verify with the narrowest check that proves the fixes — the affected test file(s), then a type-check, a full build only if nothing faster exists. Re-check the diff against the ticket and each addressed finding, and fix failures you caused before moving on.
-4. Commit and push the fixes to the PR/MR's branch.
-5. For every thread you fixed: reply via the provider's reply tool explaining what changed (file/line), then mark the thread resolved via the provider's resolve tool.
-6. For every thread marked **Reply only**: reply via the provider's reply tool explaining why (invalid / out of scope / needs a decision) — leave its status as-is.
+4. Commit the fixes on the PR/MR's branch. **Stop there.** Do not run `git push`, do not reply to any thread, do not resolve anything — answering the reviewer is a separate phase that runs after this one.
 
 If executing the plan surfaces something it got wrong (a file that doesn't exist, an approach that can't work), do not stop and do not silently follow the broken plan: implement the smallest correct deviation, and record it in "Notes/Assumptions" as a deviation from the approved plan.
 
 Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's `.git/info/exclude`, so if either shows up in `git status` something is wrong — leave it out of the commit rather than "fixing" it by editing `.gitignore`, which is a tracked project file.
+
+## Phase: publish
+
+The fixes are committed and final. This phase publishes them and answers the
+reviewer — no source edits, no commits, no re-verification.
+
+**This phase may be retried after a crash, so every step must be safe to repeat.**
+Replies land on someone else's pull request and cannot be taken back, so check
+before writing rather than guessing:
+
+1. Push the fixes to the PR/MR's existing branch: `git push --force-with-lease`.
+   If the remote already has them, that is a no-op — expected, not an error.
+2. For every thread you fixed: **read the thread first.** If it already carries
+   your reply, skip it; otherwise reply via the provider's reply tool explaining
+   what changed (file/line). Then mark it resolved — unless it already is.
+3. For every thread marked **Reply only**: same check, then reply explaining why
+   (invalid / out of scope / needs a decision) and leave its status as-is.
+
+Never open a new PR/MR and never create a new branch — everything goes onto the
+branch the pull request already points at.
 
 ## Rules
 
@@ -127,30 +152,25 @@ Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's
 - Don't remove code just because it "looks unused" unless verified safe.
 - Push directly to the PR/MR's existing branch — do not open a new PR/MR or create a new branch.
 - Reply to and update every open thread you touched — do not leave a fixed issue without a reply, and do not mark a thread resolved without having replied to it first.
-- In the `implement` phase, commit/push/reply/resolve automatically once implementation + verification are done — do not wait for explicit confirmation (this skill supersedes any general "ask before committing" default).
+- Commit in `implement` and push/reply/resolve in `publish` automatically, without waiting for confirmation (this skill supersedes any general "ask before committing" default) — but never move work from one phase into the other.
 - If verification cannot be completed, say exactly what and why — never claim tests/build passed when they didn't run.
 
 ## Output
 
-**Plan / replan phases** — a short prose summary of what the plan covers. The real deliverable is `.te/plan.md`; don't duplicate the whole plan in the response.
+The runner passes a JSON Schema and the CLI requires you to call
+`StructuredOutput` before the turn ends. **That call is your deliverable.** The
+prose in the transcript is for the human reading the log; the caller routes
+entirely on the structured fields.
 
-**Implement phase** — keep this short; the reviewer already read the plan, so don't re-explain it. Report only what happened since the plan was approved. Use only the sections below; skip a section entirely if it has nothing to report.
+Fill them honestly. In particular:
 
-**Review Thread Decisions**
-
-| Thread (file:line) | Decision | Reply posted | Thread status set |
-|---|---|---|---|
-
-**Tests / Verification**
-
-| Item | Result | Notes |
-|---|---|---|
-| Unit tests | Passed / Not run / Failed | |
-| Build | Passed / Not run / Failed | |
-
-**Deviations from the plan** (only if something diverged from the approved `.te/plan.md`)
-
-| What changed | Why |
-|---|---|
-
-**Final Summary**: 1–2 sentences on how many threads were resolved vs. left open, and overall PR/MR readiness.
+- `verification.tests` / `verification.build` are `passed` **only** if you
+  actually ran them and they passed. Use `not-run` when there was nothing to run.
+  The runner blocks the publish phase on these values, so a false `passed` is how
+  an unverified fix would get pushed onto a live pull request.
+- `committed` is `true` only once the fixes are really committed on the branch.
+- `blocked.is` is `true` only on a hard external blocker you cannot work around,
+  with a one-sentence `reason`.
+- In `publish`, `threadsReplied` and `threadsResolved` count the threads you
+  actually wrote to in this turn — a thread you skipped because it already had
+  your reply is not counted again.

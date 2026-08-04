@@ -1,53 +1,14 @@
 import type { CSSProperties } from "react";
-import type { ExecStatus } from "./types";
+import type { UiRunState } from "./types";
 
 // ---- Ported verbatim from the prototype's renderVals() ----
 
-// The workflow timeline. Index 4 ("Awaiting your review") is the plan gate: a
-// two-phase implement-ticket-v3 run parks there until the user resolves the plan.
-// Steps 0-3 belong to the plan phase, 5-9 to the implement phase — keep this in
-// sync with stepForTool() in lib/execution/steps.ts, which maps by index.
-export const STEPS = [
-  "Prepare workspace",
-  "Read ticket",
-  "Analyze codebase",
-  "Draft plan",
-  "Awaiting your review",
-  "Create branch",
-  "Implement changes",
-  "Run verification",
-  "Commit & push",
-  "Open pull request",
-];
-
-// Index of the plan-review gate within STEPS.
-export const PLAN_GATE_STEP = 4;
-
-// Skills that run in two phases with a human plan-review gate in between
-// (STEPS indices 0-4: plan phase, ending at the gate). Everything else
-// (implement-ticket-v2, fix-code-review-v2, …) is a single-turn run that goes
-// straight from "Analyze codebase" to "Create branch" — the plan-phase steps
-// (3 "Draft plan", 4 "Awaiting your review") never apply and must be hidden
-// from that run's progress list, not just left un-advanced.
-const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
-export const isTwoPhaseSkill = (skill?: string) => !!skill && TWO_PHASE_SKILLS.has(skill);
-
-// The progress-list STEPS for a given skill: two-phase skills show all 10;
-// one-shot skills drop the plan-phase-only steps (3, 4) since they're never
-// reached. Index i in the returned array no longer matches its STEPS index,
-// so pair with stepsIndexMap() to translate a raw `currentStep` into it.
-export function stepsForSkill(skill?: string): string[] {
-  if (isTwoPhaseSkill(skill)) return STEPS;
-  return STEPS.filter((_, i) => i !== 3 && i !== 4);
-}
-
-// Maps each STEPS index to its position within stepsForSkill(skill) (or -1 if
-// that step is hidden for this skill) — use to translate a raw `currentStep`
-// (always indexed against the full STEPS) into an index into the filtered list.
-export function stepsIndexMap(skill?: string): number[] {
-  const visible = stepsForSkill(skill);
-  return STEPS.map((label) => visible.indexOf(label));
-}
+// There is no STEPS array here any more. A run's progress list is derived from
+// the graph it is walking (see lib/execution/graph/graphs.ts) and reaches the UI
+// as `RunView.nodes`, so adding a node adds a step with nothing to keep in sync.
+// The same goes for the old isTwoPhaseSkill / stepsForSkill / stepsIndexMap
+// helpers: whether a run has a human gate is a property of its graph, not a
+// hard-coded list of skill names.
 
 const TYPES: Record<string, { c: string; bg: string }> = {
   Feature: { c: "#9B8CFF", bg: "rgba(155,140,255,.13)" },
@@ -131,20 +92,22 @@ export function isFixReviewSkill(skill?: string): boolean {
   return skill === "fix-code-review-v2" || skill === "fix-code-review-v3";
 }
 
-export const EXEC_COLOR: Record<ExecStatus, string> = {
-  "not started": "#5B6273",
+export const RUN_COLOR: Record<UiRunState, string> = {
   running: "#F5B341",
-  "awaiting-approval": "#9BA6E8",
-  completed: "#35D6A4",
+  waiting: "#9BA6E8",
+  succeeded: "#35D6A4",
   failed: "#FF6B6B",
+  cancelled: "#5B6273",
+  none: "#5B6273",
 };
 
-export const EXEC_LABEL: Record<ExecStatus, string> = {
-  "not started": "Not started",
+export const RUN_LABEL: Record<UiRunState, string> = {
   running: "Running",
-  "awaiting-approval": "Plan ready for review",
-  completed: "Completed",
+  waiting: "Waiting for you",
+  succeeded: "Completed",
   failed: "Failed",
+  cancelled: "Cancelled",
+  none: "Not started",
 };
 
 // ---- Shared design tokens ----
@@ -561,7 +524,7 @@ export function avatar(name: string): CSSProperties {
   };
 }
 
-export function execDot(st: ExecStatus): CSSProperties {
+export function runDot(st: UiRunState): CSSProperties {
   const base: CSSProperties = {
     width: "9px",
     height: "9px",
@@ -569,20 +532,10 @@ export function execDot(st: ExecStatus): CSSProperties {
     display: "inline-block",
     flex: "0 0 auto",
   };
-  if (st === "not started")
-    return {
-      ...base,
-      border: "1.5px solid #3A4150",
-      background: "transparent",
-    };
-  const c = EXEC_COLOR[st];
-  const o: CSSProperties = {
-    ...base,
-    background: c,
-    boxShadow: "0 0 8px " + c,
-  };
-  if (st === "running") o.animation = "pulseDot 1.1s ease-in-out infinite";
-  return o;
+  // "no run yet" and "cancelled" both read as an outline rather than a lit dot.
+  if (st === "none" || st === "cancelled")
+    return { ...base, background: "transparent", border: `1.5px solid ${RUN_COLOR[st]}` };
+  return { ...base, background: RUN_COLOR[st], boxShadow: `0 0 8px ${RUN_COLOR[st]}66` };
 }
 
 export function initials(name: string): string {

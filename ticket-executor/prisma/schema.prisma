@@ -52,76 +52,162 @@ model ProviderCredential {
   updatedAt DateTime @updatedAt
 }
 
-// One run of Claude CLI against a ticket. Mirrors the Execution data model.
-model Execution {
+// One execution of one graph against one ticket. A Run owns no agent output of
+// its own: everything an agent produced belongs to a Step, everything a human
+// can read belongs to an Artifact, and every routing decision belongs to a
+// Transition. The Run row only holds what identifies the run and where it is.
+model Run {
   id           String    @id @default(cuid())
-  adoTicketId  String
-  projectName  String
-  skillName    String
+  ticketId     String
+  // Provider deep link to the work item, as the skills receive it. Empty when
+  // the caller had no URL — the prompt then falls back to the raw id.
+  ticketUrl    String    @default("")
   // Ticket provider this run targeted (azure-devops | github | jira | gitlab).
   // Persisted per-run so the dashboard can group/filter by provider (the global
   // Setting.provider only reflects the current selection, not each run's).
   provider     String    @default("")
-  status       String    @default("running") // running | awaiting-approval | completed | failed
-  // Why a non-completed run ended: "" (plain error) | "cancelled" (user killed it)
-  // | "plan-rejected" (reviewer discarded the plan). status stays "failed" for all
-  // three so the UI's retry affordance is unchanged; the dashboard uses this to
-  // avoid scoring a human's decision as an agent failure.
-  endReason    String    @default("")
-  command      String
-  // Two-phase (implement-ticket-v3) run state. sessionId + worktreePath are what
-  // let an approval resume the same Claude session after a server restart, when
-  // the in-memory entry is gone.
-  sessionId    String    @default("")
-  worktreePath String    @default("")
-  // The project's real working copy. Equal to worktreePath when the run was
-  // not isolated (single-ticket mode) — kept as its own column since it can't
-  // be derived back out of worktreePath in that case.
+  project      String
+  // The project's real working copy, and the worktree the run actually executes
+  // in. They are equal when the run was not isolated (single-ticket mode).
   rootRepo     String    @default("")
-  phase        String    @default("implement") // plan | implement
-  planStatus   String    @default("none") // none | pending | approved | rejected
-  planMarkdown String    @default("")
-  // Plan-gate accounting. parkedAt is set while the run waits at the gate and
-  // cleared on resume, with the elapsed time folded into humanWaitMs — so
-  // "agent was computing" and "a human hadn't answered" stay separable even
-  // across several revise rounds.
-  parkedAt     DateTime?
-  humanWaitMs  Int       @default(0)
-  planRevisions Int      @default(0)
-  // Set when the Entry had to be rebuilt from this row because the in-process
-  // store was lost (server restart) — a session a bare terminal would have dropped.
-  resumedAfterRestart Boolean @default(false)
-  resultText   String    @default("")
-  errorMessage String    @default("")
-  logLines     String    @default("[]") // JSON-encoded LogLine[]
-  currentStep  Int       @default(0)
+  worktreePath String    @default("")
+  // Which graph shape is being driven (implement-v3, fix-review-v2, …). The graph
+  // itself is code; this is the key that resolves it, so a run parked before a
+  // restart resumes on the same shape it started on.
+  graphId      String
+  // The skill the graph drives. An input to the run, kept on the row because the
+  // dashboard groups and compares by it.
+  skill        String    @default("")
+  // Promoted out of the nodes' structured output when they report it, because
+  // every one of these has a consumer that must not have to open a Step row:
+  // prUrl (Result tab, Resolve Review tab, delivery funnel), branch (Result tab),
+  // resultText (the run summary shown when a run finishes). None of them is
+  // sniffed out of the log any more — they are contract fields.
   prUrl        String    @default("")
   branch       String    @default("")
+  resultText   String    @default("")
+  // The single source of truth for where the run is. `phase`/`planStatus`-style
+  // derived flags are gone: state + currentNodeId is the whole answer.
+  state        String    @default("running") // running | waiting | succeeded | failed | cancelled
+  currentNodeId String   @default("")
+  // Why a run ended somewhere other than plain success: "" | cancelled |
+  // plan-rejected | blocked | budget | hop-limit | needs-review. `cancelled` and
+  // `plan-rejected` are human decisions and must never be scored as agent failures.
+  endReason    String    @default("")
+  errorMessage String    @default("")
+  // Claude CLI session the run's turns share, so a later node can --resume the
+  // context an earlier one built.
+  sessionId    String    @default("")
+  // State channels: nodeId → that node's validated structured output. Append-only;
+  // a node only ever writes its own key. This is what edges read.
+  channels     Json      @default("{}")
+  // Ceiling for the whole run in USD (0 = no run-level ceiling). Checked between
+  // nodes, so a cycle cannot spend without bound.
+  budgetUsd    Float     @default(0)
   model        String    @default("")
   effort       String    @default("")
   // The team's own estimate for this ticket, in hours, snapshotted when the run
   // started (0 = the ticket was never sized). Snapshotted rather than read live
   // because re-estimating a ticket later must not rewrite past runs' history.
   estimateHours Float    @default(0)
-  filesChanged String    @default("[]") // JSON-encoded FileChange[]
-  // Scalar summary of filesChanged, denormalized at finish() so the dashboard can
-  // aggregate change size without loading every run's (large) diff blob.
+  // Commit the worktree branched from. The run's whole change set is the diff of
+  // HEAD against this, computed by the harness (free, no tokens) rather than
+  // asked of the agent.
+  baseSha      String    @default("")
+  // Scalar summary of that diff, denormalized when the run ends so the dashboard
+  // can aggregate change size without loading the diff blob (which lives in an
+  // Artifact of kind "diff").
   filesTouched Int       @default(0)
   linesAdded   Int       @default(0)
   linesDeleted Int       @default(0)
-  // Token & cost usage reported by the Claude CLI's final `result` event,
-  // accumulated across all turns of the run. Collected from new runs only.
-  costUsd             Float @default(0)
-  inputTokens         Int   @default(0)
-  outputTokens        Int   @default(0)
-  cacheReadTokens     Int   @default(0)
-  cacheCreationTokens Int   @default(0)
-  numTurns            Int   @default(0)
-  durationMs          Int   @default(0)
+  // Set while the run waits at a gate and cleared on resume, with the elapsed
+  // time folded into humanWaitMs — so "the agent was computing" and "a human
+  // hadn't answered" stay separable across however many gate rounds happen.
+  parkedAt     DateTime?
+  humanWaitMs  Int       @default(0)
+  // Set when the run had to be rebuilt from this row because the in-process
+  // state was lost (server restart) — a session a bare terminal would have dropped.
+  resumedAfterRestart Boolean @default(false)
   startedAt    DateTime  @default(now())
-  completedAt  DateTime?
+  endedAt      DateTime?
 
-  @@index([adoTicketId])
+  steps       Step[]
+  artifacts   Artifact[]
+  transitions Transition[]
+
+  @@index([ticketId])
+  @@index([startedAt])
+}
+
+// One *attempt* at one node. A node re-entered by a cycle (or resumed after a
+// crash) produces another Step with attempt + 1 rather than overwriting the
+// first — the history of what was tried is the point.
+model Step {
+  id           String    @id @default(cuid())
+  runId        String
+  run          Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId       String
+  label        String    @default("")
+  attempt      Int       @default(1)
+  // Copied from the node definition so recovery can decide what to do with a
+  // Step still marked `running` without having to resolve the graph first:
+  // pure → rerun, local → resume, external → never auto-retry.
+  effects      String    @default("pure") // pure | local | external
+  status       String    @default("running") // running | succeeded | failed | abandoned
+  // The node's validated structured output (agent nodes: result.structured_output).
+  output       Json      @default("{}")
+  errorMessage String    @default("")
+  logLines     Json      @default("[]")
+  // Lease held while a process is driving this step, so two processes cannot
+  // claim the same node after a restart.
+  claimedAt    DateTime?
+  costUsd      Float     @default(0)
+  inputTokens  Int       @default(0)
+  outputTokens Int       @default(0)
+  cacheReadTokens Int    @default(0)
+  cacheCreationTokens Int @default(0)
+  numTurns     Int       @default(0)
+  durationMs   Int       @default(0)
+  startedAt    DateTime  @default(now())
+  endedAt      DateTime?
+
+  @@index([runId])
+  @@unique([runId, nodeId, attempt])
+}
+
+// Something a human reads or edits. The plan used to live only as .te/plan.md on
+// disk — a filesystem side channel the harness had to guess at. It is a first
+// class row now; the file is just where the agent drafts it.
+model Artifact {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind      String   // plan | feedback | diff
+  // A reviewer's edit creates a new version instead of overwriting the agent's,
+  // so "what the agent proposed" and "what the human approved" stay comparable.
+  version   Int      @default(1)
+  body      String
+  editedBy  String   @default("agent") // agent | human
+  createdAt DateTime @default(now())
+
+  @@index([runId, kind])
+  @@unique([runId, kind, version])
+}
+
+// Why the harness went from one node to the next. Four of these explain a run
+// better than a thousand lines of tool log, and they are what makes a graph
+// auditable rather than merely automated.
+model Transition {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  seq       Int
+  fromNode  String
+  toNode    String   // a node id, or "END" / "FAIL"
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([runId, seq])
 }
 
 // A run request the preflight checks rejected before the Claude CLI was ever

@@ -1,29 +1,16 @@
 import type { LogLine } from "../types";
-import type { Entry } from "./types";
 
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 export const stripAnsi = (s: string) => s.replace(ANSI, "");
 export const cleanPath = (s: string) => s.replace(/[\r\n]+/g, "").trim();
 
-// Pull-request URLs for GitHub and Azure DevOps (also matches GitLab merge requests).
-const PR_URL =
-  /https?:\/\/[^\s)"'\]]*(?:\/pull\/\d+|\/pullrequest\/\d+|\/-\/merge_requests\/\d+)/i;
-// Branch created via git checkout -b / switch -c, or targeted by gh pr create --head.
-const BRANCH_CMD =
-  /git\s+(?:checkout\s+-b|switch\s+-c)\s+(?:"([^"]+)"|'([^']+)'|(\S+))|gh\s+pr\s+create[^\n]*--head[= ]+(?:"([^"]+)"|'([^']+)'|(\S+))/i;
-
-// Scan free text / command output for a PR URL and branch name.
-export function detectArtifacts(entry: Entry, text: string) {
-  if (!entry.prUrl) {
-    const m = text.match(PR_URL);
-    if (m) entry.prUrl = m[0];
-  }
-  if (!entry.branch) {
-    const b = text.match(BRANCH_CMD);
-    if (b) entry.branch = (b[1] || b[2] || b[3] || b[4] || b[5] || b[6] || "").trim();
-  }
-}
+// There used to be a detectArtifacts() here that scanned the log with regexes for
+// a PR URL and a branch name. It is gone on purpose: the branch and the PR URL
+// are fields of a node's output contract now (IMPLEMENT_OUTPUT.branch,
+// PUBLISH_OUTPUT.prUrl), reported by the agent and validated by the CLI. Sniffing
+// them back out of free text was the same anti-pattern as inferring progress from
+// tool names — the harness guessing at state it should have been told.
 
 export function fmtDuration(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -40,11 +27,6 @@ export function safeParseJson<T>(s: string, fallback: T): T {
   }
 }
 
-export function safeParseLogs(s: string): LogLine[] {
-  try {
-    const v = JSON.parse(s);
-    return Array.isArray(v) ? (v as LogLine[]) : [];
-  } catch {
-    return [];
-  }
+export function asLogLines(v: unknown): LogLine[] {
+  return Array.isArray(v) ? (v as LogLine[]) : [];
 }

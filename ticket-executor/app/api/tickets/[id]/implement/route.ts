@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findOtherActiveTicketId, startExecution } from "@/lib/executionStore";
+import { findOtherActiveTicketId, startRun } from "@/lib/executionStore";
 import { prisma } from "@/lib/prisma";
 import { validateAgentAccess, validateRootRepo } from "@/lib/preflight";
 
@@ -86,11 +86,11 @@ export async function POST(
       }
     }
 
-    const executionId = await startExecution({ ticketId: id, ticketUrl, skill, project, rootRepo, prUrl, provider, model, effort, estimateHours, isolate: multiTicketMode });
+    const runId = await startRun({ ticketId: id, ticketUrl, skill, project, rootRepo, prUrl, provider, model, effort, estimateHours, isolate: multiTicketMode });
     // `warnings` are advisory: the run has started, but something worth showing
     // could not be verified up front.
     return NextResponse.json(
-      access.warnings.length ? { executionId, warnings: access.warnings } : { executionId }
+      access.warnings.length ? { runId, warnings: access.warnings } : { runId }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

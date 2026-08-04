@@ -5,7 +5,7 @@ import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel } from "@/lib/claudeOptions";
 import type { Ticket, TicketComment } from "@/lib/types";
-import { COLORS, EXEC_COLOR, EXEC_LABEL, avatar, card, execDot, initials, tintedCard } from "@/lib/ui";
+import { COLORS, RUN_COLOR, RUN_LABEL, avatar, card, runDot, initials, tintedCard } from "@/lib/ui";
 import { renderCommentBody } from "../helpers";
 import type { Action, OverrideField, RunSummary } from "../types";
 import LoadingRing from "../LoadingRing";
@@ -128,10 +128,10 @@ export default function OverviewTab({
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {history.map((run) => (
               <button key={run.id} onClick={(e) => onOpenRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s", ...card({ padding: "10px 13px", border: COLORS.borderSubtle }) }}>
-                <span style={{ ...execDot(run.status), width: "8px", height: "8px" }} />
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", flex: "0 0 auto" }}>{run.skillName}</span>
+                <span style={{ ...runDot(run.state), width: "8px", height: "8px" }} />
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", flex: "0 0 auto" }}>{run.skill}</span>
                 <span style={{ fontSize: "12px", color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
-                <span style={{ fontSize: "11.5px", fontWeight: 600, color: EXEC_COLOR[run.status] }}>{EXEC_LABEL[run.status]}</span>
+                <span style={{ fontSize: "11.5px", fontWeight: 600, color: RUN_COLOR[run.state] }}>{RUN_LABEL[run.state]}</span>
               </button>
             ))}
           </div>

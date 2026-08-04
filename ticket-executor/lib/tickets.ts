@@ -144,12 +144,12 @@ async function loadGithubReview(ticketId: string): Promise<ReviewData> {
 // yet (e.g. PR wasn't explicitly linked); GitHub has no link API at all and
 // relies on this exclusively.
 async function latestPrUrlForTicket(ticketId: string): Promise<string | null> {
-  const exec = await prisma.execution.findFirst({
-    where: { adoTicketId: ticketId, NOT: { prUrl: "" } },
+  const run = await prisma.run.findFirst({
+    where: { ticketId, NOT: { prUrl: "" } },
     orderBy: { startedAt: "desc" },
     select: { prUrl: true },
   });
-  return exec?.prUrl || null;
+  return run?.prUrl || null;
 }
 
 async function githubCreds(): Promise<{ url: string; token: string } | null> {

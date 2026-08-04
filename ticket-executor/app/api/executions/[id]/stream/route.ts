@@ -1,13 +1,13 @@
-import { getExecution, getPersistedExecution } from "@/lib/executionStore";
+import { getRun } from "@/lib/executionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Server-Sent Events endpoint for a running execution's live log/status —
+// Server-Sent Events endpoint for a running run's live log/progress —
 // replaces client-side 1.2s polling with push updates. Polls the in-process
 // store internally (cheap, no network) and only emits a `data:` frame when
-// the execution actually changed, closing the stream once it reaches a
-// terminal status (completed/failed) or the client disconnects.
+// the run actually changed, closing the stream once it reaches a terminal
+// state or parks at a gate, or the client disconnects.
 const POLL_MS = 700;
 
 export async function GET(
@@ -22,8 +22,8 @@ export async function GET(
       const encoder = new TextEncoder();
       let lastPayload = "";
 
-      const send = (execution: unknown) => {
-        const payload = JSON.stringify({ execution });
+      const send = (run: unknown) => {
+        const payload = JSON.stringify({ run });
         if (payload === lastPayload) return;
         lastPayload = payload;
         controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
@@ -31,18 +31,18 @@ export async function GET(
 
       const tick = async () => {
         if (closed) return;
-        const execution = getExecution(id) ?? (await getPersistedExecution(id));
-        if (!execution) {
-          if (!lastPayload) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: "Execution not found" })}\n\n`));
+        const run = await getRun(id);
+        if (!run) {
+          if (!lastPayload) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: "Run not found" })}\n\n`));
           controller.close();
           closed = true;
           return;
         }
-        send(execution);
-        // "awaiting-approval" is terminal for the stream too: no child process is
-        // running, and the run only moves again once the user resolves the plan
-        // (the client reopens the stream after that).
-        if (execution.status === "completed" || execution.status === "failed" || execution.status === "awaiting-approval") {
+        send(run);
+        // "waiting" is terminal for the stream too: no child process is alive, and
+        // the run only moves again once a human resolves the gate (the client
+        // reopens the stream after that).
+        if (run.state !== "running") {
           controller.close();
           closed = true;
           return;

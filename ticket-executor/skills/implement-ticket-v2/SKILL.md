@@ -1,7 +1,7 @@
 ---
 name: implement-ticket-v2
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab fully autonomously, end-to-end — branch, implement, verify, commit, push, PR — in a single non-interactive run
-version: 1.2.0
+version: 2.0.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations.
@@ -56,7 +56,8 @@ Also read the repository's root instruction files (`CLAUDE.md`, `AGENTS.md`) if 
 4. Implement the change, preserving existing behavior unless the ticket explicitly requires otherwise.
 5. Add/update unit tests when the change affects business logic, validation, mapping, branching, or edge cases — follow existing test style.
 6. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Compare the result against ticket + Acceptance Criteria and fix failures you caused before moving on.
-7. Commit the changes with a clear message, push the branch, and open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket.
+7. Commit the changes with a clear message and push the branch.
+8. Open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket. **Check for an existing PR/MR on this branch first** (`gh pr list --head <branch>`, `glab mr list --source-branch <branch>`, or the ADO MCP pull-request list filtered by source branch) — this run can be retried after a crash, and a second PR for the same branch is worse than no PR at all. If one exists, reuse its URL.
 
 ## Rules
 
@@ -65,31 +66,23 @@ Also read the repository's root instruction files (`CLAUDE.md`, `AGENTS.md`) if 
 - Comments: short, English, only for non-obvious logic — never for obvious code.
 - Tests are not mandatory for every change, but add them when they meaningfully verify behavior; never invent a new test structure.
 - Commit, push, and open the PR/MR automatically once implementation + verification are done — do not wait for explicit confirmation to do this (this skill supersedes any general "ask before committing" default).
+- Everything that leaves this machine (push, PR, tracker writes) happens in this single run, so make each of those steps safe to repeat: check whether it has already been done before doing it.
 - If verification cannot be completed, say exactly what and why — never claim tests/build passed when they didn't run.
 
 ## Output
 
-Return the final response with clear structure. Use only the sections below — skip a section entirely if it has nothing to report,
+The runner passes a JSON Schema and the CLI requires you to call
+`StructuredOutput` before the turn ends. **That call is your deliverable.** The
+prose in the transcript is for the human reading the log; the caller records and
+routes entirely on the structured fields.
 
-**Summary & Changes**
+Fill them honestly. In particular:
 
-| Category | Change | Purpose | Verification Result |
-|---|---|---|---|
-
-**Tests / Verification**
-
-| Item | Result | Notes |
-|---|---|---|
-| Unit tests | Passed / Not run / Failed | |
-| Build | Passed / Not run / Failed | |
-| Acceptance Criteria | Passed / Partial / Cannot verify | |
-
-**Branch / PR**
-
-| Provider | Branch | PR/MR URL |
-|---|---|---|
-
-**Notes/Assumptions** (only if you had to make a judgment call on ambiguous/missing info, including provider inference)
-
-| Assumption | Reasoning |
-|---|---|
+- `verification.tests` / `verification.build` are `passed` **only** if you
+  actually ran them and they passed. Use `not-run` when there was nothing to run.
+  Never report `passed` for a check you did not run.
+- `committed` / `pushed` describe what really happened, not what you intended.
+- `blocked.is` is `true` only on a hard external blocker you cannot work around,
+  with a one-sentence `reason`. This ends the run cleanly instead of leaving a
+  half-done ticket.
+- `prUrl` must be the real PR/MR URL.

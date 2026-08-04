@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, RefObject } from "react";
-import type { ExecStatus } from "@/lib/types";
+import type { UiRunState } from "@/lib/types";
 import { ringBorder, tintedCard } from "@/lib/ui";
 import type { LogLineView, StepView } from "../types";
 
@@ -10,7 +10,7 @@ type Props = {
   logLines: LogLineView[];
   logRef: RefObject<HTMLDivElement | null>;
   projectName: string;
-  status: ExecStatus;
+  state: UiRunState;
   statusLabel: string;
   logStatusStyle: CSSProperties;
   error?: string;
@@ -18,7 +18,7 @@ type Props = {
 
 // The 7-step workflow timeline plus the live claude-code terminal.
 export default function ExecutionTab({
-  steps, logLines, logRef, projectName, status, statusLabel, logStatusStyle, error,
+  steps, logLines, logRef, projectName, state, statusLabel, logStatusStyle, error,
 }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", animation: "fadeUp .35s both" }}>
@@ -55,11 +55,11 @@ export default function ExecutionTab({
                 <span style={l.style}>{l.text}</span>
               </div>
             ))}
-            {status === "running" && <span style={{ display: "inline-block", width: "8px", height: "15px", background: "var(--accent)", verticalAlign: "text-bottom", animation: "blink 1s step-end infinite", marginLeft: "0" }} />}
+            {state === "running" && <span style={{ display: "inline-block", width: "8px", height: "15px", background: "var(--accent)", verticalAlign: "text-bottom", animation: "blink 1s step-end infinite", marginLeft: "0" }} />}
           </div>
         </div>
       </div>
-      {status === "failed" && error && (
+      {state === "failed" && error && (
         <div style={{ display: "flex", gap: "13px", alignItems: "flex-start", ...tintedCard("danger") }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
           <div><div style={{ fontSize: "13.5px", fontWeight: 700, color: "#FF8F8F", marginBottom: "3px" }}>Execution failed</div><div style={{ fontSize: "13px", color: "#C7A8A8", lineHeight: 1.55 }}>{error}</div></div>

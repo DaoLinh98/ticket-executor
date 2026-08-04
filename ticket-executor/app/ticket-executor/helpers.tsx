@@ -1,21 +1,8 @@
-import type { LogLine, ReviewSummaryEntry } from "@/lib/types";
+import type { ReviewSummaryEntry } from "@/lib/types";
 
-// Heuristic: derive how many of the 7 steps a running log has reached.
-const STEP_PATTERNS = [
-  /\bcd \b|working director|resolv/i,
-  /\bado\b|mcp|reading ticket|ticket #|fetch.*ticket/i,
-  /checkout -b|create.*branch|switched to/i,
-  /implement|editing|writing|creat.*file|modif|\.tsx?|\.cs\b/i,
-  /\btest\b|lint|verif|npm run|dotnet|build/i,
-  /commit/i,
-  /pull request|\bpr #|gh pr/i,
-];
-export function deriveStep(logLines: LogLine[]): number {
-  const text = logLines.map((l) => l.text).join("\n");
-  let reached = 0;
-  for (let i = 0; i < STEP_PATTERNS.length; i++) if (STEP_PATTERNS[i].test(text)) reached = i + 1;
-  return reached;
-}
+// The log-scraping deriveStep() heuristic that used to live here is gone: a
+// run's progress is the state of its graph nodes, reported by the API, not a
+// guess made from regexes over the terminal output.
 
 // Render a comment body: color @mentions and keep line breaks (ADO-style).
 const MENTION_RE = /(@[A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)?)/g;

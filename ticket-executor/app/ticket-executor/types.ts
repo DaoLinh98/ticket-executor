@@ -1,40 +1,60 @@
 import type { CSSProperties, MouseEvent } from "react";
-import type { ExecPhase, ExecStatus, FileChange, LogLine, PlanStatus } from "@/lib/types";
+import type { FileChange, LogLine, RunState } from "@/lib/types";
 import type { ProviderId } from "@/lib/providers";
 
-// What the UI knows about the run currently attached to a ticket.
+/** One node of the run's graph as the API reports it. The progress list comes
+ *  from the graph the run is walking, so the UI no longer owns a step array. */
+export type NodeView = {
+  id: string;
+  label: string;
+  effects: string;
+  state: "pending" | "running" | "done" | "failed";
+  attempts: number;
+};
+
+// What the UI knows about the run currently attached to a ticket. Mirrors
+// `RunView` in lib/execution/queries.ts — the API's shape, not a second model.
 export type ExecView = {
-  executionId?: string;
-  status: ExecStatus;
-  skillName?: string;
+  runId?: string;
+  state: RunState;
+  skill?: string;
+  graphId?: string;
+  currentNodeId?: string;
+  nodes: NodeView[];
+  endReason?: string;
   logLines: LogLine[];
   resultText: string;
   error: string;
   prUrl?: string;
   branch?: string;
   duration?: string;
-  currentStep?: number;
-  // Token & cost usage reported by the Claude CLI, accumulated across the run.
+  // Token & cost usage summed from the run's Step rows.
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
-  // Two-phase (implement-ticket-v3) run state — drives the Plan tab.
-  phase?: ExecPhase;
-  planStatus?: PlanStatus;
+  /** Latest plan artifact — drives the Plan tab when the graph has a gate. */
   planMarkdown?: string;
+  filesChanged?: FileChange[];
+  /** nodeId → that node's validated structured output. The Result tab renders
+   *  verification / deviations / assumptions straight out of this. */
+  channels?: Record<string, Record<string, unknown>>;
 };
 
 // One row of a ticket's run history (from the DB).
 export type RunSummary = {
   id: string;
-  status: ExecStatus;
-  skillName: string;
+  state: RunState;
+  skill: string;
   prUrl: string;
   branch: string;
   startedAt: string;
   duration?: string;
   resultText?: string;
+  endReason?: string;
   filesChanged?: FileChange[];
+  filesTouched?: number;
+  linesAdded?: number;
+  linesDeleted?: number;
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;

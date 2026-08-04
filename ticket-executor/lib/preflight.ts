@@ -238,10 +238,21 @@ function skillChecks(): Check[] {
       };
     }
     if (s.status === "outdated") {
+      // A major-version gap is not "slightly behind": the 2.x contract is what
+      // makes a skill answer with StructuredOutput and stop before publishing.
+      // A 1.x copy returns prose the runner cannot route on, so every node fails
+      // — block rather than warn, since the log would never explain why.
+      const majorGap = parseInt(s.bundledVersion, 10) > parseInt(s.installedVersion ?? "0", 10);
       return {
-        ...base, level: "warning" as const, status: "warn" as const,
-        message: `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion}.`,
-        fix: "Update it to pick up the newer instructions — an old skill fails in ways the log won't explain.",
+        ...base,
+        level: majorGap ? ("blocker" as const) : ("warning" as const),
+        status: majorGap ? ("fail" as const) : ("warn" as const),
+        message: majorGap
+          ? `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion} — incompatible contract.`
+          : `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion}.`,
+        fix: majorGap
+          ? "Update it: a 1.x skill answers in prose, but the runner now routes on the structured output only 2.x returns, so every run would fail at its first node."
+          : "Update it to pick up the newer instructions — an old skill fails in ways the log won't explain.",
       };
     }
     if (s.status === "modified") {

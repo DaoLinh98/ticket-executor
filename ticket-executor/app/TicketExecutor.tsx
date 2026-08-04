@@ -21,15 +21,15 @@ import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
-import { deriveStep, reviewFingerprint } from "./ticket-executor/helpers";
+import { reviewFingerprint } from "./ticket-executor/helpers";
 import type {
-  Action, ExecView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
+  Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
-import type { CommitFile, CommitSummary, ExecStatus, FileChange, LogLine, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
+import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import {
-  EXEC_COLOR,
+  RUN_COLOR,
   actionInfoFor,
   branchOf,
   clipCorner,
@@ -38,13 +38,39 @@ import {
   nextStatusAfter,
   pill,
   ringBorder,
-  stepsForSkill,
-  stepsIndexMap,
 } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
 // in ./ticket-executor/*.
+
+// One place that turns the API's RunView into the UI's ExecView. This used to be
+// written out three times (open a past run / stream update / rehydrate), which is
+// how the three drifted apart.
+function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: string): ExecView {
+  return {
+    runId: run.id as string,
+    state: run.state as RunState,
+    skill: (run.skill as string) || prev?.skill || skillHint,
+    graphId: run.graphId as string | undefined,
+    currentNodeId: run.currentNodeId as string | undefined,
+    nodes: (run.nodes as ExecView["nodes"]) ?? [],
+    endReason: run.endReason as string | undefined,
+    logLines: (run.logLines as LogLine[]) ?? [],
+    resultText: (run.resultText as string) ?? "",
+    error: (run.errorMessage as string) ?? "",
+    prUrl: (run.prUrl as string) ?? "",
+    branch: (run.branch as string) ?? "",
+    duration: run.duration as string | undefined,
+    costUsd: run.costUsd as number | undefined,
+    inputTokens: run.inputTokens as number | undefined,
+    outputTokens: run.outputTokens as number | undefined,
+    planMarkdown: (run.planMarkdown as string) || prev?.planMarkdown,
+    filesChanged: (run.filesChanged as FileChange[]) ?? [],
+    channels: (run.channels as ExecView["channels"]) ?? {},
+  };
+}
+
 export default function TicketExecutor() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loadError, setLoadError] = useState<string>("");
@@ -104,6 +130,9 @@ export default function TicketExecutor() {
   const [openCommit, setOpenCommit] = useState<CommitSummary | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
+  // skill → the node list its graph walks, so the progress timeline can be drawn
+  // before a run exists. Fetched once; the graphs are static code on the server.
+  const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; effects: string }[]>>({});
   const [reviewReadMap, setReviewReadMap] = useState<Record<string, { seen: string; readAt: string }>>({});
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
@@ -275,7 +304,7 @@ export default function TicketExecutor() {
     try {
       const r = await fetch(`/api/tickets/${ticketId}/executions`);
       const data = await r.json();
-      setHistory((h) => ({ ...h, [ticketId]: data.executions ?? [] }));
+      setHistory((h) => ({ ...h, [ticketId]: data.runs ?? [] }));
     } catch {
       /* ignore */
     }
@@ -298,6 +327,16 @@ export default function TicketExecutor() {
   useEffect(() => {
     if (selectedId) loadHistory(selectedId);
   }, [selectedId, loadHistory]);
+
+  // The graphs are static server-side code, so one fetch at mount is enough.
+  useEffect(() => {
+    fetch("/api/graphs")
+      .then((r) => r.json())
+      .then((d) => setGraphOutlines(d.outlines ?? {}))
+      .catch(() => {
+        /* the timeline just stays empty until a run reports its own nodes */
+      });
+  }, []);
 
   useEffect(() => {
     if (selectedId) loadComments(selectedId, settings.provider, selectedProject);
@@ -423,30 +462,10 @@ export default function TicketExecutor() {
     try {
       const r = await fetch(`/api/executions/${execId}`);
       const data = await r.json();
-      const ex = data.execution;
-      if (!ex) return;
-      setExecs((s) => ({
-        ...s,
-        [ticketId]: {
-          executionId: execId,
-          status: ex.status,
-          skillName: ex.skillName,
-          logLines: ex.logLines ?? [],
-          resultText: ex.resultText ?? "",
-          error: ex.errorMessage ?? "",
-          prUrl: ex.prUrl ?? "",
-          branch: ex.branch ?? "",
-          duration: ex.duration,
-          costUsd: ex.costUsd,
-          inputTokens: ex.inputTokens,
-          outputTokens: ex.outputTokens,
-          currentStep: ex.currentStep,
-          phase: ex.phase,
-          planStatus: ex.planStatus,
-          planMarkdown: ex.planMarkdown,
-        },
-      }));
-      setTab(ex.status === "completed" ? "result" : ex.status === "awaiting-approval" ? "plan" : "execution");
+      const run = data.run;
+      if (!run) return;
+      setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId]) }));
+      setTab(run.state === "succeeded" ? "result" : run.state === "waiting" ? "plan" : "execution");
     } catch {
       /* ignore */
     }
@@ -659,14 +678,14 @@ export default function TicketExecutor() {
   const mergedSkillOptions = Array.from(new Set([...skillOptions, ...savedOptions.skill]));
 
   // ---- live execution updates: SSE (falls back to 1.2s polling) ----
-  const stopTracking = useCallback((executionId: string) => {
-    if (pollTimers.current[executionId]) {
-      clearInterval(pollTimers.current[executionId]);
-      delete pollTimers.current[executionId];
+  const stopTracking = useCallback((runId: string) => {
+    if (pollTimers.current[runId]) {
+      clearInterval(pollTimers.current[runId]);
+      delete pollTimers.current[runId];
     }
-    if (sseConnections.current[executionId]) {
-      sseConnections.current[executionId].close();
-      delete sseConnections.current[executionId];
+    if (sseConnections.current[runId]) {
+      sseConnections.current[runId].close();
+      delete sseConnections.current[runId];
     }
   }, []);
 
@@ -675,36 +694,16 @@ export default function TicketExecutor() {
   // completion side effects (toast/notify, provider status sync, history
   // reload, batch-queue slot release). Returns true once terminal.
   const applyExecutionUpdate = useCallback(
-    async (ticketId: string, executionId: string, ex: Record<string, unknown> | undefined) => {
-      if (!ex) return false;
-      const status = ex.status as ExecStatus;
-      setExecs((s) => ({
-        ...s,
-        [ticketId]: {
-          executionId,
-          status,
-          skillName: (ex.skillName as string) ?? s[ticketId]?.skillName,
-          logLines: (ex.logLines as LogLine[]) ?? [],
-          resultText: (ex.resultText as string) ?? "",
-          error: (ex.errorMessage as string) ?? "",
-          prUrl: (ex.prUrl as string) ?? "",
-          branch: (ex.branch as string) ?? "",
-          duration: ex.duration as string | undefined,
-          costUsd: ex.costUsd as number | undefined,
-          inputTokens: ex.inputTokens as number | undefined,
-          outputTokens: ex.outputTokens as number | undefined,
-          currentStep: ex.currentStep as number,
-          phase: ex.phase as ExecView["phase"],
-          planStatus: ex.planStatus as ExecView["planStatus"],
-          planMarkdown: (ex.planMarkdown as string) ?? s[ticketId]?.planMarkdown,
-        },
-      }));
+    async (ticketId: string, runId: string, run: Record<string, unknown> | undefined) => {
+      if (!run) return false;
+      const state = run.state as RunState;
+      setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId]) }));
 
       // Plan gate: the run parked itself with no live process. Stop the stream,
       // free any batch slot, surface the plan for review — but run none of the
       // completion side effects (status sync, PR toast, history reload).
-      if (status === "awaiting-approval") {
-        stopTracking(executionId);
+      if (state === "waiting") {
+        stopTracking(runId);
         try { window.__reactor?.setMode("idle"); } catch { }
         if (ticketId === selectedIdRef.current) setTab("plan");
         showToast(`#${ticketId} — plan ready for review`);
@@ -713,16 +712,16 @@ export default function TicketExecutor() {
         return true;
       }
 
-      if (status !== "completed" && status !== "failed") return false;
+      if (state === "running") return false;
 
-      stopTracking(executionId);
+      stopTracking(runId);
       try {
-        window.__reactor?.setMode(status === "completed" ? "completed" : "idle");
+        window.__reactor?.setMode(state === "succeeded" ? "completed" : "idle");
       } catch { }
-      if (status === "completed") {
+      if (state === "succeeded") {
         // Advance the ticket status based on the skill that ran, and sync it to the
         // real provider (ADO work item state / GitHub status label) — not just locally.
-        const next = nextStatusAfter((ex.skillName as string) ?? "", "");
+        const next = nextStatusAfter((run.skill as string) ?? "", "");
         if (next) {
           try {
             const sr = await fetch(`/api/tickets/${ticketId}/status`, {
@@ -750,7 +749,7 @@ export default function TicketExecutor() {
       }
       // A fix-code-review run (v2 or v3) resolves PR threads itself — refetch
       // the Resolve Review data so the tab reflects the new state.
-      if (isFixReviewSkill(ex.skillName as string)) {
+      if (isFixReviewSkill(run.skill as string)) {
         setReviews((s) => {
           const { [ticketId]: _drop, ...rest } = s;
           return rest;
@@ -766,36 +765,36 @@ export default function TicketExecutor() {
   );
 
   const startPollingFallback = useCallback(
-    (ticketId: string, executionId: string) => {
-      if (pollTimers.current[executionId]) return;
+    (ticketId: string, runId: string) => {
+      if (pollTimers.current[runId]) return;
       const poll = async () => {
         try {
-          const r = await fetch(`/api/executions/${executionId}`);
+          const r = await fetch(`/api/executions/${runId}`);
           const data = await r.json();
-          await applyExecutionUpdate(ticketId, executionId, data.execution);
+          await applyExecutionUpdate(ticketId, runId, data.run);
         } catch {
           /* keep polling */
         }
       };
-      pollTimers.current[executionId] = setInterval(poll, 1200);
+      pollTimers.current[runId] = setInterval(poll, 1200);
       poll();
     },
     [applyExecutionUpdate]
   );
 
   const startPolling = useCallback(
-    (ticketId: string, executionId: string) => {
-      if (pollTimers.current[executionId] || sseConnections.current[executionId]) return;
+    (ticketId: string, runId: string) => {
+      if (pollTimers.current[runId] || sseConnections.current[runId]) return;
       if (typeof EventSource === "undefined") {
-        startPollingFallback(ticketId, executionId);
+        startPollingFallback(ticketId, runId);
         return;
       }
-      const es = new EventSource(`/api/executions/${executionId}/stream`);
-      sseConnections.current[executionId] = es;
+      const es = new EventSource(`/api/executions/${runId}/stream`);
+      sseConnections.current[runId] = es;
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
-          void applyExecutionUpdate(ticketId, executionId, data.execution);
+          void applyExecutionUpdate(ticketId, runId, data.run);
         } catch {
           /* ignore malformed frame */
         }
@@ -804,10 +803,10 @@ export default function TicketExecutor() {
         // The stream endpoint closes the connection normally once the run
         // reaches a terminal status — only fall back to polling if we're
         // still tracking this execution (i.e. it errored before finishing).
-        if (!sseConnections.current[executionId]) return;
+        if (!sseConnections.current[runId]) return;
         es.close();
-        delete sseConnections.current[executionId];
-        startPollingFallback(ticketId, executionId);
+        delete sseConnections.current[runId];
+        startPollingFallback(ticketId, runId);
       };
     },
     [startPollingFallback]
@@ -817,37 +816,17 @@ export default function TicketExecutor() {
   // covers the case where the page reloaded (or the ticket is reselected)
   // after a run finished, so the CTA/result tab don't forget it happened.
   const hydrateExecution = useCallback(
-    async (ticketId: string, executionId: string, skillNameHint?: string) => {
+    async (ticketId: string, runId: string, skillHint?: string) => {
       try {
-        const r = await fetch(`/api/executions/${executionId}`);
+        const r = await fetch(`/api/executions/${runId}`);
         const data = await r.json();
-        const ex = data.execution;
-        if (!ex) return;
-        setExecs((s) => ({
-          ...s,
-          [ticketId]: {
-            executionId,
-            status: ex.status,
-            skillName: ex.skillName ?? skillNameHint,
-            logLines: ex.logLines ?? [],
-            resultText: ex.resultText ?? "",
-            error: ex.errorMessage ?? "",
-            prUrl: ex.prUrl ?? "",
-            branch: ex.branch ?? "",
-            duration: ex.duration,
-            costUsd: ex.costUsd,
-            inputTokens: ex.inputTokens,
-            outputTokens: ex.outputTokens,
-            currentStep: ex.currentStep,
-            phase: ex.phase,
-            planStatus: ex.planStatus,
-            planMarkdown: ex.planMarkdown,
-          },
-        }));
-        if (ex.status === "running") {
-          startPolling(ticketId, executionId);
-        } else if (ex.status === "completed") {
-          const next = nextStatusAfter(ex.skillName ?? skillNameHint ?? "", "");
+        const run = data.run;
+        if (!run) return;
+        setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId], skillHint) }));
+        if (run.state === "running") {
+          startPolling(ticketId, runId);
+        } else if (run.state === "succeeded") {
+          const next = nextStatusAfter(run.skill ?? skillHint ?? "", "");
           if (next) setStatusOverrides((so) => (so[ticketId] ? so : { ...so, [ticketId]: next }));
         }
       } catch {
@@ -866,10 +845,10 @@ export default function TicketExecutor() {
     if (!selectedId) return;
     const list = history[selectedId];
     if (!list || execs[selectedId]) return;
-    const running = list.find((r) => r.status === "running" || r.status === "awaiting-approval");
-    const completedWithPr = list.find((r) => r.status === "completed" && r.prUrl);
-    const target = running ?? completedWithPr ?? list[0];
-    if (target) hydrateExecution(selectedId, target.id, target.skillName);
+    const active = list.find((r) => r.state === "running" || r.state === "waiting");
+    const shippedWithPr = list.find((r) => r.state === "succeeded" && r.prUrl);
+    const target = active ?? shippedWithPr ?? list[0];
+    if (target) hydrateExecution(selectedId, target.id, target.skill);
   }, [selectedId, history, execs, hydrateExecution]);
 
   // Core "start a run for this ticket" logic, usable both for the selected
@@ -882,13 +861,13 @@ export default function TicketExecutor() {
     async (t: Ticket, opts?: { skillOverride?: string; prUrl?: string; isActive?: boolean }): Promise<boolean> => {
       const { skillOverride, prUrl, isActive = t.id === selectedId } = opts ?? {};
       const cur = execs[t.id];
-      if (cur && (cur.status === "running" || cur.status === "awaiting-approval")) return false;
+      if (cur && (cur.state === "running" || cur.state === "waiting")) return false;
       // Single-ticket mode: refuse to start a second run while another ticket
       // occupies the one slot (mirrors the CTA's disabled state; guards the
       // batch-run path too, which bypasses that button).
       if (!settings.multiTicketMode) {
         const busyId = Object.entries(execs).find(
-          ([id, e]) => id !== t.id && (e.status === "running" || e.status === "awaiting-approval")
+          ([id, e]) => id !== t.id && (e.state === "running" || e.state === "waiting")
         )?.[0];
         if (busyId) {
           if (isActive) showToast(`Ticket #${busyId} is currently running. Multi-ticket mode is off — finish or cancel it first.`);
@@ -933,7 +912,7 @@ export default function TicketExecutor() {
       if (isActive) setTab("execution");
       setExecs((s) => ({
         ...s,
-        [t.id]: { status: "running", logLines: [], resultText: "", error: "" },
+        [t.id]: { state: "running", skill: skillName, nodes: [], logLines: [], resultText: "", error: "" },
       }));
       if (isActive) {
         try {
@@ -962,7 +941,7 @@ export default function TicketExecutor() {
           }),
         });
         const data = await r.json();
-        if (!r.ok || !data.executionId) {
+        if (!r.ok || !data.runId) {
           // A 400 means the run was rejected before the CLI was spawned (bad Root
           // repo, missing project) — nothing ran, so don't leave a failed run row
           // behind; just surface why and drop back to the previous state.
@@ -982,28 +961,32 @@ export default function TicketExecutor() {
           setExecs((s) => ({
             ...s,
             [t.id]: {
-              status: "failed",
+              state: "failed",
+              skill: skillName,
+              nodes: [],
               logLines: [],
               resultText: "",
-              error: data.error || "Failed to start execution",
+              error: data.error || "Failed to start the run",
             },
           }));
           if (isActive) window.__reactor?.setMode("idle");
           return false;
         }
-        setExecs((s) => ({ ...s, [t.id]: { ...s[t.id], executionId: data.executionId } }));
+        setExecs((s) => ({ ...s, [t.id]: { ...s[t.id], runId: data.runId } }));
         // The run started, but the server couldn't verify something worth knowing
         // up front (e.g. MCP connectivity was never deep-checked).
         if (Array.isArray(data.warnings) && data.warnings.length && isActive) {
           showToast(String(data.warnings[0]), 7000, "error");
         }
-        startPolling(t.id, data.executionId);
+        startPolling(t.id, data.runId);
         return true;
       } catch (err) {
         setExecs((s) => ({
           ...s,
           [t.id]: {
-            status: "failed",
+            state: "failed",
+            skill: skillName,
+            nodes: [],
             logLines: [],
             resultText: "",
             error: err instanceof Error ? err.message : String(err),
@@ -1078,7 +1061,7 @@ export default function TicketExecutor() {
   const cancelImplement = useCallback(
     async (e?: MouseEvent) => {
       const t = tickets.find((x) => x.id === selectedId);
-      const execId = t ? execs[t.id]?.executionId : undefined;
+      const execId = t ? execs[t.id]?.runId : undefined;
       if (!execId) return;
       fireBoltFromEvent(e);
       try {
@@ -1095,7 +1078,7 @@ export default function TicketExecutor() {
   // cancel it becomes a failed run. `plan` is the (possibly edited) markdown.
   const resolvePlan = useCallback(
     async (ticketId: string, action: "approve" | "revise" | "cancel", plan?: string, feedback?: string) => {
-      const execId = execs[ticketId]?.executionId;
+      const execId = execs[ticketId]?.runId;
       if (!execId) return;
       setPlanBusy((b) => ({ ...b, [ticketId]: action }));
       try {
@@ -1110,13 +1093,13 @@ export default function TicketExecutor() {
           return;
         }
         if (action === "cancel") {
-          setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], status: "failed", error: "Plan rejected — run cancelled." } }));
+          setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], state: "failed", endReason: "plan-rejected", error: "Plan rejected — run cancelled." } }));
           showToast(`#${ticketId} run cancelled`);
           loadHistory(ticketId);
           return;
         }
         // Approve or revise → the run is live again; resume tracking it.
-        setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], status: "running", planStatus: action === "approve" ? "approved" : "rejected" } }));
+        setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], state: "running" } }));
         if (ticketId === selectedIdRef.current) {
           setTab(action === "approve" ? "execution" : "plan");
           try { window.__reactor?.setMode("running"); } catch { }
@@ -1133,12 +1116,12 @@ export default function TicketExecutor() {
     fireBoltFromEvent(e);
     const ex = execs[id];
     setSelectedId(id);
-    setTab(ex && ex.status === "running" ? "execution" : "overview");
+    setTab(ex && ex.state === "running" ? "execution" : "overview");
   };
 
   // ---- derived ----
-  const execStatusOf = (id: string): ExecStatus => execs[id]?.status ?? "not started";
-  const activeCount = Object.values(execs).filter((e) => e.status === "running" || e.status === "awaiting-approval").length;
+  const execStatusOf = (id: string): UiRunState => execs[id]?.state ?? "none";
+  const activeCount = Object.values(execs).filter((e) => e.state === "running" || e.state === "waiting").length;
   const reviewBadgeCount = reviewSummary.filter((r) => reviewReadMap[r.ticketId]?.seen !== reviewFingerprint(r)).length;
 
   const q = search.trim().toLowerCase();
@@ -1159,19 +1142,20 @@ export default function TicketExecutor() {
   const effStatus = t ? getStatus(t) : "";
   const actionInfo = t ? actionInfoFor(effStatus) : null;
   const ex = t ? execs[t.id] : undefined;
-  const st: ExecStatus = ex ? ex.status : "not started";
-  const execEnabled = st !== "not started";
-  const resultEnabled = st === "completed";
-  // The Plan tab exists only for a two-phase run that has produced (or is
-  // producing) a plan — i.e. once a v3 run is underway.
-  const planEnabled = !!ex?.planMarkdown || st === "awaiting-approval" || (ex?.phase === "plan" && st === "running");
+  const st: UiRunState = ex ? ex.state : "none";
+  const execEnabled = st !== "none";
+  const resultEnabled = st === "succeeded";
+  // The Plan tab exists only where the run's graph actually has a gate, which is
+  // now read off the node list rather than from a hard-coded list of skills.
+  const hasGate = !!ex?.nodes?.some((n) => n.id === "review");
+  const planEnabled = !!ex?.planMarkdown || st === "waiting" || (hasGate && st === "running");
   const planBusyForSel = t ? planBusy[t.id] : undefined;
 
   // Single-ticket mode: only one run at a time. Find any other ticket currently
   // occupying the one slot, so this ticket's CTA can be blocked while it does.
   const busyOtherTicketId = !settings.multiTicketMode
     ? Object.entries(execs).find(
-        ([id, e]) => id !== selectedId && (e.status === "running" || e.status === "awaiting-approval")
+        ([id, e]) => id !== selectedId && (e.state === "running" || e.state === "waiting")
       )?.[0]
     : undefined;
 
@@ -1211,19 +1195,19 @@ export default function TicketExecutor() {
       onClick: cancelImplement,
       style: ctaButtonStyle("warning"),
     };
-  else if (st === "awaiting-approval")
+  else if (st === "waiting")
     action = {
       label: "Review Plan", spinner: false, playIcon: false,
       onClick: (e) => { fireBoltFromEvent(e); setTab("plan"); },
       style: ctaButtonStyle("ghost"),
     };
-  else if (st === "completed")
+  else if (st === "succeeded")
     action = {
       label: "Show Result", spinner: false, playIcon: false,
       onClick: (e) => { fireBoltFromEvent(e); setTab("result"); },
       style: ctaButtonStyle("success"),
     };
-  else if (st === "failed" && isFixReviewSkill(ex?.skillName))
+  else if (st === "failed" && isFixReviewSkill(ex?.skill))
     action = {
       label: "Retry Fix Code Review",
       spinner: false,
@@ -1244,14 +1228,14 @@ export default function TicketExecutor() {
   action.style.position = "relative";
   action.style.overflow = "hidden";
   action.style.transition = "filter .18s, transform .12s, box-shadow .25s";
-  if (st === "not started" || st === "failed")
+  if (st === "none" || st === "failed" || st === "cancelled")
     action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
   // Gate: a run can only start when the effective status maps to an action.
   // Exception: retrying a failed fix-code-review run (v2 or v3) is always valid —
   // it isn't driven by ticket status, so it must bypass the status-based gate.
-  const isFixReviewRetry = st === "failed" && isFixReviewSkill(ex?.skillName);
-  const startsNewRun = st === "not started" || st === "failed";
+  const isFixReviewRetry = st === "failed" && isFixReviewSkill(ex?.skill);
+  const startsNewRun = st === "none" || st === "failed" || st === "cancelled";
   // In single-ticket mode, a run already occupying the one slot blocks every
   // other ticket's CTA, regardless of what action it would otherwise show.
   const blockedBySingleMode = !!t && !!busyOtherTicketId && (startsNewRun || isFixReviewRetry);
@@ -1277,39 +1261,39 @@ export default function TicketExecutor() {
 
   // Secondary "next action" button — after a run completes, offer the action that
   // matches the (auto-advanced) status, e.g. "Review Code" once implement finishes.
-  const showSecondaryAction = st === "completed" && !!actionInfo;
+  const showSecondaryAction = st === "succeeded" && !!actionInfo;
   const secondaryAction = showSecondaryAction
     ? { label: actionInfo!.label, onClick: (e?: MouseEvent) => startImplement(e), style: ctaButtonStyle("ghost") }
     : null;
   const secondaryCtaButtonStyle: CSSProperties = { ...ctaButtonStyle("ghost", { height: "38px" }), padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
 
   const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
-  const ctaTitle = blockedBySingleMode ? "Another ticket is running" : gated ? "No action for this status" : st === "completed" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
+  const ctaTitle = blockedBySingleMode ? "Another ticket is running" : gated ? "No action for this status" : st === "succeeded" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
     ? blockedBySingleMode ? `Ticket #${busyOtherTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.`
       : gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
-      : st === "completed" ? "Open the Result tab to review what Claude changed."
+      : st === "succeeded" ? "Open the Result tab to review what Claude changed."
         : st === "failed" ? "Fix the blocker below, then retry the run."
           : st === "running" ? "Watch the execution stream on the Execution tab."
             : `Claude Code will cd into the repo and run ${getSkill(t)} for ${getArea(t)}.`
     : "";
 
-  // steps — filtered to the skill actually driving this run (or that would
-  // run next), so a one-shot (v2) skill's list never shows the plan-phase-only
-  // "Draft plan" / "Awaiting your review" steps it can never reach.
-  const skillForSteps = ex?.skillName ?? (t ? getSkill(t) : undefined);
-  const visibleSteps = stepsForSkill(skillForSteps);
-  const stepIndexMap = stepsIndexMap(skillForSteps);
-  const rawCur = ex?.currentStep ?? (ex ? deriveStep(ex.logLines) : 0);
-  // Translate a raw STEPS index into the filtered list's index — a hidden
-  // step (mapped to -1) means every visible step up to the gate is done.
-  const cur = stepIndexMap[rawCur] >= 0 ? stepIndexMap[rawCur] : visibleSteps.length;
-  const steps: StepView[] = visibleSteps.map((label, i) => {
-    let sst: "pending" | "active" | "done" | "failed" = "pending";
-    if (st === "completed") sst = "done";
-    else if (st === "failed") sst = i < cur ? "done" : i === cur ? "failed" : "pending";
-    else if (st === "running" || st === "awaiting-approval") sst = i < cur ? "done" : i === cur ? "active" : "pending";
-    const last = i === visibleSteps.length - 1;
+  // Steps come from the graph the run is walking. Before a run exists we draw
+  // the outline of the graph the chosen skill *would* walk, fetched once from
+  // /api/graphs — either way the step list has exactly one source of truth.
+  const skillForSteps = ex?.skill ?? (t ? getSkill(t) : undefined);
+  const outline = skillForSteps ? graphOutlines[skillForSteps] ?? [] : [];
+  const runNodes = ex?.nodes?.length ? ex.nodes : undefined;
+  const stepSource: { id: string; label: string; state: NodeView["state"] }[] = runNodes
+    ? runNodes.map((n) => ({ id: n.id, label: n.label, state: n.state }))
+    : outline.map((n) => ({ id: n.id, label: n.label, state: "pending" as const }));
+
+  const steps: StepView[] = stepSource.map((n, i) => {
+    // A finished run marks every node it actually walked as done; nodes it never
+    // reached stay pending rather than pretending to have succeeded.
+    const sst: "pending" | "active" | "done" | "failed" =
+      n.state === "done" ? "done" : n.state === "failed" ? "failed" : n.state === "running" ? "active" : "pending";
+    const last = i === stepSource.length - 1;
     const db: CSSProperties = {
       position: "relative", width: "24px", height: "24px", borderRadius: "50%",
       display: "flex", alignItems: "center", justifyContent: "center",
@@ -1330,7 +1314,7 @@ export default function TicketExecutor() {
       color: sst === "done" ? "#C7CCD8" : sst === "active" ? "#F3F5F9" : sst === "failed" ? "#FF8F8F" : "#5B6273",
       fontWeight: sst === "active" ? 600 : 500,
     };
-    return { label, num: i + 1, dotStyle, connectorStyle, labelStyle, showCheck: sst === "done", showSpinner: sst === "active", showX: sst === "failed", showNum: sst === "pending" };
+    return { label: n.label, num: i + 1, dotStyle, connectorStyle, labelStyle, showCheck: sst === "done", showSpinner: sst === "active", showX: sst === "failed", showNum: sst === "pending" };
   });
 
   const kindColor: Record<string, string> = {
@@ -1345,8 +1329,9 @@ export default function TicketExecutor() {
       whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, flex: 1, animation: "lineIn .3s ease-out both",
     } as CSSProperties,
   }));
-  const logStatusMap: Record<ExecStatus, [string, string]> = {
-    running: ["running", "#F5B341"], "awaiting-approval": ["plan review", "#9BA6E8"], completed: ["done", "#35D6A4"], failed: ["failed", "#FF6B6B"], "not started": ["idle", "#5B6273"],
+  const logStatusMap: Record<UiRunState, [string, string]> = {
+    running: ["running", "#F5B341"], waiting: ["your review", "#9BA6E8"], succeeded: ["done", "#35D6A4"],
+    failed: ["failed", "#FF6B6B"], cancelled: ["cancelled", "#5B6273"], none: ["idle", "#5B6273"],
   };
   const [lsl, lsc] = logStatusMap[st];
   const logStatusStyle: CSSProperties = {
@@ -1359,23 +1344,23 @@ export default function TicketExecutor() {
   const selBranch = t ? branchOf(t.id, t.title) : "";
   const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
   const selCdCommand = t ? `cd ${getRootRepo(t) || "<set ROOT REPO>"} && claude --model ${getModel(t)} --effort ${getEffort(t)}` : "";
-  const selExecPillStyle: CSSProperties = pill({ color: EXEC_COLOR[st], background: "rgba(255,255,255,.03)", border: EXEC_COLOR[st] + "44", size: "md", weight: 600 });
+  const selExecPillStyle: CSSProperties = pill({ color: RUN_COLOR[st], background: "rgba(255,255,255,.03)", border: RUN_COLOR[st] + "44", size: "md", weight: 600 });
 
   // Split the result into per-skill sections (Implementation / Code Review),
   // one section per completed run this ticket has been through (not just the
   // latest of each skill) — sourced from history so it survives page reloads.
-  const completedRuns = (t ? history[t.id] : undefined)?.filter((r) => r.status === "completed" && r.resultText) ?? [];
+  const completedRuns = (t ? history[t.id] : undefined)?.filter((r) => r.state === "succeeded" && r.resultText) ?? [];
   const runsPerSkill = completedRuns.reduce<Record<string, number>>((acc, r) => {
-    acc[r.skillName] = (acc[r.skillName] ?? 0) + 1;
+    acc[r.skill] = (acc[r.skill] ?? 0) + 1;
     return acc;
   }, {});
   const resultSections: ResultSection[] = completedRuns
     .map((r) => ({
       key: r.id,
-      skill: r.skillName,
-      title: runsPerSkill[r.skillName] > 1
-        ? `${RESULT_SKILL_TITLE[r.skillName] || r.skillName} — ${new Date(r.startedAt).toLocaleString()}`
-        : RESULT_SKILL_TITLE[r.skillName] || r.skillName,
+      skill: r.skill,
+      title: runsPerSkill[r.skill] > 1
+        ? `${RESULT_SKILL_TITLE[r.skill] || r.skill} — ${new Date(r.startedAt).toLocaleString()}`
+        : RESULT_SKILL_TITLE[r.skill] || r.skill,
       markdown: r.resultText!,
       filesChanged: r.filesChanged ?? [],
     }))
@@ -1383,7 +1368,7 @@ export default function TicketExecutor() {
 
   const EMPTY_REVIEW: ReviewData = { pr: null, comments: [], unresolvedCount: 0 };
   const ticketReview: ReviewData = t ? reviews[t.id] ?? EMPTY_REVIEW : EMPTY_REVIEW;
-  const fixReviewRunning = (st === "running" || st === "awaiting-approval") && isFixReviewSkill(ex?.skillName);
+  const fixReviewRunning = (st === "running" || st === "waiting") && isFixReviewSkill(ex?.skill);
   const fixReviewDisabled = ticketReview.unresolvedCount === 0 || (st === "running" && !fixReviewRunning);
   const showResultSectionHeader = resultSections.length > 1;
   const showResult = tab === "result" && resultSections.length > 0;
@@ -1468,7 +1453,7 @@ export default function TicketExecutor() {
                 ticket={t}
                 effStatus={effStatus}
                 projectName={selProject}
-                status={st}
+                state={st}
                 execPillStyle={selExecPillStyle}
                 onOpenTicketLink={(e) => fireBoltFromEvent(e)}
                 statusMenuRef={statusMenuRef}
@@ -1486,7 +1471,7 @@ export default function TicketExecutor() {
                 tabStyle={tabStyle}
                 execEnabled={execEnabled}
                 planEnabled={planEnabled}
-                planNeedsReview={st === "awaiting-approval"}
+                planNeedsReview={st === "waiting"}
                 resultEnabled={resultEnabled}
                 unresolvedCount={ticketReview.unresolvedCount}
                 action={action}
@@ -1530,7 +1515,7 @@ export default function TicketExecutor() {
                     logLines={logLines}
                     logRef={logRef}
                     projectName={selProject}
-                    status={st}
+                    state={st}
                     statusLabel={lsl}
                     logStatusStyle={logStatusStyle}
                     error={ex?.error}
@@ -1540,7 +1525,7 @@ export default function TicketExecutor() {
                 {tab === "plan" && ex && (
                   <PlanTab
                     plan={ex.planMarkdown ?? ""}
-                    awaiting={st === "awaiting-approval"}
+                    awaiting={st === "waiting"}
                     busy={!!planBusyForSel}
                     busyAction={planBusyForSel}
                     onApprove={(plan) => resolvePlan(t.id, "approve", plan)}

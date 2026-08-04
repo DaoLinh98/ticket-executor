@@ -1,25 +1,30 @@
 ---
 name: implement-ticket-v3
-description: Implement a ticket from Azure DevOps, GitHub, or GitLab in two phases — draft a reviewable plan first, then implement it end-to-end (branch, code, verify, commit, push, PR) after the plan is approved
-version: 1.2.0
+description: Implement a ticket from Azure DevOps, GitHub, or GitLab in reviewable phases — draft a plan, implement it locally once approved, then publish the branch and PR as a separate final step
+version: 2.0.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations.
 
 ## Goal
 
-Implement the ticket correctly based on full ticket context, existing implementation patterns, and appropriate test coverage — then get it to an open pull/merge request. Unlike v2, the work is split into a **plan phase** a human reviews and a **implement phase** that executes the approved plan.
+Implement the ticket correctly based on full ticket context, existing implementation patterns, and appropriate test coverage — then get it to an open pull/merge request. Unlike v2, the work is split into phases: a **plan** a human reviews, an **implement** phase that executes the approved plan *locally*, and a **publish** phase that is the only one touching anything outside this machine.
 
 ## Mode (read this first)
 
-$ARGUMENTS carries `Mode: <plan|replan|implement>`. It decides which half of this skill runs. Never run a phase other than the one requested.
+$ARGUMENTS carries `Mode: <plan|replan|implement|publish>`. It decides which phase of this skill runs. Never run a phase other than the one requested, and never do a later phase's work early "since you are already there" — the runner depends on the boundary between them.
 
 | Mode | What you do | What you must NOT do |
 |---|---|---|
-| `plan` | Gather ticket context, explore the codebase, write `.te/plan.md` | Do not create a branch. Do not edit any source file. Do not commit, push, or open a PR. |
+| `plan` | Gather ticket context, explore the codebase, write `.te/plan.md` | No branch. No source edit. No commit, push, or PR. |
 | `replan` | Read `.te/feedback.md`, rewrite `.te/plan.md` to address it | Same prohibitions as `plan`. |
-| `implement` | Execute the approved `.te/plan.md` end-to-end | Do not re-litigate the plan or ask for confirmation. |
-| *(absent)* | Run `plan`, then immediately `implement` without stopping — the fully autonomous v2 behaviour | — |
+| `implement` | Create the branch, execute the approved `.te/plan.md`, verify, and **commit locally** | **Do NOT push. Do NOT open a PR. Do NOT write to the tracker.** Nothing may leave this machine. |
+| `publish` | Push the branch, open the PR/MR, link the ticket | Do not edit source. Do not commit. Do not re-verify. The code is already final. |
+
+**Why `implement` stops at a local commit.** A local commit is undone by deleting
+the branch; a push or a PR is not. The runner may re-enter the implement phase —
+after a crash, or once a review step is added between implementing and shipping —
+so everything irreversible is confined to `publish`, which runs once, at the end.
 
 Each phase runs non-interactively (no human is available mid-turn). Never end a turn with a question or a "let me know" / "should I..." / "Would you like..." sentence.
 
@@ -32,7 +37,7 @@ Each phase runs non-interactively (no human is available mid-turn). Never end a 
 - **Attachments stay out of the repo.** Work-item comments often link images/PDFs. Read the comment *text* first; that is almost always enough. Only when an Acceptance Criterion genuinely cannot be understood without one, download that single file into the OS temp directory (`%TEMP%` / `$TMPDIR`) and read it from there — never into the repo, never in bulk, never a whole comment's attachment list. Attachments are the most expensive thing this skill can read.
 - **Locate before you read.** Use grep/glob to find the relevant symbols, then open only the files you will change plus their direct call sites. Never read a file twice in one session, and never read `node_modules/`, `.next/`, `dist/`, build output, lockfiles, or `.te-worktrees/`.
 - **Keep command output small.** Prefer the narrowest check that proves the change (one test file, then a type-check) over a full build; when a command is unavoidably chatty, filter or tail its output instead of streaming all of it back.
-- **The two phases share one session.** In `implement`, do not re-explore what you already read while planning.
+- **The phases share one session.** In `implement` and `publish`, do not re-explore what you already read while planning.
 
 ## Provider (read this before touching the tracker)
 
@@ -115,11 +120,28 @@ The plan you proposed was rejected. Read **`.te/feedback.md`** — it holds the 
 3. Implement the plan, preserving existing behavior unless the ticket explicitly requires otherwise.
 4. Add/update unit tests when the change affects business logic, validation, mapping, branching, or edge cases — follow existing test style.
 5. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Compare the result against the ticket + Acceptance Criteria and fix failures you caused before moving on.
-6. Commit with a clear message, push the branch, and open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket.
+6. Commit with a clear message on the branch. **Stop there.** Do not run `git push`, `gh pr create`, `glab mr create`, `az repos pr create`, or any tracker write — publishing is a separate phase that runs after this one.
 
 If executing the plan surfaces something the plan got wrong (a file that doesn't exist, an approach that can't work), do not stop and do not silently follow the broken plan: implement the smallest correct deviation, and record it in "Notes/Assumptions" as a deviation from the approved plan.
 
 Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's `.git/info/exclude`, so if either shows up in `git status` something is wrong — leave it out of the commit rather than "fixing" it by editing `.gitignore`, which is a tracked project file.
+
+## Phase: publish
+
+The code is committed and final. This phase publishes it and does nothing else —
+no source edits, no commits, no re-verification, no re-reading the plan.
+
+**This phase may be retried after a crash, so every step must be safe to repeat.**
+The runner cannot know whether an interrupted publish had already pushed, so it
+asks you to check rather than guess:
+
+1. Push the branch: `git push --force-with-lease -u origin <branch>`. If the
+   remote already has it, the push is a no-op — that is expected, not an error.
+2. **Check for an existing PR/MR on this branch before creating one**
+   (`gh pr list --head <branch>`, `glab mr list --source-branch <branch>`, or the
+   ADO MCP pull-request list filtered by source branch). If one exists, reuse its
+   URL and report `reusedExisting: true` rather than opening a second.
+3. Link the ticket to the PR only if it is not already linked.
 
 ## Rules
 
@@ -127,33 +149,27 @@ Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's
 - Follow existing project structure/patterns; do not introduce inconsistent workflow changes.
 - Comments: short, English, only for non-obvious logic — never for obvious code.
 - Tests are not mandatory for every change, but add them when they meaningfully verify behavior; never invent a new test structure.
-- In the `implement` phase, commit/push/open the PR automatically once implementation + verification are done — do not wait for explicit confirmation (this skill supersedes any general "ask before committing" default).
+- Commit in `implement` and publish in `publish` automatically, without waiting for confirmation (this skill supersedes any general "ask before committing" default) — but never move work from one phase into the other.
 - If verification cannot be completed, say exactly what and why — never claim tests/build passed when they didn't run.
 
 ## Output
 
-**Plan / replan phases** — a short prose summary of what the plan covers. The real deliverable is `.te/plan.md`; don't duplicate the whole plan in the response.
+The runner passes a JSON Schema and the CLI requires you to call
+`StructuredOutput` before the turn ends. **That call is your deliverable.** The
+prose in the transcript is for the human reading the log; the caller routes
+entirely on the structured fields, so nothing you write outside them affects what
+happens next.
 
-**Implement phase** — keep this short; the reviewer already read the plan, so don't re-explain it. Report only what changed since the plan was approved: what happened, whether it verified, and where to look. Use only the sections below; skip a section entirely if it has nothing to report, and skip rows in "Deviations" unless something actually diverged from the approved plan.
+Fill them honestly. In particular:
 
-**Result**
-
-One or two sentences: what was implemented and its current state (PR open / verification failed / blocked).
-
-**Verification**
-
-| Check | Result |
-|---|---|
-| Tests | Passed / Not run / Failed |
-| Build | Passed / Not run / Failed |
-| Acceptance Criteria | Met / Partial / Cannot verify |
-
-**Branch / PR**
-
-| Branch | PR/MR URL |
-|---|---|
-
-**Deviations from the plan** (only if something diverged from the approved `.te/plan.md` — a judgment call on ambiguous info, or a fix forced by something the plan got wrong)
-
-| What changed | Why |
-|---|---|
+- `verification.tests` / `verification.build` are `passed` **only** if you
+  actually ran them and they passed. Use `not-run` when there was nothing to run.
+  The runner blocks the publish phase on these values, so a false `passed` is
+  exactly how unverified code would reach a pull request.
+- `committed` is `true` only once the work is really committed on the branch.
+- `blocked.is` is `true` only on a hard external blocker you cannot work around,
+  with a one-sentence `reason`. This ends the run cleanly instead of leaving a
+  half-done ticket.
+- `deviations` lists anything that diverged from the approved `.te/plan.md`.
+- In `publish`, `prUrl` must be the real PR/MR URL, and `reusedExisting` says
+  whether you found one already open for this branch instead of creating it.
