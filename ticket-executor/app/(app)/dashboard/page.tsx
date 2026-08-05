@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import type { CountEntry, DashboardMetrics, SkillConsistency } from "@/lib/executionStore";
-import { COLORS, card, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -28,7 +28,7 @@ const RANGES: Record<string, number> = {
 };
 
 const sectionHeading: CSSProperties = {
-  margin: "0 0 14px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px",
+  margin: "0 0 14px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xs,
   fontWeight: 700, letterSpacing: ".16em", color: COLORS.faint,
 };
 
@@ -38,8 +38,8 @@ function TierHeading({ n, title, blurb }: { n: string; title: string; blurb: str
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: "6px 0 -8px" }}>
       <span style={{ ...pill({ color: COLORS.accent, border: COLORS.border, size: "xs", weight: 700 }) }}>{n}</span>
-      <span style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "12.5px", fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
-      <span style={{ fontSize: "11.5px", color: COLORS.textMuted, flex: 1, minWidth: 0 }}>{blurb}</span>
+      <span style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
+      <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, flex: 1, minWidth: 0 }}>{blurb}</span>
     </div>
   );
 }
@@ -62,12 +62,12 @@ function KpiTile({
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 14px 34px -20px var(--accent)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
     >
-      <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600 }}>{label}</div>
       <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: big ? "34px" : "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: "11.5px", color: COLORS.textDim }}>{sub}</div>}
+      {sub && <div style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{sub}</div>}
       {/* The comparison baseline, stated on the tile itself — a leverage number
           means nothing without saying what it is leverage *over*. */}
-      {hint && <div style={{ fontSize: "10.5px", color: COLORS.textMuted, fontStyle: "italic" }}>{hint}</div>}
+      {hint && <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, fontStyle: "italic" }}>{hint}</div>}
     </div>
   );
 }
@@ -75,16 +75,16 @@ function KpiTile({
 // Horizontal bars for a categorical breakdown (by provider / project / skill).
 function BarList({ rows, color }: { rows: CountEntry[]; color: string }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
-  if (!rows.length) return <div style={{ fontSize: "12.5px", color: COLORS.faint }}>No runs yet.</div>;
+  if (!rows.length) return <div style={{ fontSize: FONT.base, color: COLORS.faint }}>No runs yet.</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
       {rows.map((r) => (
         <div key={r.key} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "34%", minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</div>
+          <div style={{ width: "34%", minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</div>
           <div style={{ flex: 1, height: "9px", borderRadius: "999px", background: "rgba(255,255,255,.04)", overflow: "hidden" }}>
             <div style={{ width: `${(r.count / max) * 100}%`, height: "100%", borderRadius: "999px", background: color, transformOrigin: "left", animation: "growX .5s cubic-bezier(.16,1,.3,1) both" }} />
           </div>
-          <div style={{ width: "38px", textAlign: "right", fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 600, color: COLORS.text }}>{r.count}</div>
+          <div style={{ width: "38px", textAlign: "right", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, color: COLORS.text }}>{r.count}</div>
         </div>
       ))}
     </div>
@@ -119,24 +119,24 @@ function Funnel({ f, live }: { f: DashboardMetrics["funnel"]; live: FunnelData |
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
       {stages.map((s, i) => (
         <div key={s.label} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "92px", fontSize: "11.5px", color: COLORS.textDim, fontWeight: 600 }}>{s.label}</div>
+          <div style={{ width: "92px", fontSize: FONT.sm, color: COLORS.textDim, fontWeight: 600 }}>{s.label}</div>
           <div style={{ flex: 1, height: "13px", borderRadius: "999px", background: "rgba(255,255,255,.04)", overflow: "hidden" }}>
             {s.known && (
               <div style={{ width: `${(s.n / base) * 100}%`, height: "100%", borderRadius: "999px", background: s.c, animation: "growX .5s cubic-bezier(.16,1,.3,1) both", animationDelay: `${i * 70}ms` }} />
             )}
           </div>
-          <div style={{ width: "82px", textAlign: "right", fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 600, color: s.known ? COLORS.text : COLORS.faint }}>
+          <div style={{ width: "82px", textAlign: "right", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, color: s.known ? COLORS.text : COLORS.faint }}>
             {s.known ? `${s.n} · ${fmtPct(s.n / base)}` : live ? "not measured" : "…"}
           </div>
         </div>
       ))}
       {(live?.notice || live?.error) && (
-        <div style={{ fontSize: "11px", color: live.error ? COLORS.danger : COLORS.textMuted, marginTop: "2px" }}>
+        <div style={{ fontSize: FONT.xs, color: live.error ? COLORS.danger : COLORS.textMuted, marginTop: "2px" }}>
           {live.error ?? live.notice}
         </div>
       )}
       {backed && live && live.sampled > 0 && (
-        <div style={{ fontSize: "11px", color: COLORS.textMuted }}>
+        <div style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>
           {live.sampled} PR{live.sampled === 1 ? "" : "s"} resolved against the provider.
         </div>
       )}
@@ -147,16 +147,16 @@ function Funnel({ f, live }: { f: DashboardMetrics["funnel"]; live: FunnelData |
 // Per-skill duration spread. A standardized skill should be predictable; a wide
 // CV means the workflow is not actually repeatable yet.
 function ConsistencyTable({ rows }: { rows: SkillConsistency[] }) {
-  if (!rows.length) return <div style={{ fontSize: "12.5px", color: COLORS.faint }}>No completed runs yet.</div>;
+  if (!rows.length) return <div style={{ fontSize: FONT.base, color: COLORS.faint }}>No completed runs yet.</div>;
   const tone = (cv: number) => (cv <= 0.35 ? COLORS.success : cv <= 0.7 ? COLORS.warning : COLORS.danger);
   const verdict = (cv: number) => (cv <= 0.35 ? "predictable" : cv <= 0.7 ? "variable" : "erratic");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
       {rows.map((r) => (
         <div key={r.skill} style={{ ...card({ padding: "9px 12px" }), display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.skill}</div>
-          <div style={{ fontSize: "11px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{r.count} runs</div>
-          <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: COLORS.textDim, whiteSpace: "nowrap" }}>
+          <div style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.skill}</div>
+          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, whiteSpace: "nowrap" }}>{r.count} runs</div>
+          <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: COLORS.textDim, whiteSpace: "nowrap" }}>
             p50 {fmtMs(r.p50Ms)} · p95 {fmtMs(r.p95Ms)}
           </div>
           <span style={pill({ color: tone(r.cv), border: COLORS.border, size: "xs" })}>
@@ -172,7 +172,7 @@ function ConsistencyTable({ rows }: { rows: SkillConsistency[] }) {
 // own normalized scale — cost alone reads as spend, cost against output reads as
 // efficiency.
 function CostTrend({ trend }: { trend: DashboardMetrics["cost"]["trend"] }) {
-  if (!trend.length) return <div style={{ fontSize: "12.5px", color: COLORS.faint }}>No cost data yet.</div>;
+  if (!trend.length) return <div style={{ fontSize: FONT.base, color: COLORS.faint }}>No cost data yet.</div>;
   const W = 640, H = 160, PAD = 8;
   const maxCost = Math.max(...trend.map((t) => t.costUsd), 0.0001);
   const maxShipped = Math.max(...trend.map((t) => t.shipped), 1);
@@ -198,7 +198,7 @@ function CostTrend({ trend }: { trend: DashboardMetrics["cost"]["trend"] }) {
           <circle key={t.date} cx={x(i)} cy={y(t.costUsd, maxCost)} r="2.6" fill={COLORS.accent} />
         ))}
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", fontSize: "10.5px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", fontSize: FONT.xs, color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>
         <span>{trend[0].date}</span>
         <span style={{ display: "flex", gap: "12px", fontFamily: "inherit" }}>
           <span style={{ color: COLORS.accent }}>— cost/day</span>
@@ -234,7 +234,7 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
             {s.label} {s.n}
           </span>
         ))}
-        {!segs.length && <span style={{ fontSize: "12.5px", color: COLORS.faint }}>No runs yet.</span>}
+        {!segs.length && <span style={{ fontSize: FONT.base, color: COLORS.faint }}>No runs yet.</span>}
       </div>
     </div>
   );
@@ -336,8 +336,8 @@ export default function DashboardPage() {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="#0B0C10" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-            <span style={logoText("16px")}>Run Metrics</span>
-            <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>D-AGENT · ANALYTICS</span>
+            <span style={logoText(FONT.xl)}>Run Metrics</span>
+            <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>D-AGENT · ANALYTICS</span>
           </div>
         </div>
         <div style={{ flex: 1 }} />
@@ -356,7 +356,7 @@ export default function DashboardPage() {
         <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>
           {error && (
             <div style={{ ...tintedCard("danger"), animation: "fadeUp .4s both" }}>
-              <div style={{ fontSize: "13px", color: COLORS.danger, fontWeight: 600 }}>{error}</div>
+              <div style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</div>
             </div>
           )}
           {loading && !data && (
@@ -405,7 +405,7 @@ export default function DashboardPage() {
                 <section style={{ ...tintedCard("accent"), ...sectionDelay(2) }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "14px", flexWrap: "wrap" }}>
                     <h3 style={{ ...sectionHeading, margin: 0 }}>ESTIMATED VALUE</h3>
-                    <span style={{ fontSize: "11px", color: COLORS.textMuted, fontStyle: "italic" }}>
+                    <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, fontStyle: "italic" }}>
                       vs. not using an agent at all — priced from your own ticket estimates at {fmtUsd(data.roi.hourlyRateUsd)}/h
                     </span>
                   </div>
@@ -418,14 +418,14 @@ export default function DashboardPage() {
                       { l: "RETURN", v: data.roi.multiple ? fmtX(data.roi.multiple) : "—", c: COLORS.text },
                     ].map((t) => (
                       <div key={t.l}>
-                        <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
-                        <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "20px", fontWeight: 700, color: t.c }}>{t.v}</div>
+                        <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
+                        <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xl, fontWeight: 700, color: t.c }}>{t.v}</div>
                       </div>
                     ))}
                   </div>
                   {/* Coverage is the honesty check: a big number from two sized
                       tickets out of forty is not a result. */}
-                  <div style={{ fontSize: "11.5px", color: COLORS.textDim, marginTop: "14px" }}>
+                  <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "14px" }}>
                     Based on {data.roi.sizedTickets} of {data.quality.ticketsShipped} shipped tickets that carried an estimate ({fmtPct(data.roi.coverage)} coverage).
                     {data.roi.coverage < 0.5 && " Size more tickets before quoting this figure."}
                   </div>
@@ -493,12 +493,12 @@ export default function DashboardPage() {
                         { l: "P95", v: data.speed.p95Ms },
                       ].map((s) => (
                         <div key={s.l}>
-                          <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{s.l}</div>
-                          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "20px", fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
+                          <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{s.l}</div>
+                          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xl, fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
                         </div>
                       ))}
                     </div>
-                    <div style={{ fontSize: "11.5px", color: COLORS.textDim, marginTop: "14px" }}>{data.speed.count} completed run{data.speed.count === 1 ? "" : "s"} measured</div>
+                    <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "14px" }}>{data.speed.count} completed run{data.speed.count === 1 ? "" : "s"} measured</div>
                   </div>
                 </section>
 
@@ -516,8 +516,8 @@ export default function DashboardPage() {
                       { l: "AVG TURNS", v: data.ops.avgTurns.toFixed(1) },
                     ].map((t) => (
                       <div key={t.l}>
-                        <div style={{ fontSize: "10.5px", letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
-                        <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "16px", fontWeight: 700, color: COLORS.text }}>{t.v}</div>
+                        <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
+                        <div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>{t.v}</div>
                       </div>
                     ))}
                   </div>

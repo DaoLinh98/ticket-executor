@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { FONT } from "@/lib/ui";
 
 type Seg = { text: string; changed: boolean };
 type DiffRow = {
@@ -103,11 +104,11 @@ export default function DiffView({ diff }: { diff: string }) {
   let firstChangeAssigned = false;
 
   if (!rows.length) {
-    return <div style={{ padding: "0 20px", color: "#5B6273", fontFamily: "var(--font-mono), monospace", fontSize: "12px" }}>No diff content available for this file.</div>;
+    return <div style={{ padding: "0 20px", color: "#5B6273", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm }}>No diff content available for this file.</div>;
   }
 
   return (
-    <div className="te-scroll" style={{ flex: 1, overflow: "auto", padding: "14px 0", fontFamily: "var(--font-mono), monospace", fontSize: "12px", lineHeight: 1.6 }}>
+    <div className="te-scroll" style={{ flex: 1, overflow: "auto", padding: "14px 0", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, lineHeight: 1.6 }}>
       {rows.map((row) => {
         const isAdd = row.kind === "add";
         const isDel = row.kind === "del";

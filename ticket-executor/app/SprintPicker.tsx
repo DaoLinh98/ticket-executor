@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
+import { FONT, dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
 
 export type IterationOption = {
@@ -63,7 +63,7 @@ export default function SprintPicker({
         }}
       >
         {leading}
-        <span style={{ fontSize: "12.5px", fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
+        <span style={{ fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
         {hasOptions && (
           <svg
             width="12"
@@ -117,7 +117,7 @@ export default function SprintPicker({
                   cursor: "pointer",
                   background: isSel ? "rgba(251,114,80,.14)" : "transparent",
                   color: isSel ? "var(--accent)" : "#C7CCD8",
-                  fontSize: "12.5px",
+                  fontSize: FONT.base,
                   fontWeight: isSel ? 700 : 500,
                   transition: "background .12s, color .12s",
                 }}
@@ -133,7 +133,7 @@ export default function SprintPicker({
                   <span
                     style={{
                       ...pill({ color: "#35D6A4", background: "rgba(53,214,164,.12)", size: "xs", weight: 700 }),
-                      fontSize: "9.5px",
+                      fontSize: FONT.xs,
                       letterSpacing: ".05em",
                       flex: "0 0 auto",
                     }}

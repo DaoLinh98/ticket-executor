@@ -3,7 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { COLORS, clipCorner, logoText, ringBorder } from "@/lib/ui";
+import { COLORS, FONT, clipCorner, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 
 type NavItem = { href: string; label: string; icon: ReactNode };
@@ -93,8 +93,8 @@ export default function Sidebar() {
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-          <span style={logoText("17px")}>D-Agent</span>
-          <span style={{ fontSize: "9.5px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
+          <span style={logoText(FONT.xl)}>D-Agent</span>
+          <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
         </div>
       </div>
 
@@ -108,7 +108,7 @@ export default function Sidebar() {
             gap: "11px",
             height: "40px",
             padding: "0 13px",
-            fontSize: "13px",
+            fontSize: FONT.base,
             fontWeight: active ? 700 : 600,
             textDecoration: "none",
             color: active ? "var(--accent)" : COLORS.textDim,
@@ -151,7 +151,7 @@ export default function Sidebar() {
           gap: "11px",
           height: "40px",
           padding: "0 13px",
-          fontSize: "13px",
+          fontSize: FONT.base,
           fontWeight: 600,
           color: COLORS.textDim,
           cursor: "pointer",

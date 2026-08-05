@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { COLORS, card, ctaButtonStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, ctaButtonStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
 import LoadingRing from "../LoadingRing";
 
@@ -82,10 +82,10 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={COLORS.accent} strokeWidth="2.2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
         </span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: COLORS.text }}>
+          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>
             {awaiting ? "Plan ready for your review" : "Drafting the plan…"}
           </div>
-          <div style={{ fontSize: "12.5px", color: COLORS.textDim, marginTop: "2px" }}>
+          <div style={{ fontSize: FONT.base, color: COLORS.textDim, marginTop: "2px" }}>
             {awaiting
               ? "Nothing has been changed in the repo yet. Edit the plan if you want, then accept it to let the run continue."
               : "Claude is reading the ticket and the codebase. The plan will appear here when it's done."}
@@ -113,7 +113,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
               style={{
                 flex: "0 0 auto", overflow: "hidden", userSelect: "none", textAlign: "right",
                 padding: "16px 10px 16px 14px", borderRight: `1px solid ${COLORS.borderSubtle}`,
-                fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", lineHeight: 1.7, color: COLORS.faint,
+                fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.7, color: COLORS.faint,
               }}
             >
               {Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>)}
@@ -127,7 +127,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
               autoFocus
               style={{
                 flex: 1, minHeight: "460px", resize: "none", outline: "none", border: "none",
-                fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", lineHeight: 1.7,
+                fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.7,
                 color: COLORS.text, background: "transparent", padding: "16px 18px 16px 12px",
               }}
             />
@@ -136,12 +136,12 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
             <button
               onClick={(e) => { fireBoltFromEvent(e); handleSave(); }}
               disabled={!edited}
-              style={{ ...ctaButtonStyle("success", { height: "32px" }), padding: "0 16px", fontSize: "12.5px", opacity: edited ? 1 : 0.45, cursor: edited ? "pointer" : "not-allowed" }}
+              style={{ ...ctaButtonStyle("success", { height: "32px" }), padding: "0 16px", fontSize: FONT.base, opacity: edited ? 1 : 0.45, cursor: edited ? "pointer" : "not-allowed" }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ position: "relative", zIndex: 1 }}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><path d="M17 21v-8H7v8M7 3v5h8" /></svg>
               <span style={{ position: "relative", zIndex: 1 }}>Save & preview</span>
             </button>
-            <span style={{ fontSize: "11.5px", color: COLORS.textMuted }}>
+            <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>
               {edited ? "You have unsaved edits — save to confirm them before accepting." : "No changes yet."}
             </span>
           </div>
@@ -167,14 +167,14 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
               {draft}
             </ReactMarkdown>
           ) : (
-            <span style={{ color: COLORS.faint, fontSize: "13px" }}>No plan yet.</span>
+            <span style={{ color: COLORS.faint, fontSize: FONT.base }}>No plan yet.</span>
           )}
         </div>
       )}
 
       {awaiting && feedbackOpen && (
         <div style={{ display: "flex", flexDirection: "column", gap: "9px", ...card({ padding: "14px 16px", radius: "12px" }) }}>
-          <div style={{ fontSize: "12.5px", fontWeight: 700, color: COLORS.text }}>What should change about this plan?</div>
+          <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.text }}>What should change about this plan?</div>
           <textarea
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
@@ -182,12 +182,12 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
             placeholder="e.g. don't touch the settings API — the mapping belongs in lib/tickets.ts instead"
             style={{
               width: "100%", minHeight: "90px", resize: "vertical", outline: "none",
-              fontFamily: "var(--font-hanken), sans-serif", fontSize: "13px", lineHeight: 1.6,
+              fontFamily: "var(--font-hanken), sans-serif", fontSize: FONT.base, lineHeight: 1.6,
               color: COLORS.text, background: "transparent", border: `1px solid ${COLORS.border}`,
               borderRadius: "9px", padding: "10px 12px",
             }}
           />
-          <div style={{ fontSize: "11.5px", color: COLORS.textMuted }}>
+          <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>
             The same Claude session is resumed to re-plan, so it keeps everything it already learned about the ticket and the code.
           </div>
         </div>
@@ -199,7 +199,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
             disabled={busy || editing}
             onClick={(e) => { fireBoltFromEvent(e, { big: true }); onApprove(draft); }}
             title={editing ? "Save your edits first" : undefined}
-            style={{ ...ctaButtonStyle("success", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy || editing ? 0.5 : 1, cursor: busy || editing ? "not-allowed" : "pointer" }}
+            style={{ ...ctaButtonStyle("success", { height: "36px" }), padding: "0 18px", fontSize: FONT.base, opacity: busy || editing ? 0.5 : 1, cursor: busy || editing ? "not-allowed" : "pointer" }}
           >
             {busyAction === "approve" ? (
               <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
@@ -219,7 +219,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
               onRevise(draft, feedback.trim());
             }}
             title={editing ? "Save your edits first" : undefined}
-            style={{ ...ctaButtonStyle("ghost", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy || editing || (feedbackOpen && !feedback.trim()) ? 0.5 : 1 }}
+            style={{ ...ctaButtonStyle("ghost", { height: "36px" }), padding: "0 18px", fontSize: FONT.base, opacity: busy || editing || (feedbackOpen && !feedback.trim()) ? 0.5 : 1 }}
           >
             {busyAction === "revise" ? (
               <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
@@ -232,7 +232,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
           <button
             disabled={busy}
             onClick={(e) => { fireBoltFromEvent(e); onCancel(); }}
-            style={{ ...ctaButtonStyle("danger", { height: "36px" }), padding: "0 18px", fontSize: "13px", opacity: busy ? 0.5 : 1 }}
+            style={{ ...ctaButtonStyle("danger", { height: "36px" }), padding: "0 18px", fontSize: FONT.base, opacity: busy ? 0.5 : 1 }}
           >
             {busyAction === "cancel" ? (
               <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={13} /></span>
@@ -274,7 +274,7 @@ function PreviewEditToggle({ editing, onPreview, onEdit }: { editing: boolean; o
   const btnStyle = (active: boolean): CSSProperties => ({
     position: "relative", zIndex: 1, border: "none", background: "transparent", cursor: "pointer",
     display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
-    fontSize: "12px", fontWeight: 700, color: active ? COLORS.accent : COLORS.textDim,
+    fontSize: FONT.sm, fontWeight: 700, color: active ? COLORS.accent : COLORS.textDim,
     transition: "color .18s",
   });
   return (

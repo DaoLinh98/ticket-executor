@@ -5,7 +5,7 @@ import { prisma } from "../prisma";
 import type { LogLine, RunState } from "../types";
 import { cleanPath } from "./format";
 import { cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
-import { FEEDBACK_FILE, graphById, graphForSkill, PLAN_FILE } from "./graph/graphs";
+import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, PLAN_FILE } from "./graph/graphs";
 import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
 import type { LiveRun } from "./graph/types";
 import { store } from "./store";
@@ -171,6 +171,12 @@ export async function startRun(params: {
       return row.id;
     }
   }
+
+  // Start from a clean scratch directory. A previous run in this same tree (or a
+  // crash that skipped the cleanup at the end) can leave `.te/plan.md` behind, and
+  // the plan phase reads that file — an earlier ticket's plan is a confusing,
+  // token-costing thing for the agent to have to recognise and discard.
+  clearRunArtifacts(live.ctx.cwd);
 
   await saveRun(live);
   // Fire-and-forget: the route returns immediately and the walk continues in the

@@ -4,16 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import Toast from "../../ticket-executor/Toast";
-import { SETTINGS_UPDATED_EVENT } from "../AppReactor";
+import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
+import { SETTINGS_UPDATED_EVENT } from "../../settingsEvents";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
-import { card, clipCorner, fieldInput, fieldLabel, logoText, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, clipCorner, fieldInput, fieldLabel, logoText, ringBorder, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
-  animatedBackground: true, autoImplement: true, autoResolveCodeReview: true,
+  animatedBackground: true, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
   manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
 };
@@ -37,17 +37,15 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsView>(DEFAULTS);
   const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [error, setError] = useState("");
-  const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const toastSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   const pm = providerMeta(settings.provider);
 
-  const showToast = (msg: string, kind: "success" | "error" = "success", ms = 4000) => {
-    setToast({ msg, kind });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), ms);
-  };
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  // The Toast owns its own countdown (and pauses it on hover), so all this does
+  // is hand it a fresh message.
+  const showToast = (msg: string, kind: "success" | "error" = "success", ms = 7000) =>
+    setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
 
   useEffect(() => {
     (async () => {
@@ -120,10 +118,15 @@ export default function SettingsPage() {
       const data = await r.json();
       if (!r.ok || !data.settings) { setError(data.error || "Failed to save settings"); return; }
       setSettings(data.settings);
-      // Broadcast so the app-wide reactor backdrop picks up an animated-background
-      // change immediately, without waiting for a route change / reload.
+      // Broadcast so the app-wide reactor backdrop and the click-effect layer pick
+      // the change up immediately, without waiting for a route change / reload.
       window.dispatchEvent(
-        new CustomEvent(SETTINGS_UPDATED_EVENT, { detail: { animatedBackground: data.settings.animatedBackground } })
+        new CustomEvent(SETTINGS_UPDATED_EVENT, {
+          detail: {
+            animatedBackground: data.settings.animatedBackground,
+            clickEffects: data.settings.clickEffects,
+          },
+        })
       );
       showToast("Settings saved.");
     } catch {
@@ -135,10 +138,10 @@ export default function SettingsPage() {
   const divider: CSSProperties = { height: "1px", background: "#1E232C" };
 
   return (
-    <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: "#ECEEF3", ["--accent" as string]: "#FB7250" }}>
+    <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: "#FB7250" }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText("18px")}>Settings</span>
-        <span style={{ fontSize: "12.5px", color: "#8A90A0" }}>Connect your work-tracking provider &amp; execution defaults</span>
+        <span style={logoText(FONT.xl)}>Settings</span>
+        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Connect your work-tracking provider &amp; execution defaults</span>
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
@@ -162,7 +165,7 @@ export default function SettingsPage() {
                       <button
                         key={sc}
                         onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, scope: sc })); }}
-                        style={{ flex: 1, height: "40px", fontSize: "13px", fontWeight: 700, cursor: "pointer", textTransform: "capitalize", color: active ? "#F3F5F9" : "#8A90A0", ...(active ? ringBorder({ fill: "#171A21", duration: 3.4, cornerPx: 7 }) : { border: "1.5px solid #262B36", background: "#0E1015", clipPath: clipCorner(7) }) }}
+                        style={{ flex: 1, height: "40px", fontSize: FONT.base, fontWeight: 700, cursor: "pointer", textTransform: "capitalize", color: active ? "#F3F5F9" : "#8A90A0", ...(active ? ringBorder({ fill: "#171A21", duration: 3.4, cornerPx: 7 }) : { border: "1.5px solid #262B36", background: "#0E1015", clipPath: clipCorner(7) }) }}
                       >
                         {sc}
                       </button>
@@ -176,7 +179,7 @@ export default function SettingsPage() {
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <span style={fieldLabel()}>YOUR {pm.name.toUpperCase()} ACCOUNT</span>
                 <input value={settings.personalAccount} onChange={setField("personalAccount")} placeholder="you@company.com or display name" style={fieldInput()} />
-                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Only tickets assigned to this account and PR review notifications it authored will be shown.</span>
+                <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5 }}>Only tickets assigned to this account and PR review notifications it authored will be shown.</span>
               </label>
             )}
 
@@ -186,24 +189,24 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
-              <button onClick={(e) => { fireBoltFromEvent(e); testConnection(); }} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: "12px", fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: clipCorner(7) }}>
+              <button onClick={(e) => { fireBoltFromEvent(e); testConnection(); }} disabled={connTest.status === "testing"} style={{ display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", border: "1.5px solid #2A2F3A", background: "#0E1015", color: "#C7CCD8", fontSize: FONT.sm, fontWeight: 600, cursor: connTest.status === "testing" ? "default" : "pointer", clipPath: clipCorner(7) }}>
                 {connTest.status === "testing" ? <LoadingRing size={13} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
                 Test connection
               </button>
               {connTest.status !== "idle" && connTest.status !== "testing" && (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
                   <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: connTest.status === "ok" ? "#35D6A4" : "#FF6B6B", boxShadow: "0 0 8px " + (connTest.status === "ok" ? "#35D6A4" : "#FF6B6B"), flex: "0 0 auto" }} />
                   {connTest.message}
                 </span>
               )}
             </div>
-            <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.55 }}>Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project.</span>
+            <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.55 }}>Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project.</span>
 
             <div style={divider} />
             <div style={rowStyle}>
               <div>
-                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Manage MCP for me</div>
-                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Manage MCP for me</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
                   On: each run gets a {pm.name} MCP server generated from the connection above, so Claude can read the
                   ticket with nothing to set up by hand. If you already configured your own, the app steps aside.<br />
                   Off: the app never touches MCP — System Check only verifies whatever this machine already has.
@@ -215,8 +218,8 @@ export default function SettingsPage() {
             <div style={divider} />
             <div style={rowStyle}>
               <div>
-                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Multi-ticket mode</div>
-                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Multi-ticket mode</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
                   On: select multiple tickets and run them concurrently, each isolated in its own git worktree.<br />
                   Off: one ticket at a time, run directly in the root repo — simplest and most reliable for a single run.
                 </div>
@@ -229,7 +232,7 @@ export default function SettingsPage() {
                 <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   <span style={fieldLabel()}>CONCURRENT RUNS</span>
                   <input type="number" min={1} max={20} value={settings.concurrentRuns} onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))} style={{ ...fieldInput(), width: "120px" }} />
-                  <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5 }}>Runs beyond this limit wait in a queue until a slot frees up.</span>
+                  <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5 }}>Runs beyond this limit wait in a queue until a slot frees up.</span>
                 </label>
               </div>
             </div>
@@ -239,20 +242,20 @@ export default function SettingsPage() {
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <span style={fieldLabel()}>BLENDED HOURLY RATE (USD)</span>
                 <input type="number" min={0} step={1} value={settings.hourlyRateUsd} onChange={(e) => setSettings((s) => ({ ...s, hourlyRateUsd: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
-                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5, maxWidth: "320px" }}>Prices the Dashboard&apos;s ROI tile against your team&apos;s own ticket estimates. Leave at 0 to hide that tile rather than publish a guessed number.</span>
+                <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5, maxWidth: "320px" }}>Prices the Dashboard&apos;s ROI tile against your team&apos;s own ticket estimates. Leave at 0 to hide that tile rather than publish a guessed number.</span>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <span style={fieldLabel()}>HOURS PER STORY POINT</span>
                 <input type="number" min={0} step={0.5} value={settings.hoursPerStoryPoint} onChange={(e) => setSettings((s) => ({ ...s, hoursPerStoryPoint: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
-                <span style={{ fontSize: "11.5px", color: "#5B6273", lineHeight: 1.5, maxWidth: "320px" }}>Used only when a ticket carries story points instead of an hour estimate.</span>
+                <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5, maxWidth: "320px" }}>Used only when a ticket carries story points instead of an hour estimate.</span>
               </label>
             </div>
 
             <div style={divider} />
             <div style={rowStyle}>
               <div>
-                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Auto-implementation</div>
-                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Auto-implementation</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
                   On: run to a PR in one shot (<span style={{ fontFamily: "var(--font-mono), monospace" }}>implement-ticket-v2</span>).<br />
                   Off: draft a plan and wait for your review before coding (<span style={{ fontFamily: "var(--font-mono), monospace" }}>implement-ticket-v3</span>).
                 </div>
@@ -263,8 +266,8 @@ export default function SettingsPage() {
             <div style={divider} />
             <div style={rowStyle}>
               <div>
-                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Auto-resolve code review</div>
-                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px", lineHeight: 1.5 }}>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Auto-resolve code review</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
                   On: resolve every open review thread in one shot (<span style={{ fontFamily: "var(--font-mono), monospace" }}>fix-code-review-v2</span>).<br />
                   Off: draft a resolution plan and wait for your review before coding (<span style={{ fontFamily: "var(--font-mono), monospace" }}>fix-code-review-v3</span>).
                 </div>
@@ -275,26 +278,39 @@ export default function SettingsPage() {
             <div style={divider} />
             <div style={rowStyle}>
               <div>
-                <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#ECEEF3" }}>Animated background</div>
-                <div style={{ fontSize: "12px", color: "#6B7283", marginTop: "2px" }}>Turn off to freeze the 3D reactor backdrop.</div>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Animated background</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px" }}>Turn off to freeze the 3D reactor backdrop.</div>
               </div>
               <Toggle on={settings.animatedBackground} title="Toggle animated background" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, animatedBackground: !s.animatedBackground })); }} />
+            </div>
+
+            <div style={divider} />
+            <div style={rowStyle}>
+              <div>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Lightning effects</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
+                  On: a bolt strikes where you click, and every spinner (the buttons of a running ticket) keeps
+                  striking itself while it spins.<br />
+                  Off: no bolts at all — clicks and running buttons stay still.
+                </div>
+              </div>
+              <Toggle on={settings.clickEffects} title="Toggle lightning effects" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, clickEffects: !s.clickEffects })); }} />
             </div>
 
             {error && (
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
-                <span style={{ fontSize: "12.5px", color: "#FF8F8F", lineHeight: 1.5 }}>{error}</span>
+                <span style={{ fontSize: FONT.base, color: "#FF8F8F", lineHeight: 1.5 }}>{error}</span>
               </div>
             )}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
-              <button onClick={save} style={{ height: "34px", padding: "0 20px", color: "#0B0C10", fontSize: "12.5px", fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
+              <button onClick={save} style={{ height: "34px", padding: "0 20px", color: "#0B0C10", fontSize: FONT.base, fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
             </div>
           </div>
         )}
       </main>
-      {toast && <Toast toast={toast} />}
+      {toast && <Toast key={toast.id} toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

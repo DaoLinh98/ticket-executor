@@ -2,7 +2,7 @@
 
 import type { CSSProperties, RefObject } from "react";
 import type { UiRunState } from "@/lib/types";
-import { ringBorder, tintedCard } from "@/lib/ui";
+import { FONT, ringBorder, tintedCard } from "@/lib/ui";
 import type { LogLineView, StepView } from "../types";
 
 type Props = {
@@ -44,11 +44,11 @@ export default function ExecutionTab({
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "1px", zIndex: 0, pointerEvents: "none", background: "linear-gradient(90deg,transparent,var(--accent),transparent)", opacity: 0.55 }} />
           <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: "10px", padding: "11px 15px", borderBottom: "1px solid #1A1E25", background: "#0E1015" }}>
             <span style={{ display: "flex", gap: "6px" }}><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#3A3030" }} /><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#3A3830" }} /><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#2F3A32" }} /></span>
-            <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#6B7283", marginLeft: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>claude-code — {projectName}</span>
+            <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#6B7283", marginLeft: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>claude-code — {projectName}</span>
             <div style={{ flex: 1 }} />
             <span style={logStatusStyle}>{statusLabel}</span>
           </div>
-          <div ref={logRef} className="te-scroll" style={{ position: "relative", zIndex: 1, height: "430px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", lineHeight: 1.75 }}>
+          <div ref={logRef} className="te-scroll" style={{ position: "relative", zIndex: 1, height: "430px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.75 }}>
             {logLines.length === 0 && <div style={{ color: "#5B6273" }}>Waiting for output…</div>}
             {logLines.map((l, i) => (
               <div key={i} style={{ display: "flex", gap: "12px" }}>
@@ -62,7 +62,7 @@ export default function ExecutionTab({
       {state === "failed" && error && (
         <div style={{ display: "flex", gap: "13px", alignItems: "flex-start", ...tintedCard("danger") }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
-          <div><div style={{ fontSize: "13.5px", fontWeight: 700, color: "#FF8F8F", marginBottom: "3px" }}>Execution failed</div><div style={{ fontSize: "13px", color: "#C7A8A8", lineHeight: 1.55 }}>{error}</div></div>
+          <div><div style={{ fontSize: FONT.md, fontWeight: 700, color: "#FF8F8F", marginBottom: "3px" }}>Execution failed</div><div style={{ fontSize: FONT.base, color: "#C7A8A8", lineHeight: 1.55 }}>{error}</div></div>
         </div>
       )}
     </div>

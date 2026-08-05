@@ -81,7 +81,8 @@ export function actionInfoFor(status: string): ActionInfo | null {
 
 // The status a ticket moves to once a given skill's run completes (simulated ADO sync).
 export function nextStatusAfter(skill: string, current: string): string {
-  if (skill === "implement-ticket-v2" || skill === "implement-ticket-v3") return "Code Review";
+  if (skill === "implement-ticket-v2" || skill === "implement-ticket-v3")
+    return "Code Review";
   // if (skill === "senior-code-review") return "Ready for QA";
   return current;
 }
@@ -133,6 +134,35 @@ export const COLORS = {
   borderSubtle: "#1E232C",
   panelBg: "#111419",
   panelBgDark: "#0A0B0E",
+} as const;
+
+/**
+ * The type scale. Before this existed the app used **16 different sizes** between
+ * 9.5px and 15px, chosen per component, and the differences carried no meaning
+ * — 12px vs 12.5px vs 13px all meant "body text". Worse, most of the scale sat
+ * below 13px, which is what made the detail panes hard to read.
+ *
+ * Six steps, and every piece of UI text picks one:
+ *
+ * | Token  | Size   | Use |
+ * |--------|--------|-----|
+ * | `xs`   | 11.5px | pills, badges, counters — text that is nearly a graphic |
+ * | `sm`   | 12.5px | field captions, timestamps, secondary meta |
+ * | `base` | 13px   | default: controls, table cells, list rows, log lines |
+ * | `md`   | 14px   | primary body copy — descriptions, comments, criteria |
+ * | `lg`   | 15px | card titles and sub-headings |
+ * | `xl`   | 20px   | page/section titles (page `h1`s stay larger, per page) |
+ *
+ * Never introduce a size between two steps: pick the nearer step, or add a step
+ * here (and to UI-STYLEGUIDE.md) if one is genuinely missing.
+ */
+export const FONT = {
+  xs: "11.5px",
+  sm: "12.5px",
+  base: "13px",
+  md: "14px",
+  lg: "15px",
+  xl: "20px",
 } as const;
 
 // Corner-cut hexagon clip-path used by every "chip" shaped element (buttons,
@@ -195,7 +225,8 @@ export function ringBorder(opts: RingOpts): CSSProperties {
       ? `spinAngle ${duration}s linear infinite, ${extraAnimation}`
       : `spinAngle ${duration}s linear infinite`,
   };
-  if (extraAnimation) style.animationDelay = `0s, ${extraAnimationDelay ?? "0s"}`;
+  if (extraAnimation)
+    style.animationDelay = `0s, ${extraAnimationDelay ?? "0s"}`;
   if (shape === "pill") style.borderRadius = "999px";
   else if (shape === "clip") style.clipPath = clipCorner(cornerPx);
   return style;
@@ -284,7 +315,8 @@ export function logoText(fontSize: string): CSSProperties {
     WebkitBackgroundClip: "text",
     backgroundClip: "text",
     color: "transparent",
-    animation: "fireFlow 3.6s linear infinite,fireFlicker 2.2s ease-in-out infinite",
+    animation:
+      "fireFlow 3.6s linear infinite,fireFlicker 2.2s ease-in-out infinite",
   };
 }
 
@@ -293,20 +325,23 @@ export function logoText(fontSize: string): CSSProperties {
 // (Settings page, System Check page) so field density stays uniform.
 export function fieldLabel(): CSSProperties {
   return {
-    fontSize: "11px",
+    fontSize: FONT.sm,
     letterSpacing: ".1em",
     fontWeight: 600,
     color: COLORS.textDim,
   };
 }
 
-export function fieldInput(opts?: { height?: string; fontSize?: string }): CSSProperties {
+export function fieldInput(opts?: {
+  height?: string;
+  fontSize?: string;
+}): CSSProperties {
   return {
     ...card({ padding: "0 13px", radius: "9px", background: "#0E1015" }),
     height: opts?.height ?? "40px",
     color: COLORS.text,
     fontFamily: "var(--font-mono), monospace",
-    fontSize: opts?.fontSize ?? "13px",
+    fontSize: opts?.fontSize ?? FONT.base,
     outline: "none",
   };
 }
@@ -314,12 +349,19 @@ export function fieldInput(opts?: { height?: string; fontSize?: string }): CSSPr
 // Read-only mono code / shell-command block — the Guide page's copyable
 // commands and file-content snippets. Same inset dark chrome as fieldInput,
 // but multi-line and not focusable.
-export function codeBlock(opts?: { padding?: string; fontSize?: string }): CSSProperties {
+export function codeBlock(opts?: {
+  padding?: string;
+  fontSize?: string;
+}): CSSProperties {
   return {
-    ...card({ padding: opts?.padding ?? "10px 12px", radius: "9px", background: "#0E1015" }),
+    ...card({
+      padding: opts?.padding ?? "10px 12px",
+      radius: "9px",
+      background: "#0E1015",
+    }),
     color: COLORS.text,
     fontFamily: "var(--font-mono), monospace",
-    fontSize: opts?.fontSize ?? "12px",
+    fontSize: opts?.fontSize ?? FONT.base,
     lineHeight: 1.7,
     whiteSpace: "pre",
     overflowX: "auto",
@@ -364,9 +406,9 @@ export function pill(opts: {
     weight = 600,
   } = opts;
   const sizes: Record<"xs" | "sm" | "md", CSSProperties> = {
-    xs: { fontSize: "10.5px", padding: "2px 7px" },
-    sm: { fontSize: "11px", padding: "2px 9px" },
-    md: { fontSize: "12px", padding: "3px 10px" },
+    xs: { fontSize: FONT.xs, padding: "2px 7px" },
+    sm: { fontSize: FONT.sm, padding: "2px 9px" },
+    md: { fontSize: FONT.base, padding: "3px 10px" },
   };
   return {
     display: "inline-flex",
@@ -397,7 +439,7 @@ export function ctaButtonStyle(
     gap: "7px",
     height,
     padding: "0 14px",
-    fontSize: "12px",
+    fontSize: FONT.base,
     fontWeight: 700,
     cursor: "pointer",
     transition: "filter .18s, transform .12s, box-shadow .25s",
@@ -511,13 +553,13 @@ export function hue(name: string): number {
 export function avatar(name: string): CSSProperties {
   const h = hue(name);
   return {
-    width: "20px",
-    height: "20px",
+    width: "24px",
+    height: "24px",
     borderRadius: "50%",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: "9.5px",
+    fontSize: FONT.xs,
     fontWeight: 700,
     color: `hsl(${h} 72% 76%)`,
     background: `hsl(${h} 42% 20%)`,
@@ -534,8 +576,16 @@ export function runDot(st: UiRunState): CSSProperties {
   };
   // "no run yet" and "cancelled" both read as an outline rather than a lit dot.
   if (st === "none" || st === "cancelled")
-    return { ...base, background: "transparent", border: `1.5px solid ${RUN_COLOR[st]}` };
-  return { ...base, background: RUN_COLOR[st], boxShadow: `0 0 8px ${RUN_COLOR[st]}66` };
+    return {
+      ...base,
+      background: "transparent",
+      border: `1.5px solid ${RUN_COLOR[st]}`,
+    };
+  return {
+    ...base,
+    background: RUN_COLOR[st],
+    boxShadow: `0 0 8px ${RUN_COLOR[st]}66`,
+  };
 }
 
 export function initials(name: string): string {

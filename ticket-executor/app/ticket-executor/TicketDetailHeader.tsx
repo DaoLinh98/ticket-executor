@@ -2,7 +2,7 @@
 
 import type { CSSProperties, MouseEvent, RefObject } from "react";
 import type { Ticket, UiRunState } from "@/lib/types";
-import { COLORS, RUN_LABEL, avatar, dropdownPanelStyle, runDot, initials, pill, ringBorder, statusPillActive, typeBadge } from "@/lib/ui";
+import { COLORS, FONT, RUN_LABEL, avatar, dropdownPanelStyle, initials, pill, ringBorder, runDot, statusPillActive, typeBadge } from "@/lib/ui";
 import type { Action, TabId } from "./types";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
@@ -44,10 +44,15 @@ export default function TicketDetailHeader({
   tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
+  // zIndex 2, not 1: the scrolling detail pane below is a sibling that also creates
+  // a stacking context at zIndex 1, and being later in the DOM it won the tie —
+  // which is what let the Overview cards paint over the open status dropdown. The
+  // dropdown's own zIndex can't help, since it is trapped inside this element's
+  // context. Still below AppHeader (5).
   return (
-    <div style={{ position: "relative", zIndex: 1, flex: "0 0 auto", padding: "20px 28px 0" }}>
+    <div style={{ position: "relative", zIndex: 2, flex: "0 0 auto", padding: "20px 28px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "9px" }}>
-        <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "13px", fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
+        <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
         <span style={typeBadge(t.type)}>{t.type}</span>
         <div ref={statusMenuRef} style={{ position: "relative" }}>
           <button onClick={(e) => { fireBoltFromEvent(e); onToggleStatusMenu(); }} style={statusPillActive(effStatus)}>
@@ -59,10 +64,10 @@ export default function TicketDetailHeader({
               {statusMenuLoading ? (
                 <div style={{ padding: "10px", display: "flex", justifyContent: "center" }}><LoadingRing size={20} /></div>
               ) : statusMenuOptions.length === 0 ? (
-                <div style={{ padding: "8px 10px", fontSize: "12px", color: "#5B6273", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
+                <div style={{ padding: "8px 10px", fontSize: FONT.sm, color: "#5B6273", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
               ) : (
                 statusMenuOptions.map((s) => (
-                  <button key={s} onClick={(e) => onSelectStatus(s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: "12.5px", fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
+                  <button key={s} onClick={(e) => onSelectStatus(s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: FONT.base, fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
                 ))
               )}
             </div>
@@ -70,7 +75,7 @@ export default function TicketDetailHeader({
         </div>
       </div>
       <h1 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
-      <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: "12.5px", color: "#8A90A0", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "#8A90A0", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
         <span style={execPillStyle}><span style={{ ...runDot(st), width: "7px", height: "7px" }} />{RUN_LABEL[st]}</span>
@@ -89,7 +94,7 @@ export default function TicketDetailHeader({
               padding: "0 14px",
               textDecoration: "none",
               color: COLORS.indigo,
-              fontSize: "12px",
+              fontSize: FONT.sm,
               fontWeight: 700,
               cursor: "pointer",
               // Opaque fill so the spinning conic-gradient ring stays confined to the

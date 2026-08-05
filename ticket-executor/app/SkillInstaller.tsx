@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import LoadingRing from "./ticket-executor/LoadingRing";
 import { useBoltsContext } from "./BoltsContext";
-import { COLORS, card, ctaButtonStyle, pill } from "@/lib/ui";
+import { COLORS, FONT, card, ctaButtonStyle, pill } from "@/lib/ui";
 
 // Mirrors SkillState in lib/skillPack.ts — redeclared because that module is
 // server-only (fs/os) and must not reach the client bundle.
@@ -100,14 +100,14 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
   return (
     <div style={{ ...card({ padding: "13px" }), display: "flex", flexDirection: "column", gap: "9px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap" }}>
-        <span style={{ fontSize: "12px", fontWeight: 700, color: COLORS.text }}>Skills on this machine</span>
-        <span style={{ fontSize: "11px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>{target}</span>
+        <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.text }}>Skills on this machine</span>
+        <span style={{ fontSize: FONT.xs, color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>{target}</span>
         <span style={{ flex: 1 }} />
         {pending.length > 0 && (
           <button
             onClick={(e) => { fireBoltFromEvent(e); run({ all: true, force: confirming.size > 0 }, "all"); }}
             disabled={!!busy}
-            style={{ ...ctaButtonStyle("primary", { height: "28px", cornerPx: 6 }), fontSize: "11.5px", opacity: busy ? 0.55 : 1, cursor: busy ? "default" : "pointer" }}
+            style={{ ...ctaButtonStyle("primary", { height: "28px", cornerPx: 6 }), fontSize: FONT.sm, opacity: busy ? 0.55 : 1, cursor: busy ? "default" : "pointer" }}
           >
             <span style={{ position: "relative", zIndex: 1 }}>
               {busy === "all" ? "Working…" : `Install all (${pending.length})`}
@@ -122,11 +122,11 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
           const needsConfirm = confirming.has(s.name);
           return (
             <div key={s.name} style={{ display: "flex", alignItems: "center", gap: "9px", padding: "6px 2px", borderTop: `1px solid ${COLORS.borderSubtle}` }}>
-              <span style={{ fontSize: "11.5px", fontFamily: "var(--font-mono), monospace", color: COLORS.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span style={{ fontSize: FONT.sm, fontFamily: "var(--font-mono), monospace", color: COLORS.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                 {s.name}
               </span>
               <span style={{ flex: 1 }} />
-              <span style={{ fontSize: "10.5px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace", whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: FONT.xs, color: COLORS.faint, fontFamily: "var(--font-mono), monospace", whiteSpace: "nowrap" }}>
                 {s.installedVersion ? `${s.installedVersion} → ${s.bundledVersion}` : s.bundledVersion}
               </span>
               <span style={{ ...pill({ color: t.color, border: COLORS.border, size: "xs", weight: 700 }), letterSpacing: ".04em", flex: "0 0 auto" }}>
@@ -136,7 +136,7 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
                 <button
                   onClick={(e) => { fireBoltFromEvent(e); run({ name: s.name, force: needsConfirm || s.status === "outdated" }, s.name); }}
                   disabled={!!busy}
-                  style={{ ...ctaButtonStyle(needsConfirm ? "danger" : "ghost", { height: "26px", cornerPx: 6 }), fontSize: "11px", flex: "0 0 auto", opacity: busy ? 0.55 : 1, cursor: busy ? "default" : "pointer" }}
+                  style={{ ...ctaButtonStyle(needsConfirm ? "danger" : "ghost", { height: "26px", cornerPx: 6 }), fontSize: FONT.xs, flex: "0 0 auto", opacity: busy ? 0.55 : 1, cursor: busy ? "default" : "pointer" }}
                 >
                   <span style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center", gap: "5px" }}>
                     {busy === s.name ? <LoadingRing size={12} /> : null}
@@ -150,7 +150,7 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
       </div>
 
       {note && (
-        <span style={{ fontSize: "11.5px", color: COLORS.textDim, lineHeight: 1.55 }}>{note}</span>
+        <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.55 }}>{note}</span>
       )}
     </div>
   );

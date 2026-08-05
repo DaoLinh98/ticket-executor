@@ -6,6 +6,7 @@ import type {
   ReviewData,
   Ticket,
 } from "./types";
+import { markdownToHtml } from "./richText";
 
 // Parse "https://github.com/owner/repo" (or ".../owner/repo/...") into owner+repo.
 export function parseRepo(url: string): { owner: string; repo: string } | null {
@@ -73,13 +74,14 @@ function statusFromIssue(state: string, rawLabels: string[]): string {
   return state === "closed" ? "Done" : "Todo";
 }
 
-// Pull acceptance-criteria-style checklist items out of the issue body.
-function criteriaFromBody(body: string): string[] {
-  return body
+// Pull acceptance-criteria-style checklist items out of the issue body, as one
+// rich-text block (see Ticket.criteria) rather than a flat list of lines.
+function criteriaFromBody(body: string): string {
+  const items = body
     .split(/\r?\n/)
-    .map((l) => l.match(/^\s*[-*]\s*\[[ xX]\]\s*(.+)$/))
-    .filter((m): m is RegExpMatchArray => !!m)
-    .map((m) => m[1].trim());
+    .filter((l) => /^\s*[-*]\s*\[[ xX]\]\s*\S/.test(l))
+    .join("\n");
+  return items ? markdownToHtml(items) : "";
 }
 
 // Parse "https://github.com/owner/repo/pull/123" into owner+repo+number.
@@ -357,7 +359,7 @@ export async function getGithubIssues(
         assignee: i.assignee?.login ?? "Unassigned",
         areaPath: `${owner}/${repo}`,
         project: repo,
-        description: (i.body ?? "").trim(),
+        description: markdownToHtml(i.body ?? ""),
         criteria: criteriaFromBody(i.body ?? ""),
         url: `https://github.com/${owner}/${repo}/issues/${i.number}`,
       } satisfies Ticket;

@@ -2,6 +2,7 @@ import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, Revi
 import {
   adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
+  getWorkItemState,
   type ProjectInfo,
 } from "./ado";
 import {
@@ -216,15 +217,26 @@ export async function resolveStatusForUpdate(
 
 // Write a ticket's status back to its provider — the counterpart to getStatusOptions.
 // Throws for providers that aren't wired yet, so the caller can surface a real error
-// instead of silently pretending the change synced.
-export async function updateTicketStatus(provider: ProviderId, ticketId: string, status: string): Promise<void> {
+// instead of silently pretending the change synced. Returns the status the provider
+// actually ended up in, which is not always the one that was requested.
+export async function updateTicketStatus(provider: ProviderId, ticketId: string, status: string): Promise<string> {
   if (provider === "azure-devops") return updateWorkItemState(ticketId, status);
   if (provider === "github") {
     const creds = await githubCreds();
     if (!creds) throw new Error("GitHub is not configured — set the repository URL and access token in Settings.");
-    return updateGithubStatus(creds.url, creds.token, ticketId, status);
+    await updateGithubStatus(creds.url, creds.token, ticketId, status);
+    return status;
   }
   throw new Error(`${labelFor(provider)} status sync is not wired up yet.`);
+}
+
+// The ticket's current status straight from the provider. The app reads this back
+// after a write (and after a failed one) so what it displays is the provider's
+// state rather than an optimistic local guess that quietly drifted out of sync.
+// Returns "" when the provider isn't wired up — the caller then keeps what it has.
+export async function readTicketStatus(provider: ProviderId, ticketId: string): Promise<string> {
+  if (provider === "azure-devops") return getWorkItemState(ticketId);
+  return "";
 }
 
 // Aggregate unresolved-review-comment counts across a set of tickets, for the

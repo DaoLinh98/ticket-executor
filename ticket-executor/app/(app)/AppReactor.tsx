@@ -4,10 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Reactor from "../Reactor";
 import { COLORS } from "@/lib/ui";
-
-// Fired by the Settings page after a successful save so the backdrop reacts to
-// an animated-background change immediately (detail carries the new value).
-export const SETTINGS_UPDATED_EVENT = "te:settings-updated";
+import { SETTINGS_UPDATED_EVENT, type SettingsUpdatedDetail } from "../settingsEvents";
 
 // Single app-wide reactor backdrop, mounted once in the shared layout so the
 // animation persists across page navigations (and only one instance ever owns
@@ -27,7 +24,7 @@ export default function AppReactor() {
 
   useEffect(() => {
     const onUpdated = (e: Event) => {
-      const detail = (e as CustomEvent<{ animatedBackground?: boolean }>).detail;
+      const detail = (e as CustomEvent<SettingsUpdatedDetail>).detail;
       if (detail && typeof detail.animatedBackground === "boolean") setFrozen(!detail.animatedBackground);
     };
     window.addEventListener(SETTINGS_UPDATED_EVENT, onUpdated);

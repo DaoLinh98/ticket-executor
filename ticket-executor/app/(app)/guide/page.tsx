@@ -7,7 +7,7 @@ import { useBoltsContext } from "../../BoltsContext";
 import { SECTIONS } from "../../guide/content";
 import { DocsLink, SKILLS_CHANGED_EVENT, StatusBadge } from "../../guide/parts";
 import type { SectionStatus } from "../../guide/parts";
-import { COLORS, card, clipCorner, ctaButtonStyle, fieldLabel, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
 import type { PreflightResult } from "@/lib/preflight";
 
 /** Roll the checks of one preflight group up into a single section verdict:
@@ -116,13 +116,13 @@ export default function GuidePage() {
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText("18px")}>Guide</span>
-        <span style={{ fontSize: "12.5px", color: COLORS.textDim }}>Set up your machine, then get better runs out of it</span>
+        <span style={logoText(FONT.xl)}>Guide</span>
+        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Set up your machine, then get better runs out of it</span>
         <div style={{ flex: 1 }} />
         <Link
           href="/system-check"
           onClick={(e) => fireBoltFromEvent(e)}
-          style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), textDecoration: "none", fontSize: "11.5px" }}
+          style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), textDecoration: "none", fontSize: FONT.sm }}
         >
           Open System Check →
         </Link>
@@ -135,8 +135,8 @@ export default function GuidePage() {
           <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             {banner && (
               <div style={{ ...tintedCard(banner.tone), display: "flex", flexDirection: "column", gap: "5px", animation: "fadeUp .32s both" }}>
-                <span style={{ fontSize: "14px", fontWeight: 700, color: banner.color }}>{banner.title}</span>
-                <span style={{ fontSize: "12.5px", color: COLORS.textDim, lineHeight: 1.6 }}>{banner.text}</span>
+                <span style={{ fontSize: FONT.md, fontWeight: 700, color: banner.color }}>{banner.title}</span>
+                <span style={{ fontSize: FONT.base, color: COLORS.textDim, lineHeight: 1.6 }}>{banner.text}</span>
               </div>
             )}
 
@@ -194,7 +194,7 @@ export default function GuidePage() {
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "11.5px",
+                        fontSize: FONT.sm,
                         fontWeight: 700,
                         color: isOpen ? "#0B0C10" : COLORS.textDim,
                         ...(isOpen
@@ -205,8 +205,8 @@ export default function GuidePage() {
                       {i + 1}
                     </span>
                     <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" }}>
-                      <span style={{ fontSize: "13.5px", fontWeight: 700, color: COLORS.text }}>{s.title}</span>
-                      <span style={{ fontSize: "11.5px", color: COLORS.textDim, lineHeight: 1.5 }}>{s.blurb}</span>
+                      <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{s.title}</span>
+                      <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.5 }}>{s.blurb}</span>
                     </span>
                     <span style={{ flex: 1 }} />
                     {s.checkGroup && <StatusBadge status={v.status} detail={v.detail} />}
@@ -232,7 +232,7 @@ export default function GuidePage() {
                               <Link
                                 href="/system-check"
                                 onClick={(e) => fireBoltFromEvent(e)}
-                                style={{ fontSize: "11.5px", color: COLORS.accent, textDecoration: "none", fontWeight: 600 }}
+                                style={{ fontSize: FONT.sm, color: COLORS.accent, textDecoration: "none", fontWeight: 600 }}
                               >
                                 Verify in System Check →
                               </Link>
@@ -257,7 +257,7 @@ export default function GuidePage() {
                   Go to Ticket Execution
                 </Link>
               ) : (
-                <span style={{ display: "inline-flex", alignItems: "center", height: "34px", padding: "0 16px", fontSize: "12px", fontWeight: 600, color: COLORS.textMuted, border: `1.5px solid ${COLORS.border}`, clipPath: clipCorner(7) }}>
+                <span style={{ display: "inline-flex", alignItems: "center", height: "34px", padding: "0 16px", fontSize: FONT.sm, fontWeight: 600, color: COLORS.textMuted, border: `1.5px solid ${COLORS.border}`, clipPath: clipCorner(7) }}>
                   Finish the steps above to continue
                 </span>
               )}

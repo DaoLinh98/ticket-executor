@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { dropdownPanelStyle, ringBorder } from "@/lib/ui";
+import { FONT, dropdownPanelStyle, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
 
 // Themed, non-creatable dropdown — same button+panel pattern as the ticket
@@ -56,7 +56,7 @@ export default function SelectMenu({
           borderRadius: "9px",
           background: active ? undefined : "#14171D",
           color: active ? "#F3F5F9" : "#8A90A0",
-          fontSize: "12px",
+          fontSize: FONT.sm,
           fontWeight: 600,
           textAlign: "left",
           cursor: "pointer",
@@ -72,7 +72,7 @@ export default function SelectMenu({
           background: "transparent",
           padding: 0,
           fontFamily: "var(--font-mono), monospace",
-          fontSize: "13px",
+          fontSize: FONT.base,
           color: "#E4E7EE",
           cursor: "pointer",
           textAlign: "left",

@@ -11,7 +11,7 @@ import DiffModal from "./ticket-executor/DiffModal";
 import LoadingRing from "./ticket-executor/LoadingRing";
 import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
-import Toast from "./ticket-executor/Toast";
+import Toast, { type ToastMessage } from "./ticket-executor/Toast";
 import CommitsTab from "./ticket-executor/tabs/CommitsTab";
 import ExecutionTab from "./ticket-executor/tabs/ExecutionTab";
 import OverviewTab from "./ticket-executor/tabs/OverviewTab";
@@ -28,17 +28,7 @@ import type {
 import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
-import {
-  RUN_COLOR,
-  actionInfoFor,
-  branchOf,
-  clipCorner,
-  ctaButtonStyle,
-  isFixReviewSkill,
-  nextStatusAfter,
-  pill,
-  ringBorder,
-} from "@/lib/ui";
+import { FONT, RUN_COLOR, actionInfoFor, branchOf, clipCorner, ctaButtonStyle, isFixReviewSkill, nextStatusAfter, pill, ringBorder } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
@@ -98,7 +88,7 @@ export default function TicketExecutor() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuOptions, setStatusMenuOptions] = useState<string[]>([]);
   const [statusMenuLoading, setStatusMenuLoading] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
@@ -108,6 +98,7 @@ export default function TicketExecutor() {
   const [savedOptions, setSavedOptions] = useState<Record<"rootRepo" | "project" | "skill", string[]>>({ rootRepo: [], project: [], skill: [] });
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
+    clickEffects: true,
     org: "",
     pat: "",
     hasPat: false,
@@ -150,7 +141,7 @@ export default function TicketExecutor() {
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseConnections = useRef<Record<string, EventSource>>({});
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastSeq = useRef(0);
   // Batch "Run selected" scheduler: tickets waiting for a free slot, and
   // tickets currently occupying one — capped by settings.concurrentRuns.
   const batchQueueRef = useRef<string[]>([]);
@@ -178,15 +169,15 @@ export default function TicketExecutor() {
       setTickets(list);
       setSelectedId((prev) => (list.some((t) => t.id === prev) ? prev : list[0]?.id ?? ""));
       if (opts?.notify) {
-        if (data.error) showToast(data.error, 3200, "error");
-        else if (data.notice) showToast(data.notice, 3200, "error");
+        if (data.error) showToast(data.error, 8000, "error");
+        else if (data.notice) showToast(data.notice, 8000, "error");
         else showToast(`Loaded ${list.length} ticket${list.length === 1 ? "" : "s"}`, 2600);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setLoadError(msg);
       setTickets([]);
-      if (opts?.notify) showToast(msg, 3200, "error");
+      if (opts?.notify) showToast(msg, 8000, "error");
     } finally {
       setLoading(false);
     }
@@ -294,7 +285,6 @@ export default function TicketExecutor() {
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       Object.values(sseConnections.current).forEach((es) => es.close());
-      if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, [reloadTickets, loadSprintOptions, loadProjectOptions, searchParams]);
 
@@ -495,10 +485,10 @@ export default function TicketExecutor() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [statusMenuOpen]);
 
-  const showToast = useCallback((msg: string, ms = 4000, kind: "success" | "error" = "success") => {
-    setToast({ msg, kind });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), ms);
+  // The Toast owns its own countdown (and pauses it while hovered), so this only
+  // hands it a fresh message — `id` is what makes each one a new mount.
+  const showToast = useCallback((msg: string, ms = 7000, kind: "success" | "error" = "success") => {
+    setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
   }, []);
 
   // Ask for notification permission (best-effort) and fire a desktop notification
@@ -547,6 +537,19 @@ export default function TicketExecutor() {
       const data = await r.json();
       const options = Array.isArray(data.options) ? data.options : [];
       setStatusMenuOptions(options);
+      // The same request reports where the ticket actually is. Opening the menu is
+      // the natural moment to reconcile: if anything (a rejected write, an edit made
+      // in the tracker itself) moved it, the pill corrects itself instead of showing
+      // a status the provider never had.
+      if (typeof data.current === "string" && data.current && data.current !== ticket.status) {
+        setStatusOverrides((s) => ({ ...s, [ticket.id]: data.current }));
+      } else if (typeof data.current === "string" && data.current === ticket.status) {
+        setStatusOverrides((s) => {
+          const next = { ...s };
+          delete next[ticket.id];
+          return next;
+        });
+      }
       try {
         localStorage.setItem(cacheKey, JSON.stringify(options));
       } catch { }
@@ -557,10 +560,22 @@ export default function TicketExecutor() {
     }
   };
 
+  // Roll the local status back to whatever the provider reports. `current` is what
+  // the status API hands back on a rejected write; with no value (a provider that
+  // can't be read) the override is dropped so the fetched ticket status shows again.
+  // Either way the app stops displaying a status the provider never accepted.
+  const resyncStatus = useCallback((ticketId: string, current: unknown) => {
+    setStatusOverrides((s) => {
+      const next = { ...s };
+      if (typeof current === "string" && current) next[ticketId] = current;
+      else delete next[ticketId];
+      return next;
+    });
+  }, []);
+
   const selectStatus = async (ticketId: string, status: string, e?: MouseEvent) => {
     fireBoltFromEvent(e);
     setStatusMenuOpen(false);
-    const prev = statusOverrides[ticketId];
     setStatusOverrides((s) => ({ ...s, [ticketId]: status })); // optimistic
     try {
       const r = await fetch(`/api/tickets/${ticketId}/status`, {
@@ -569,16 +584,17 @@ export default function TicketExecutor() {
         body: JSON.stringify({ provider: settings.provider, status }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "Failed to update status");
-      showToast(`Status set to "${status}" — synced to ${providerMeta(settings.provider).name}`, 3200);
+      if (!r.ok) {
+        resyncStatus(ticketId, data.current);
+        throw new Error(data.error || "Failed to update status");
+      }
+      // The provider maps the requested label onto one of its own workflow states,
+      // so show what it recorded rather than what was asked for.
+      const applied = (data.status as string) || status;
+      setStatusOverrides((s) => ({ ...s, [ticketId]: applied }));
+      showToast(`Status set to "${applied}" — synced to ${providerMeta(settings.provider).name}`, 4000);
     } catch (err) {
-      setStatusOverrides((s) => {
-        const next = { ...s };
-        if (prev === undefined) delete next[ticketId];
-        else next[ticketId] = prev;
-        return next;
-      });
-      showToast(err instanceof Error ? err.message : "Failed to sync status to the provider", 4200, "error");
+      showToast(err instanceof Error ? err.message : "Failed to sync status to the provider", 9000, "error");
     }
   };
   // Note: use `??` (not `||`) against the override so that clearing a field to ""
@@ -723,6 +739,9 @@ export default function TicketExecutor() {
         // real provider (ADO work item state / GitHub status label) — not just locally.
         const next = nextStatusAfter((run.skill as string) ?? "", "");
         if (next) {
+          let applied = "";
+          let syncError = "";
+          let current: unknown;
           try {
             const sr = await fetch(`/api/tickets/${ticketId}/status`, {
               method: "POST",
@@ -730,21 +749,31 @@ export default function TicketExecutor() {
               body: JSON.stringify({ provider: settings.provider, status: next }),
             });
             const data = await sr.json().catch(() => ({}));
-            if (!sr.ok) throw new Error(data.error || "sync failed");
-            const applied = (data.status as string) || next;
+            current = data.current;
+            if (!sr.ok) syncError = data.error || "the provider rejected the change";
+            else applied = (data.status as string) || next;
+          } catch (err) {
+            syncError = err instanceof Error ? err.message : "the provider could not be reached";
+          }
+          // The run itself succeeded either way — a failed status write is a
+          // footnote to that, not a failure. Reporting it as an error toast (which
+          // is all the user used to see) hid the fact that the PR was created.
+          if (applied) {
             setStatusOverrides((so) => ({ ...so, [ticketId]: applied }));
             showToast(`#${ticketId} completed — status set to "${applied}"`);
             notify("Ticket Executor", `#${ticketId} completed — status set to "${applied}"`);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : "";
-            showToast(`#${ticketId} status sync to the provider failed${message ? ` — ${message}` : ""}`, 4200, "error");
+          } else {
+            // Never leave the app showing a status the provider refused.
+            resyncStatus(ticketId, current);
+            showToast(`#${ticketId} completed — result ready.\nStatus stayed at the provider's value: ${syncError}`, 12000);
+            notify("Ticket Executor", `#${ticketId} completed — result ready (status not synced)`);
           }
         } else {
           showToast(`#${ticketId} completed — result ready`);
           notify("Ticket Executor", `#${ticketId} completed — result ready`);
         }
       } else {
-        showToast(`#${ticketId} failed`, 4000, "error");
+        showToast(`#${ticketId} failed`, 9000, "error");
         notify("Ticket Executor", `#${ticketId} failed`);
       }
       // A fix-code-review run (v2 or v3) resolves PR threads itself — refetch
@@ -761,7 +790,7 @@ export default function TicketExecutor() {
       if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
       return true;
     },
-    [showToast, loadHistory, notify, settings.provider, stopTracking]
+    [showToast, loadHistory, notify, settings.provider, stopTracking, resyncStatus]
   );
 
   const startPollingFallback = useCallback(
@@ -885,9 +914,9 @@ export default function TicketExecutor() {
       if (!getRootRepo(t).trim()) {
         if (isActive) {
           setTab("overview");
-          showToast("Set ROOT REPO on the Overview tab first — the git clone this ticket runs in.", 5000, "error");
+          showToast("Set ROOT REPO on the Overview tab first — the git clone this ticket runs in.", 9000, "error");
         } else {
-          showToast(`#${t.id} skipped — no Root repo set.`, 5000, "error");
+          showToast(`#${t.id} skipped — no Root repo set.`, 9000, "error");
         }
         return false;
       }
@@ -955,7 +984,7 @@ export default function TicketExecutor() {
               setTab("overview");
               window.__reactor?.setMode("idle");
             }
-            showToast(data.error || "Run rejected before starting.", 6000, "error");
+            showToast(data.error || "Run rejected before starting.", 12000, "error");
             return false;
           }
           setExecs((s) => ({
@@ -976,7 +1005,7 @@ export default function TicketExecutor() {
         // The run started, but the server couldn't verify something worth knowing
         // up front (e.g. MCP connectivity was never deep-checked).
         if (Array.isArray(data.warnings) && data.warnings.length && isActive) {
-          showToast(String(data.warnings[0]), 7000, "error");
+          showToast(String(data.warnings[0]), 12000, "error");
         }
         startPolling(t.id, data.runId);
         return true;
@@ -1089,7 +1118,7 @@ export default function TicketExecutor() {
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
-          showToast(data.error || "Failed to resolve the plan", 3600, "error");
+          showToast(data.error || "Failed to resolve the plan", 9000, "error");
           return;
         }
         if (action === "cancel") {
@@ -1163,7 +1192,7 @@ export default function TicketExecutor() {
     const active = tab === name;
     const base: CSSProperties = {
       padding: "6px 13px",
-      fontSize: "12px",
+      fontSize: FONT.sm,
       fontWeight: 600,
       cursor: enabled ? "pointer" : "not-allowed",
       marginBottom: "3px",
@@ -1265,9 +1294,9 @@ export default function TicketExecutor() {
   const secondaryAction = showSecondaryAction
     ? { label: actionInfo!.label, onClick: (e?: MouseEvent) => startImplement(e), style: ctaButtonStyle("ghost") }
     : null;
-  const secondaryCtaButtonStyle: CSSProperties = { ...ctaButtonStyle("ghost", { height: "38px" }), padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
+  const secondaryCtaButtonStyle: CSSProperties = { ...ctaButtonStyle("ghost", { height: "38px" }), padding: "0 20px", fontSize: FONT.base, flex: "0 0 auto" };
 
-  const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: "13px", flex: "0 0 auto" };
+  const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: FONT.base, flex: "0 0 auto" };
   const ctaTitle = blockedBySingleMode ? "Another ticket is running" : gated ? "No action for this status" : st === "succeeded" ? "Implementation complete" : st === "failed" ? "Last run failed" : st === "running" ? "Claude Code is working…" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
     ? blockedBySingleMode ? `Ticket #${busyOtherTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.`
@@ -1297,7 +1326,7 @@ export default function TicketExecutor() {
     const db: CSSProperties = {
       position: "relative", width: "24px", height: "24px", borderRadius: "50%",
       display: "flex", alignItems: "center", justifyContent: "center",
-      fontFamily: "var(--font-mono), monospace", fontSize: "11px", fontWeight: 600, flex: "0 0 auto",
+      fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, fontWeight: 600, flex: "0 0 auto",
       transition: "background .3s, border-color .3s, color .3s",
     };
     let dotStyle: CSSProperties;
@@ -1310,7 +1339,7 @@ export default function TicketExecutor() {
         ? { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", borderRadius: "2px", background: "linear-gradient(#35D6A4, rgba(53,214,164,.12))", backgroundSize: "100% 200%", animation: "flow 1.3s linear infinite" }
         : { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", background: "#23272F" };
     const labelStyle: CSSProperties = {
-      fontSize: "13px", paddingBottom: last ? "0" : "20px", lineHeight: "1.3", paddingTop: "3px",
+      fontSize: FONT.base, paddingBottom: last ? "0" : "20px", lineHeight: "1.3", paddingTop: "3px",
       color: sst === "done" ? "#C7CCD8" : sst === "active" ? "#F3F5F9" : sst === "failed" ? "#FF8F8F" : "#5B6273",
       fontWeight: sst === "active" ? 600 : 500,
     };
@@ -1446,7 +1475,7 @@ export default function TicketExecutor() {
         {/* Main */}
         <main style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
           {!t ? (
-            <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "#5B6273", fontSize: "14px" }}></span>}</div>
+            <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "#5B6273", fontSize: FONT.md }}></span>}</div>
           ) : (
             <>
               <TicketDetailHeader
@@ -1577,7 +1606,7 @@ export default function TicketExecutor() {
         />
       )}
 
-      {toast && <Toast toast={toast} />}
+      {toast && <Toast key={toast.id} toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

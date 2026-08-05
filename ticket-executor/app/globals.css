@@ -50,11 +50,11 @@ input{font-family:inherit;}
 @keyframes spinAngle{to{--angle:360deg;}}
 
 /* markdown (Result tab, Plan tab) — inherits prototype palette */
-.md-body{font-size:14.5px;line-height:1.75;color:#B8BDC9;}
+.md-body{font-size:14.5px;line-height:1.75;color:#C7CCD8;}
 .md-body>*:first-child{margin-top:0;}
 .md-body h1,.md-body h2,.md-body h3{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:26px 0 12px;line-height:1.25;}
 .md-body h1{font-size:20px;}
-.md-body h2{font-size:15.5px;letter-spacing:.02em;text-transform:uppercase;padding-left:11px;border-left:3px solid var(--accent);}
+.md-body h2{font-size:15px;letter-spacing:.02em;text-transform:uppercase;padding-left:11px;border-left:3px solid var(--accent);}
 .md-body h3{font-size:14.5px;color:#DEE1E9;}
 .md-body p{margin:0 0 12px;}
 .md-body ul,.md-body ol{margin:0 0 12px;padding-left:22px;}
@@ -67,7 +67,7 @@ input{font-family:inherit;}
 .md-body pre{background:#0A0B0E;border:1px solid #23272F;border-radius:12px;padding:15px 17px;overflow-x:auto;margin:0 0 14px;}
 .md-body pre code{border:none;background:none;padding:0;}
 .md-body strong{color:#E4E7EE;}
-.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:13px;border-radius:9px;overflow:hidden;border:1px solid #1E232C;}
+.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:14px;border-radius:9px;overflow:hidden;border:1px solid #1E232C;}
 .md-body th,.md-body td{border:1px solid #1E232C;padding:8px 12px;text-align:left;}
 .md-body th{background:#151922;color:#C7CCD8;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
 .md-body tbody tr:nth-child(even){background:rgba(255,255,255,.015);}
@@ -84,3 +84,43 @@ button:disabled{cursor:not-allowed;}
 @media (prefers-reduced-motion: reduce){
   button:not(:disabled):hover,a[href]:hover,button:not(:disabled):active,a[href]:active{transform:none;}
 }
+
+/* Provider rich text (ticket Description / Acceptance Criteria).
+   These fields arrive as the tracker's own HTML — nested numbered lists,
+   bold terms, links, tables and pasted screenshots — sanitized by
+   lib/richText.ts. The rules below only style it; nothing here may assume a
+   tag is present, since the source is whoever wrote the ticket.
+   Sizes come from the FONT scale in lib/ui.ts (base 14 / md 15 / sm 12.5). */
+.te-rich{font-size:15px;line-height:1.7;color:#C7CCD8;overflow-wrap:anywhere;}
+.te-rich>*:first-child{margin-top:0;}
+.te-rich>*:last-child{margin-bottom:0;}
+.te-rich p,.te-rich div{margin:0 0 10px;}
+.te-rich h1,.te-rich h2,.te-rich h3,.te-rich h4,.te-rich h5,.te-rich h6{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:20px 0 10px;line-height:1.3;}
+.te-rich h1{font-size:20px;}
+.te-rich h2{font-size:15px;}
+.te-rich h3,.te-rich h4,.te-rich h5,.te-rich h6{font-size:15px;}
+/* Nesting is the point: ADO criteria are numbered with lettered sub-items, so
+   each level gets its own marker style instead of collapsing to plain dots. */
+.te-rich ul,.te-rich ol{margin:0 0 10px;padding-left:26px;}
+.te-rich li{margin:5px 0;}
+.te-rich li::marker{color:#8A90A0;}
+.te-rich ol{list-style:decimal;}
+.te-rich ol ol{list-style:lower-alpha;}
+.te-rich ol ol ol{list-style:lower-roman;}
+.te-rich ul{list-style:disc;}
+.te-rich ul ul{list-style:circle;}
+.te-rich ul ul ul{list-style:square;}
+.te-rich strong,.te-rich b{color:#ECEEF3;}
+.te-rich a{color:#9BA6E8;}
+.te-rich code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:#0A0B0E;border:1px solid #23272F;border-radius:5px;padding:1px 5px;color:#C7CCD8;}
+.te-rich pre{background:#0A0B0E;border:1px solid #23272F;border-radius:11px;padding:13px 15px;overflow-x:auto;margin:0 0 12px;}
+.te-rich pre code{border:none;background:none;padding:0;}
+.te-rich blockquote{margin:0 0 10px;padding:8px 13px;border-left:3px solid #2A2F3A;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:#8A90A0;}
+.te-rich hr{border:none;border-top:1px solid #1E232C;margin:16px 0;}
+.te-rich table{border-collapse:collapse;width:100%;margin:0 0 12px;font-size:14px;border:1px solid #1E232C;border-radius:9px;overflow:hidden;}
+.te-rich th,.te-rich td{border:1px solid #1E232C;padding:7px 11px;text-align:left;vertical-align:top;}
+.te-rich th{background:#151922;color:#C7CCD8;font-weight:700;}
+/* Screenshots are usually wider than the pane and carry the width/height the
+   author pasted — cap them to the column and drop the fixed height, or the
+   image renders squashed. */
+.te-rich img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid #23272F;border-radius:9px;background:#0A0B0E;}

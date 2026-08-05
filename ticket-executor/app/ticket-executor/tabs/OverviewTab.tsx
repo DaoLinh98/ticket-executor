@@ -5,7 +5,9 @@ import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel } from "@/lib/claudeOptions";
 import type { Ticket, TicketComment } from "@/lib/types";
-import { COLORS, RUN_COLOR, RUN_LABEL, avatar, card, runDot, initials, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, initials, runDot, tintedCard } from "@/lib/ui";
+import { hasContent } from "@/lib/richText";
+import RichText from "../RichText";
 import { renderCommentBody } from "../helpers";
 import type { Action, OverrideField, RunSummary } from "../types";
 import LoadingRing from "../LoadingRing";
@@ -39,9 +41,13 @@ type Props = {
   secondaryCtaButtonStyle: CSSProperties;
 };
 
+// Detail copy was sized/toned for glanceability and ended up hard to actually
+// read (11px headings on #5B6273, body on #B8BDC9). Everything in this pane is
+// text a developer has to read closely before starting a run, so headings and
+// body both step up one size and one contrast level.
 const sectionHeading: CSSProperties = {
-  margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: "11px",
-  fontWeight: 700, letterSpacing: ".16em", color: "#5B6273",
+  margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.sm,
+  fontWeight: 700, letterSpacing: ".16em", color: COLORS.textDim,
 };
 
 // Ticket detail: description, acceptance criteria, discussion, the per-run
@@ -52,26 +58,30 @@ export default function OverviewTab({
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
 }: Props) {
-  const fieldLabel: CSSProperties = { fontSize: "10px", letterSpacing: ".12em", color: "#5B6273", fontWeight: 600, marginBottom: "5px" };
+  const fieldLabel: CSSProperties = { fontSize: FONT.xs, letterSpacing: ".12em", color: COLORS.textDim, fontWeight: 600, marginBottom: "5px" };
   const fieldCard = card({ padding: "9px 11px" });
   // Root Repo has no default — a run can't start without it, so say so on the field.
   const rootRepoMissing = !rootRepo.trim();
   return (
-    <div style={{ maxWidth: "780px", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
+    <div style={{ maxWidth: "820px", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
+      {/* Description and Acceptance Criteria are rendered as the tracker's own
+          rich text (already sanitized in lib/richText.ts), so the numbering,
+          nesting, tables and screenshots the author wrote survive. They used to
+          be flattened to plain lines — one card per line for the criteria —
+          which silently dropped every sub-item and every image. */}
       <section>
         <h3 style={sectionHeading}>DESCRIPTION</h3>
-        <p style={{ margin: 0, fontSize: "14.5px", lineHeight: 1.75, color: "#B8BDC9", whiteSpace: "pre-wrap" }}>{t.description || "No description."}</p>
+        {hasContent(t.description)
+          ? <RichText html={t.description} />
+          : <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>No description.</p>}
       </section>
-      {t.criteria.length > 0 && (
+      {hasContent(t.criteria) && (
         <section>
           <h3 style={sectionHeading}>ACCEPTANCE CRITERIA</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {t.criteria.map((c, i) => (
-              <div key={i} style={{ display: "flex", gap: "12px", alignItems: "flex-start", ...card({ padding: "12px 14px", border: COLORS.borderSubtle }) }}>
-                <span style={{ flex: "0 0 auto", width: "18px", height: "18px", borderRadius: "6px", border: "1.5px solid #2E3644", display: "flex", alignItems: "center", justifyContent: "center", marginTop: "1px" }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="3"><path d="M5 13l4 4L19 7" /></svg></span>
-                <span style={{ fontSize: "13.5px", color: "#C7CCD8", lineHeight: 1.5 }}>{c}</span>
-              </div>
-            ))}
+          {/* One panel holding the whole field, not one card per line: the criteria
+              are a single numbered document to read top to bottom. */}
+          <div style={card({ padding: "15px 18px", border: COLORS.borderSubtle })}>
+            <RichText html={t.criteria} />
           </div>
         </section>
       )}
@@ -80,13 +90,13 @@ export default function OverviewTab({
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             {comments.map((cm, i) => (
               <div key={i} style={{ display: "flex", gap: "11px", alignItems: "flex-start" }}>
-                <span style={{ ...avatar(cm.author), flex: "0 0 auto", width: "28px", height: "28px", fontSize: "11px" }}>{initials(cm.author)}</span>
+                <span style={{ ...avatar(cm.author), flex: "0 0 auto", width: "28px", height: "28px", fontSize: FONT.xs }}>{initials(cm.author)}</span>
                 <div style={{ flex: 1, minWidth: 0, ...card({ padding: "11px 14px", border: COLORS.borderSubtle }) }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: "13px", fontWeight: 700, color: "#E4E7EE" }}>{cm.author}</span>
-                    <span style={{ fontSize: "11.5px", color: "#6B7283", textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
+                    <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{cm.author}</span>
+                    <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
                   </div>
-                  <div style={{ fontSize: "13.5px", lineHeight: 1.65, color: "#C7CCD8", marginTop: "5px" }}>{renderCommentBody(cm.text)}</div>
+                  <div style={{ fontSize: FONT.lg, lineHeight: 1.65, color: COLORS.textSoft, marginTop: "5px" }}>{renderCommentBody(cm.text)}</div>
                 </div>
               </div>
             ))}
@@ -105,11 +115,11 @@ export default function OverviewTab({
         <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={skill} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
         <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v))} options={CLAUDE_MODELS.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
-        <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12.5px", color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
+        <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
         {rootRepoMissing && (
           <div style={{ gridColumn: "1 / -1", display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={COLORS.warning} strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
-            <span style={{ fontSize: "12.5px", color: COLORS.warning, lineHeight: 1.55 }}>
+            <span style={{ fontSize: FONT.base, color: COLORS.warning, lineHeight: 1.55 }}>
               Set <strong>ROOT REPO</strong> before running — the local git clone this ticket should be implemented in (e.g. <span style={{ fontFamily: "var(--font-mono), monospace" }}>C:\repos\my-service</span>). It is remembered per project, so you only pick it once.
             </span>
           </div>
@@ -117,7 +127,7 @@ export default function OverviewTab({
       </section>
       <section>
         <h3 style={sectionHeading}>COMMAND PREVIEW</h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: "13px", ...card({ padding: "15px 18px", radius: "12px", border: "#23272F", background: COLORS.panelBgDark }) }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, ...card({ padding: "15px 18px", radius: "12px", border: "#23272F", background: COLORS.panelBgDark }) }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "#5B6273" }}>$</span><span style={{ color: "#8A90A0" }}>{cdCommand}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "#C7CCD8" }}>{command}</span></div>
         </div>
@@ -129,9 +139,9 @@ export default function OverviewTab({
             {history.map((run) => (
               <button key={run.id} onClick={(e) => onOpenRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s", ...card({ padding: "10px 13px", border: COLORS.borderSubtle }) }}>
                 <span style={{ ...runDot(run.state), width: "8px", height: "8px" }} />
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", color: "#C7CCD8", flex: "0 0 auto" }}>{run.skill}</span>
-                <span style={{ fontSize: "12px", color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
-                <span style={{ fontSize: "11.5px", fontWeight: 600, color: RUN_COLOR[run.state] }}>{RUN_LABEL[run.state]}</span>
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#C7CCD8", flex: "0 0 auto" }}>{run.skill}</span>
+                <span style={{ fontSize: FONT.sm, color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
+                <span style={{ fontSize: FONT.sm, fontWeight: 600, color: RUN_COLOR[run.state] }}>{RUN_LABEL[run.state]}</span>
               </button>
             ))}
           </div>
@@ -139,8 +149,8 @@ export default function OverviewTab({
       )}
       <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard("accent", { padding: "20px 22px", radius: "14px" }) }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: "15px", fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
-          <div style={{ fontSize: "13px", color: "#9A9FAD" }}>{ctaSub}</div>
+          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
+          <div style={{ fontSize: FONT.base, color: "#9A9FAD" }}>{ctaSub}</div>
         </div>
         <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={bannerCtaStyle}>
           {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}

@@ -3,16 +3,16 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Reactor from "../Reactor";
-import { COLORS, ctaButtonStyle, logoText, modalShellStyle, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, ctaButtonStyle, logoText, modalShellStyle, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 
 const fieldInputStyle: CSSProperties = {
   height: "42px", padding: "0 40px 0 13px", border: `1px solid ${COLORS.border}`, borderRadius: "9px",
   background: "#0E1015", color: COLORS.text, fontFamily: "var(--font-mono), monospace",
-  fontSize: "13px", outline: "none", width: "100%", transition: "border-color .18s, box-shadow .18s",
+  fontSize: FONT.base, outline: "none", width: "100%", transition: "border-color .18s, box-shadow .18s",
 };
 const labelStyle: CSSProperties = {
-  fontSize: "11px", letterSpacing: ".1em", fontWeight: 600, color: COLORS.textDim,
+  fontSize: FONT.xs, letterSpacing: ".1em", fontWeight: 600, color: COLORS.textDim,
 };
 
 export default function LoginPage() {
@@ -80,8 +80,8 @@ export default function LoginPage() {
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-            <span style={logoText("19px")}>D-Agent</span>
-            <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, marginTop: "5px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SIGN IN TO CONTINUE</span>
+            <span style={logoText(FONT.xl)}>D-Agent</span>
+            <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "5px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SIGN IN TO CONTINUE</span>
           </div>
         </div>
 
@@ -122,7 +122,7 @@ export default function LoginPage() {
           </div>
         </label>
 
-        <label style={{ display: "flex", alignItems: "center", gap: "9px", cursor: "pointer", fontSize: "12.5px", color: COLORS.textDim, animation: "fadeUp .45s both", animationDelay: "120ms" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "9px", cursor: "pointer", fontSize: FONT.base, color: COLORS.textDim, animation: "fadeUp .45s both", animationDelay: "120ms" }}>
           <input
             type="checkbox"
             checked={remember}
@@ -133,7 +133,7 @@ export default function LoginPage() {
         </label>
 
         {error && (
-          <div style={{ ...tintedCard("danger", { padding: "10px 13px", radius: "9px" }), fontSize: "12.5px", color: "#FFB3AD", animation: "fadeUp .3s both" }}>
+          <div style={{ ...tintedCard("danger", { padding: "10px 13px", radius: "9px" }), fontSize: FONT.base, color: "#FFB3AD", animation: "fadeUp .3s both" }}>
             {error}
           </div>
         )}

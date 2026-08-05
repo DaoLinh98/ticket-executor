@@ -139,8 +139,18 @@ function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResul
           label = `$ ${(input.command as string).split(/\r?\n/)[0].slice(0, 160)}`;
         } else if (typeof input.file_path === "string") {
           label = `✎ ${name} ${input.file_path}`;
+        } else if (name === "StructuredOutput") {
+          // Not work the agent chose to do: this is the node answering its own
+          // output contract (--json-schema). Reading a bare "StructuredOutput"
+          // three times in a row said nothing about what was happening.
+          label = "⇢ Reporting this step's result";
         }
-        live.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
+        // Collapse an immediate repeat rather than printing the same line twice —
+        // a rejected StructuredOutput is retried, and the log filled with copies.
+        const prev = live.logLines[live.logLines.length - 1];
+        if (!prev || prev.text !== label) {
+          live.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
+        }
       }
     }
     return;

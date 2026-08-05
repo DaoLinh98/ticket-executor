@@ -7,8 +7,13 @@ export type Ticket = {
   assigneeEmail?: string; // used to match Settings' personalAccount in "personal" scope
   project: string; // last segment of area path, or default project
   areaPath: string;
-  description: string; // plain text
-  criteria: string[]; // acceptance criteria, one line each
+  // Both fields are **sanitized HTML**, not plain text: a provider stores them as
+  // rich text and real tickets use it (nested numbered criteria, bold terms,
+  // links, pasted screenshots). Flattening them to lines lost the structure the
+  // requirement was written in. Producers must pass provider HTML through
+  // `sanitizeHtml()` (lib/richText.ts) — never assign raw provider markup here.
+  description: string;
+  criteria: string; // acceptance criteria, as one rich-text block
   url: string; // deep link to the ticket in ADO/GitHub
   // The team's own sizing of this ticket, snapshotted onto a run so the dashboard
   // can compare "what we thought it would take" against what the agent spent.

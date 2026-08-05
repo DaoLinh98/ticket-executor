@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { dropdownPanelStyle } from "@/lib/ui";
+import { FONT, dropdownPanelStyle } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
 
 // Creatable combobox: pick an option from the themed dropdown OR type a custom
@@ -49,7 +49,7 @@ export default function Combobox({
     background: "transparent",
     padding: 0,
     fontFamily: "var(--font-mono), monospace",
-    fontSize: "13px",
+    fontSize: FONT.base,
     color: "#E4E7EE",
   };
 
@@ -156,7 +156,7 @@ export default function Combobox({
                   background: isActive || isSel ? "rgba(251,114,80,.12)" : "transparent",
                   color: isSel ? "var(--accent)" : "#C7CCD8",
                   fontFamily: "var(--font-mono), monospace",
-                  fontSize: "12.5px",
+                  fontSize: FONT.base,
                   transition: "background .12s",
                 }}
               >

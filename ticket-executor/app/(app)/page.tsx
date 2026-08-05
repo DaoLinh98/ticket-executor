@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { COLORS, ctaButtonStyle, logoText, ringBorder } from "@/lib/ui";
+import { COLORS, FONT, ctaButtonStyle, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 
 export default function HomePage() {
@@ -19,7 +19,7 @@ export default function HomePage() {
         <h1 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "30px", fontWeight: 700, lineHeight: 1.2, maxWidth: "760px", animation: "fadeUp .5s both", animationDelay: "70ms" }}>
           Ship tickets, not busywork.
         </h1>
-        <p style={{ margin: 0, fontSize: "15.5px", lineHeight: 1.6, color: COLORS.textDim, maxWidth: "620px", animation: "fadeUp .5s both", animationDelay: "140ms" }}>
+        <p style={{ margin: 0, fontSize: FONT.lg, lineHeight: 1.6, color: COLORS.textDim, maxWidth: "620px", animation: "fadeUp .5s both", animationDelay: "140ms" }}>
           Point Claude Code at a ticket and watch it branch, implement, verify, and open a
           pull request — end to end, across every project in your organization.
         </p>

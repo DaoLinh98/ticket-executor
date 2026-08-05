@@ -67,6 +67,8 @@ export type SettingsView = {
   pat: string;
   hasPat: boolean;
   animatedBackground: boolean;
+  /** Fire the lightning-bolt effect on clicks and from every mounted spinner. */
+  clickEffects: boolean;
   autoImplement: boolean;
   autoResolveCodeReview: boolean;
   scope: "team" | "personal";

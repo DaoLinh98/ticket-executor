@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import path from "path";
 import { IMPLEMENT_PROMPT, invokeSkill, PUBLISH_PROMPT, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
@@ -24,6 +24,26 @@ export function readPlanFile(cwd: string): string {
     return readFileSync(path.join(cwd, PLAN_FILE), "utf8").trim();
   } catch {
     return "";
+  }
+}
+
+/**
+ * Delete the whole `.te/` scratch directory from a working tree.
+ *
+ * These files are one run's drafting surface, not project files: what the agent
+ * proposed and what the reviewer approved are both kept as Artifact rows, so
+ * nothing is lost by removing them. Called at both ends of a run — an isolated
+ * run's worktree is thrown away anyway, but a single-ticket-mode run executes
+ * directly in the developer's repo, where a leftover `.te/plan.md` sat in the
+ * file tree forever and, worse, was still there when the *next* ticket's plan
+ * phase started: the agent then read another ticket's plan before overwriting
+ * it, paying tokens to work out that it was stale.
+ */
+export function clearRunArtifacts(cwd: string) {
+  try {
+    rmSync(path.join(cwd, ".te"), { recursive: true, force: true });
+  } catch {
+    /* a file lock or a read-only tree — leaving the folder is harmless */
   }
 }
 

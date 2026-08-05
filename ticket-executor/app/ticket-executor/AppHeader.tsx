@@ -4,7 +4,7 @@ import type { MouseEvent, RefObject } from "react";
 import SprintPicker, { type IterationOption } from "../SprintPicker";
 import type { ProviderMeta } from "@/lib/providers";
 import type { ReviewSummaryEntry } from "@/lib/types";
-import { dropdownPanelStyle, ringBorder } from "@/lib/ui";
+import { FONT, dropdownPanelStyle, ringBorder } from "@/lib/ui";
 import { reviewFingerprint, timeAgo } from "./helpers";
 
 type Props = {
@@ -45,11 +45,11 @@ export default function AppHeader({
 }: Props) {
   return (
     <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
-      <span style={{ fontSize: "10px", letterSpacing: ".16em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
+      <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
       <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
       <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
       <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: "12.5px", color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
         <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
       </div>
       <div ref={bellRef} style={{ position: "relative" }}>
@@ -60,13 +60,13 @@ export default function AppHeader({
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
           {reviewBadgeCount > 0 && (
-            <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{reviewBadgeCount}</span>
+            <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: FONT.xs, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{reviewBadgeCount}</span>
           )}
         </button>
         {bellOpen && (
           <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "340px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "360px" }) }}>
             {reviewSummary.length === 0 && (
-              <div style={{ padding: "16px 12px", fontSize: "12.5px", color: "#5B6273", textAlign: "center" }}>No unresolved review comments.</div>
+              <div style={{ padding: "16px 12px", fontSize: FONT.base, color: "#5B6273", textAlign: "center" }}>No unresolved review comments.</div>
             )}
             {reviewSummary.map((rv) => {
               const readEntry = reviewReadMap[rv.ticketId];
@@ -79,13 +79,13 @@ export default function AppHeader({
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
                     <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: isUnread ? "var(--accent)" : "transparent", flex: "0 0 auto" }} />
-                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 700, color: isUnread ? "var(--accent)" : "#6B7283" }}>#{rv.ticketId}</span>
-                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "12px", fontWeight: 700, color: isUnread ? "#E4E7EE" : "#6B7283" }}>PR #{rv.prId}</span>
+                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 700, color: isUnread ? "var(--accent)" : "#6B7283" }}>#{rv.ticketId}</span>
+                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 700, color: isUnread ? "#E4E7EE" : "#6B7283" }}>PR #{rv.prId}</span>
                   </div>
-                  <div style={{ fontSize: "12px", color: isUnread ? "#9A9FAD" : "#5B6273", lineHeight: 1.5, paddingLeft: "13px" }}>
+                  <div style={{ fontSize: FONT.sm, color: isUnread ? "#9A9FAD" : "#5B6273", lineHeight: 1.5, paddingLeft: "13px" }}>
                     {rv.reviewer} left {rv.unresolvedCount} review comment{rv.unresolvedCount === 1 ? "" : "s"} — {rv.prTitle}
                   </div>
-                  <div style={{ fontSize: "11px", color: "#5B6273", lineHeight: 1.4, paddingLeft: "13px" }}>
+                  <div style={{ fontSize: FONT.xs, color: "#5B6273", lineHeight: 1.4, paddingLeft: "13px" }}>
                     {isUnread ? rv.latestAt : `Read ${timeAgo(readEntry!.readAt)}`}
                   </div>
                 </button>

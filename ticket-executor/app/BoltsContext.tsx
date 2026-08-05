@@ -1,8 +1,9 @@
 "use client";
 
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { BoltLayer, useBolts } from "./Bolts";
+import { SETTINGS_UPDATED_EVENT, type SettingsUpdatedDetail } from "./settingsEvents";
 
 type BoltsApi = {
   fireBolt: (x: number, y: number, opts?: { big?: boolean }) => void;
@@ -14,9 +15,41 @@ const BoltsCtx = createContext<BoltsApi | null>(null);
 
 export function BoltsProvider({ children }: { children: ReactNode }) {
   const { bolts, flashes, fireBolt, fireBoltFromEvent, statusBoltAnchor } = useBolts();
+  // The `clickEffects` setting gates *every* bolt: the click strikes and the
+  // self-strikes a mounted LoadingRing fires into running buttons. Gating here
+  // rather than at each call site means one switch covers both, and no component
+  // has to know the setting exists. Read once on mount and kept live via the
+  // same event the Settings page uses for the animated backdrop.
+  const [enabled, setEnabled] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => { if (d.settings && typeof d.settings.clickEffects === "boolean") setEnabled(d.settings.clickEffects); })
+      .catch(() => { /* unauthenticated (login page) or offline — keep the effect on */ });
+  }, []);
+
+  useEffect(() => {
+    const onUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<SettingsUpdatedDetail>).detail;
+      if (detail && typeof detail.clickEffects === "boolean") setEnabled(detail.clickEffects);
+    };
+    window.addEventListener(SETTINGS_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, onUpdated);
+  }, []);
+
+  const gatedFireBolt = useCallback<BoltsApi["fireBolt"]>(
+    (x, y, opts) => { if (enabled) fireBolt(x, y, opts); },
+    [enabled, fireBolt]
+  );
+  const gatedFireBoltFromEvent = useCallback<BoltsApi["fireBoltFromEvent"]>(
+    (e, opts) => { if (enabled) fireBoltFromEvent(e, opts); },
+    [enabled, fireBoltFromEvent]
+  );
+
   const api = useMemo(
-    () => ({ fireBolt, fireBoltFromEvent, statusBoltAnchor }),
-    [fireBolt, fireBoltFromEvent, statusBoltAnchor]
+    () => ({ fireBolt: gatedFireBolt, fireBoltFromEvent: gatedFireBoltFromEvent, statusBoltAnchor }),
+    [gatedFireBolt, gatedFireBoltFromEvent, statusBoltAnchor]
   );
   return (
     <BoltsCtx.Provider value={api}>

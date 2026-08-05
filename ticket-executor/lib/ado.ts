@@ -2,6 +2,7 @@ import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverv
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
 import { buildUnifiedDiff } from "./diffText";
+import { sanitizeHtml } from "./richText";
 
 const API = "api-version=7.0";
 
@@ -99,25 +100,76 @@ function authHeader(pat: string): Record<string, string> {
   return { Authorization: "Basic " + b64 };
 }
 
+/**
+ * One readable sentence for a failed ADO call. These messages end up in a toast,
+ * so the previous `status statusText — <full url>\n<300 chars of body>` dump was
+ * unreadable: on an auth failure the body is a whole HTML sign-in page. ADO's own
+ * JSON envelope carries a `message` that says the useful thing, so use that when
+ * present and fall back to a short explanation keyed on the status code. The full
+ * response is logged server-side, where length costs nothing.
+ */
+function adoError(res: Response, body: string, opts: { write: boolean; url: string }): Error {
+  console.warn(`[ado] ${res.status} ${res.statusText} ${opts.url}\n${body.slice(0, 2000)}`);
+  let detail = "";
+  try {
+    const json = JSON.parse(body) as { message?: string };
+    if (typeof json.message === "string") detail = json.message.trim();
+  } catch {
+    /* not JSON — an HTML error/sign-in page, which has nothing quotable in it */
+  }
+  if (!detail && (res.status === 401 || res.status === 403)) {
+    detail = opts.write
+      ? `Azure DevOps refused the change (${res.status}) — the personal access token in Settings needs Work Items (Read & Write) scope, and must not be expired.`
+      : `Azure DevOps refused the request (${res.status}) — the personal access token in Settings may be expired or lack read access.`;
+  }
+  if (!detail) detail = `Azure DevOps returned ${res.status} ${res.statusText}.`;
+  return new Error(detail.length > 260 ? `${detail.slice(0, 257)}…` : detail);
+}
+
 async function adoGet<T>(url: string, pat: string): Promise<T> {
   const res = await fetch(url, { headers: authHeader(pat), cache: "no-store" });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`ADO ${res.status} ${res.statusText} — ${url}\n${body.slice(0, 300)}`);
+    throw adoError(res, body, { write: false, url });
   }
   return res.json() as Promise<T>;
 }
 
-async function adoSend(url: string, method: string, body: unknown, contentType: string, pat: string): Promise<void> {
+/** Send a write and return the parsed response — ADO echoes the updated entity,
+ *  so a caller can confirm what actually landed instead of assuming its request
+ *  was applied verbatim. */
+async function adoSend<T>(url: string, method: string, body: unknown, contentType: string, pat: string): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: { ...authHeader(pat), "Content-Type": contentType },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`ADO ${res.status} ${res.statusText} — ${url}\n${text.slice(0, 300)}`);
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw adoError(res, text, { write: true, url });
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return {} as T;
   }
+}
+
+/**
+ * Keep a rich-text field as (sanitized) HTML instead of flattening it.
+ *
+ * ADO stores Description and Acceptance Criteria as HTML, and real tickets use
+ * that: numbered criteria with lettered sub-points, bold terms, links and pasted
+ * screenshots. `htmlToText()` threw all of that away, so the app showed a
+ * requirement in a shape its author never wrote.
+ *
+ * Embedded images point at `_apis/wit/attachments/<guid>`, which needs the PAT —
+ * they are rewritten to `/api/attachments`, which re-issues the request with the
+ * stored credential.
+ */
+function htmlToRich(html: string): string {
+  return sanitizeHtml(html ?? "", {
+    rewriteImageSrc: (src) =>
+      /\/_apis\/wit\/attachments\//i.test(src) ? `/api/attachments?url=${encodeURIComponent(src)}` : src,
+  });
 }
 
 /** Convert ADO rich-text (HTML) to readable plain text. */
@@ -135,14 +187,6 @@ function htmlToText(html: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-/** Split acceptance-criteria HTML into individual lines. */
-function htmlToLines(html: string): string[] {
-  return htmlToText(html)
-    .split("\n")
-    .map((l) => l.replace(/^[-*•\d.)\s]+/, "").trim())
-    .filter((l) => l.length > 0);
 }
 
 function lastAreaSegment(areaPath: string, project: string): string {
@@ -271,10 +315,8 @@ export async function getSprintTickets(
         assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
         project: lastAreaSegment(area, proj) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
-        description: htmlToText((f["System.Description"] as string) ?? ""),
-        criteria: htmlToLines(
-          (f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""
-        ),
+        description: htmlToRich((f["System.Description"] as string) ?? ""),
+        criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
         storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
@@ -299,10 +341,32 @@ export async function getWorkItemTypeStates(project: string, type: string): Prom
 }
 
 /** Write the work item's State field back to Azure DevOps. */
-export async function updateWorkItemState(id: string, state: string): Promise<void> {
+/** Write the work item's state and return the state ADO actually recorded (its
+ *  PATCH response echoes the updated fields). Returning the echo rather than the
+ *  requested value is what lets the UI show the provider's truth instead of its
+ *  own optimistic guess — a rule that fired on the way in could have landed the
+ *  item somewhere else. */
+export async function updateWorkItemState(id: string, state: string): Promise<string> {
   const { org, pat } = await loadCreds();
   const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(id)}?${API}`;
-  await adoSend(url, "PATCH", [{ op: "add", path: "/fields/System.State", value: state }], "application/json-patch+json", pat);
+  const updated = await adoSend<{ fields?: { "System.State"?: string } }>(
+    url,
+    "PATCH",
+    [{ op: "add", path: "/fields/System.State", value: state }],
+    "application/json-patch+json",
+    pat
+  );
+  return updated.fields?.["System.State"] || state;
+}
+
+/** The work item's current state, read fresh. Used to re-sync the UI after a
+ *  failed write, so a rejected change never leaves the app showing a status the
+ *  provider never accepted. */
+export async function getWorkItemState(id: string): Promise<string> {
+  const { org, pat } = await loadCreds();
+  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(id)}?fields=System.State&${API}`;
+  const data = await adoGet<{ fields?: { "System.State"?: string } }>(url, pat);
+  return data.fields?.["System.State"] ?? "";
 }
 
 /**
@@ -328,12 +392,27 @@ export async function resolveWorkItemState(id: string, desired: string): Promise
   const exact = states.find((s) => s.toLowerCase() === want);
   if (exact) return exact;
 
-  const wantWords = want.split(/\s+/).filter(Boolean);
-  const byWord = states.find((s) => {
+  // Ignore spacing/punctuation differences ("Code Review" vs "code-review").
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const loose = states.find((s) => squash(s) === squash(want));
+  if (loose) return loose;
+
+  // Then a containment match either way ("Code Review" ↔ "In Code Review").
+  const phrase = states.find((s) => {
     const sw = s.toLowerCase();
-    return wantWords.some((w) => sw.includes(w));
+    return sw.includes(want) || want.includes(sw);
   });
-  return byWord ?? null;
+  if (phrase) return phrase;
+
+  // Last resort: a state that carries *every* word of the desired label. Matching
+  // on any *single* word (what this used to do) is how "Code Review" could land on
+  // an unrelated state that merely happened to contain "code".
+  const wantWords = want.split(/\s+/).filter(Boolean);
+  const allWords = states.find((s) => {
+    const sw = s.toLowerCase();
+    return wantWords.every((w) => sw.includes(w));
+  });
+  return allWords ?? null;
 }
 
 type RawComment = {

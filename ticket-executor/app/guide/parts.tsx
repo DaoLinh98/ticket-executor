@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { COLORS, card, codeBlock, ctaButtonStyle, modalShellStyle, pill } from "@/lib/ui";
+import { COLORS, FONT, card, codeBlock, ctaButtonStyle, modalShellStyle, pill } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 import SkillInstaller from "../SkillInstaller";
 
@@ -27,7 +27,7 @@ export function Cmd({ children, label }: { children: string; label?: string }) {
   return (
     <div style={{ position: "relative" }}>
       {label && (
-        <span style={{ display: "block", fontSize: "10.5px", letterSpacing: ".08em", fontWeight: 600, color: COLORS.faint, marginBottom: "5px" }}>
+        <span style={{ display: "block", fontSize: FONT.xs, letterSpacing: ".08em", fontWeight: 600, color: COLORS.faint, marginBottom: "5px" }}>
           {label}
         </span>
       )}
@@ -76,7 +76,7 @@ export function DocsLink({ href, children }: { href: string; children: ReactNode
       target="_blank"
       rel="noreferrer"
       onClick={(e) => fireBoltFromEvent(e)}
-      style={{ ...ctaButtonStyle("outline", { height: "28px", cornerPx: 6 }), display: "inline-flex", textDecoration: "none", fontSize: "11.5px" }}
+      style={{ ...ctaButtonStyle("outline", { height: "28px", cornerPx: 6 }), display: "inline-flex", textDecoration: "none", fontSize: FONT.sm }}
     >
       {children}
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
@@ -98,10 +98,10 @@ export function Shot({ src, caption }: { src: string; caption: string }) {
     return (
       <div style={{ ...card({ padding: "22px 14px" }), borderStyle: "dashed", display: "flex", flexDirection: "column", alignItems: "center", gap: "7px" }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={COLORS.faint} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10.5" r="1.5" /><path d="M21 16l-5-5-4 4-2-2-7 7" /></svg>
-        <span style={{ fontSize: "11.5px", color: COLORS.faint, textAlign: "center", lineHeight: 1.5 }}>
+        <span style={{ fontSize: FONT.sm, color: COLORS.faint, textAlign: "center", lineHeight: 1.5 }}>
           Screenshot pending — {caption}
         </span>
-        <span style={{ fontSize: "10.5px", color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>{src}</span>
+        <span style={{ fontSize: FONT.xs, color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>{src}</span>
       </div>
     );
   }
@@ -116,7 +116,7 @@ export function Shot({ src, caption }: { src: string; caption: string }) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={src} alt={caption} onError={() => setMissing(true)} style={{ display: "block", width: "100%", borderRadius: "6px" }} />
         </button>
-        <figcaption style={{ fontSize: "11px", color: COLORS.faint, lineHeight: 1.5 }}>{caption}</figcaption>
+        <figcaption style={{ fontSize: FONT.xs, color: COLORS.faint, lineHeight: 1.5 }}>{caption}</figcaption>
       </figure>
 
       {open && (
@@ -143,8 +143,8 @@ export function Callout({ tone = "accent", title, children }: { tone?: "accent" 
     tone === "warning" ? COLORS.warning : tone === "success" ? COLORS.success : tone === "danger" ? COLORS.danger : COLORS.accent;
   return (
     <div style={{ ...card({ padding: "11px 13px" }), borderLeft: `2.5px solid ${color}`, display: "flex", flexDirection: "column", gap: "4px" }}>
-      <span style={{ fontSize: "12px", fontWeight: 700, color }}>{title}</span>
-      <div style={{ fontSize: "12.5px", color: COLORS.textDim, lineHeight: 1.65 }}>{children}</div>
+      <span style={{ fontSize: FONT.sm, fontWeight: 700, color }}>{title}</span>
+      <div style={{ fontSize: FONT.base, color: COLORS.textDim, lineHeight: 1.65 }}>{children}</div>
     </div>
   );
 }
@@ -153,7 +153,7 @@ export function Callout({ tone = "accent", title, children }: { tone?: "accent" 
 // P / Bullets — body copy primitives (kept here so section content stays terse)
 // ---------------------------------------------------------------------------
 
-const bodyText: CSSProperties = { fontSize: "12.5px", color: COLORS.textDim, lineHeight: 1.7, margin: 0 };
+const bodyText: CSSProperties = { fontSize: FONT.base, color: COLORS.textDim, lineHeight: 1.7, margin: 0 };
 
 export function P({ children }: { children: ReactNode }) {
   return <p style={bodyText}>{children}</p>;
@@ -184,7 +184,7 @@ export function SkillInstallerSlot() {
 
 export function Code({ children }: { children: ReactNode }) {
   return (
-    <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: COLORS.text, background: "rgba(255,255,255,.05)", padding: "1px 5px", borderRadius: "5px" }}>
+    <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: COLORS.text, background: "rgba(255,255,255,.05)", padding: "1px 5px", borderRadius: "5px" }}>
       {children}
     </code>
   );
@@ -236,8 +236,8 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
 
   const legendRow = (color: string, n: string, title: string, where: ReactNode, proof: ReactNode) => (
     <div style={{ display: "flex", alignItems: "flex-start", gap: "9px" }}>
-      <span style={{ flex: "0 0 auto", width: "17px", height: "17px", marginTop: "1px", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: color, color: COLORS.panelBgDark, fontSize: "10px", fontWeight: 800 }}>{n}</span>
-      <span style={{ fontSize: "12px", color: COLORS.textDim, lineHeight: 1.6 }}>
+      <span style={{ flex: "0 0 auto", width: "17px", height: "17px", marginTop: "1px", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: color, color: COLORS.panelBgDark, fontSize: FONT.xs, fontWeight: 800 }}>{n}</span>
+      <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
         <strong style={{ color }}>{title}</strong> — set up {where}. Proven by {proof}.
       </span>
     </div>
@@ -268,12 +268,12 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
       </svg>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "7px", paddingTop: "1px", borderTop: `1px solid ${COLORS.borderSubtle}` }}>
-        <span style={{ fontSize: "12px", fontWeight: 700, color: COLORS.text, paddingTop: "10px" }}>
+        <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.text, paddingTop: "10px" }}>
           Same provider, two separate credentials. Both must work.
         </span>
         {legendRow(COLORS.accent, "1", "The app's connection", <>on the <strong style={{ color: COLORS.text }}>Settings</strong> page</>, <><strong style={{ color: COLORS.text }}>Test connection</strong></>)}
         {legendRow(COLORS.indigo, "2", "Claude's own access", <>with <Code>claude mcp add</Code>, or by leaving <em>Manage MCP</em> on</>, <>System Check&apos;s <strong style={{ color: COLORS.text }}>deep check</strong></>)}
-        <span style={{ fontSize: "11.5px", color: COLORS.textMuted, lineHeight: 1.6, marginTop: "2px" }}>
+        <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.6, marginTop: "2px" }}>
           A green connection test only proves lane 1. If lane 2 is missing, a run still starts — then spends tokens and fails the moment the skill tries to read the ticket.
         </span>
       </div>

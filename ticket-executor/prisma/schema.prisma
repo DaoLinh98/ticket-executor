@@ -12,6 +12,10 @@ model Setting {
   id             String   @id @default("default")
   provider       String   @default("azure-devops") // azure-devops | github | jira | gitlab
   animatedBackground Boolean @default(true)
+  // true (default) → the lightning-bolt effect fires on clicks and self-strikes
+  // into every mounted spinner (running buttons). false → both are suppressed;
+  // the effect layer stays mounted but never emits a bolt.
+  clickEffects   Boolean  @default(true)
   // Auto-implementation mode. true → the original one-shot flow (implement-ticket-v2,
   // runs to a PR without stopping). false → the two-phase plan-review flow
   // (implement-ticket-v3, parks for plan approval before touching code).

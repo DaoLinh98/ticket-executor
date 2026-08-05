@@ -5,7 +5,7 @@ import { fmtDuration } from "../format";
 import { collectFileChanges, summarizeChanges } from "../git";
 import { execNode, releaseMcp } from "./exec";
 import { closeStep, openStep, saveArtifact, saveRun, saveTransition } from "./persist";
-import { readPlanFile } from "./graphs";
+import { clearRunArtifacts, readPlanFile } from "./graphs";
 import { END, FAIL, type Graph, type LiveRun, type NodeResult, type Target } from "./types";
 
 // A backstop, not a policy. Cycles are legitimate (revise the plan, fix what an
@@ -65,6 +65,10 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
     /* the diff is a convenience; never fail a finished run over it */
   }
   await saveRun(live);
+  // Order matters: the diff above is captured from the worktree, and `.te/` is
+  // excluded from git anyway, so clearing the run's scratch files is the last
+  // thing done to the tree before it is (for isolated runs) removed entirely.
+  clearRunArtifacts(live.ctx.cwd);
   removeWorktree(live);
   releaseMcp(live);
 }

@@ -3,10 +3,7 @@
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
 import type { Ticket, UiRunState } from "@/lib/types";
-import {
-  COLORS, RUN_COLOR, avatar, card, ctaButtonStyle, runDot, initials, pill,
-  ringBorder, statusPill, tintedCard, typeBadge,
-} from "@/lib/ui";
+import { COLORS, FONT, RUN_COLOR, avatar, card, ctaButtonStyle, initials, pill, ringBorder, runDot, statusPill, tintedCard, typeBadge } from "@/lib/ui";
 import { ACCENT } from "./constants";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
@@ -61,13 +58,13 @@ export default function TicketSidebar({
     <aside style={{ width: "388px", flex: "0 0 388px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,.05)", background: "rgba(12,15,20,.74)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", minHeight: 0 }}>
       <div style={{ padding: "18px 18px 12px", display: "flex", flexDirection: "column", gap: "12px", flex: "0 0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "14px", fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>Sprint Backlog</h2>
-          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: FONT.md, fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>Sprint Backlog</h2>
+          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           {selectMode ? (
             <>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: "13px", fontWeight: 600, color: "#C7CCD8", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
                 {selectedIds.size} selected
               </div>
               <button onClick={(e) => { fireBoltFromEvent(e); onCancelSelect(); }} style={{ ...ctaButtonStyle("outline"), height: "36px" }}>Cancel</button>
@@ -83,11 +80,11 @@ export default function TicketSidebar({
             <>
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: "13px" }} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: FONT.base }} />
               </div>
               <button onClick={(e) => { fireBoltFromEvent(e); setFiltersOpen((o) => !o); }} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
-                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: "9.5px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
+                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: FONT.xs, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
               </button>
             </>
           )}
@@ -131,9 +128,9 @@ export default function TicketSidebar({
             <LoadingRing size={78} />
           </div>
         )}
-        {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: "12.5px", lineHeight: 1.5, ...tintedCard("danger", { padding: "14px", radius: "10px" }) }}>{loadError}</div>}
-        {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: "12.5px", lineHeight: 1.5, ...tintedCard("warning", { padding: "14px", radius: "10px" }) }}>{ticketsNotice}</div>}
-        {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: "13px", padding: "18px 6px" }}>No tickets match.</div>}
+        {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: FONT.base, lineHeight: 1.5, ...tintedCard("danger", { padding: "14px", radius: "10px" }) }}>{loadError}</div>}
+        {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: FONT.base, lineHeight: 1.5, ...tintedCard("warning", { padding: "14px", radius: "10px" }) }}>{ticketsNotice}</div>}
+        {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: FONT.base, padding: "18px 6px" }}>No tickets match.</div>}
         {!loading && filtered.map((tk, i) => {
           const sel = tk.id === selectedId;
           const est = execStatusOf(tk.id);
@@ -176,7 +173,7 @@ export default function TicketSidebar({
                     {checked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0B0C10" strokeWidth="3.2"><path d="M5 13l4 4L19 7" /></svg>}
                   </span>
                 )}
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "11.5px", fontWeight: 600, color: "var(--accent)" }}>#{tk.id}</span>
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, color: "var(--accent)" }}>#{tk.id}</span>
                 <span style={typeBadge(tk.type)}>{tk.type}</span>
                 <div style={{ flex: 1 }} />
                 {queued ? (
@@ -194,12 +191,12 @@ export default function TicketSidebar({
                   <span style={{ ...runDot(est) }} />
                 )}
               </div>
-              <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
+              <div style={{ fontSize: FONT.md, fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "1px" }}>
                 <span style={statusPill(getStatus(tk))}>{getStatus(tk)}</span>
                 <div style={{ flex: 1 }} />
                 <span style={avatar(tk.assignee)}>{initials(tk.assignee)}</span>
-                <span style={{ fontSize: "11.5px", color: "#6B7283" }}>{tk.assignee}</span>
+                <span style={{ fontSize: FONT.sm, color: "#6B7283" }}>{tk.assignee}</span>
               </div>
             </button>
           );
