@@ -2,7 +2,7 @@ import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverv
 import { prisma } from "./prisma";
 import { decryptSecret } from "./crypto";
 import { buildUnifiedDiff } from "./diffText";
-import { sanitizeHtml } from "./richText";
+import { markdownToHtml, sanitizeHtml } from "./richText";
 
 const API = "api-version=7.0";
 
@@ -166,10 +166,21 @@ async function adoSend<T>(url: string, method: string, body: unknown, contentTyp
  * stored credential.
  */
 function htmlToRich(html: string): string {
-  return sanitizeHtml(html ?? "", {
-    rewriteImageSrc: (src) =>
+  const raw = html ?? "";
+  const opts = {
+    rewriteImageSrc: (src: string) =>
       /\/_apis\/wit\/attachments\//i.test(src) ? `/api/attachments?url=${encodeURIComponent(src)}` : src,
-  });
+  };
+  // ADO now lets a work item store these fields as Markdown instead of HTML,
+  // and both shapes arrive on the same field. A body with no markup at all is
+  // the Markdown one: rendered as HTML its newlines collapse and the whole
+  // numbered list runs together in a single paragraph.
+  return isHtml(raw) ? sanitizeHtml(raw, opts) : markdownToHtml(raw, opts);
+}
+
+/** Does this field value carry HTML markup, or is it a Markdown/plain body? */
+function isHtml(value: string): boolean {
+  return /<\/?(p|div|br|ul|ol|li|h[1-6]|table|img|span|strong|b|em|i|a|pre|code|blockquote)\b[^>]*>/i.test(value);
 }
 
 /** Convert ADO rich-text (HTML) to readable plain text. */

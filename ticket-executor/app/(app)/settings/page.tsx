@@ -7,9 +7,11 @@ import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
 import { SETTINGS_UPDATED_EVENT } from "../../settingsEvents";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
-import { COLORS, FONT, card, clipCorner, fieldInput, fieldLabel, logoText, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, clipCorner, fieldInput, fieldLabel, ringBorder, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
+import ProviderBadge from "../ProviderBadge";
+import PageHeading from "../PageHeading";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
@@ -140,8 +142,9 @@ export default function SettingsPage() {
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: "#FB7250" }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText(FONT.xl)}>Settings</span>
-        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Connect your work-tracking provider &amp; execution defaults</span>
+        <PageHeading title="Settings" kicker="D-AGENT · CONFIGURATION" icon={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>} />
+        <div style={{ flex: 1 }} />
+        <ProviderBadge provider={pm.id} />
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

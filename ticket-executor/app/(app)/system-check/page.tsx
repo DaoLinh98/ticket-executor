@@ -6,8 +6,10 @@ import Link from "next/link";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SkillInstaller from "../../SkillInstaller";
 import { useBoltsContext } from "../../BoltsContext";
-import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, logoText, pill, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, pill, tintedCard } from "@/lib/ui";
 import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/preflight";
+import ProviderBadge from "../ProviderBadge";
+import PageHeading from "../PageHeading";
 
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
@@ -110,8 +112,9 @@ export default function SystemCheckPage() {
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText(FONT.xl)}>System Check</span>
-        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Verify your setup before running a ticket</span>
+        <PageHeading title="System Check" kicker="D-AGENT · DIAGNOSTICS" icon={<><path d="M9 11l3 3L22 4" /><path d="M21 12a9 9 0 1 1-6.2-8.56" /></>} />
+        <div style={{ flex: 1 }} />
+        <ProviderBadge />
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

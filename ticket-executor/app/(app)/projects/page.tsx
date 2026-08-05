@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import { COLORS, FONT, logoText, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
+import ProviderBadge from "../ProviderBadge";
+import PageHeading from "../PageHeading";
 
 type Project = { id: string; name: string; description?: string };
 
@@ -44,8 +46,9 @@ export default function ProjectsPage() {
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText(FONT.xl)}>Projects</span>
-        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Pick a project to load its sprint and tickets</span>
+        <PageHeading title="Projects" kicker="D-AGENT · WORKSPACE" icon={<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />} />
+        <div style={{ flex: 1 }} />
+        <ProviderBadge />
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

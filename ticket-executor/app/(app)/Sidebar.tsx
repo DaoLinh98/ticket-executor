@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -64,6 +65,19 @@ const NAV: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { fireBoltFromEvent } = useBoltsContext();
+  // Collapsed rail: icons only. Remembered so it survives navigation/reload.
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(localStorage.getItem("te.sidebarCollapsed") === "1");
+  }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      localStorage.setItem("te.sidebarCollapsed", c ? "0" : "1");
+      return !c;
+    });
+  };
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
@@ -74,7 +88,8 @@ export default function Sidebar() {
         position: "relative",
         zIndex: 6,
         flex: "0 0 auto",
-        width: "232px",
+        width: collapsed ? "68px" : "232px",
+        transition: "width .18s ease",
         height: "100vh",
         display: "flex",
         flexDirection: "column",
@@ -89,14 +104,38 @@ export default function Sidebar() {
     >
       {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: "11px", padding: "2px 6px 18px" }}>
-        <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
+        <div style={{ flex: "0 0 auto", width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-          <span style={logoText(FONT.xl)}>D-Agent</span>
-          <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
-        </div>
+        {!collapsed && (
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, minWidth: 0 }}>
+            <span style={logoText(FONT.xl)}>D-Agent</span>
+            <span style={{ fontSize: "11px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
+          </div>
+        )}
       </div>
+
+      {/* Collapse / expand — floats on the rail's own edge so it costs no rows */}
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-expanded={!collapsed}
+        style={{
+          position: "absolute", top: "74px", right: "-13px", zIndex: 8,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: "26px", height: "26px", color: COLORS.textDim, cursor: "pointer",
+          transition: "color .15s",
+          ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }),
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = COLORS.textDim; }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? "rotate(180deg)" : "none", transition: "transform .24s cubic-bezier(.2,.8,.2,1)" }}>
+          <path d="M14 6l-6 6 6 6" />
+        </svg>
+      </button>
 
       {/* Nav */}
       <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -106,8 +145,9 @@ export default function Sidebar() {
             display: "flex",
             alignItems: "center",
             gap: "11px",
+            justifyContent: collapsed ? "center" : "flex-start",
             height: "40px",
-            padding: "0 13px",
+            padding: collapsed ? "0" : "0 13px",
             fontSize: FONT.base,
             fontWeight: active ? 700 : 600,
             textDecoration: "none",
@@ -123,6 +163,7 @@ export default function Sidebar() {
               key={item.href}
               href={item.href}
               onClick={(e) => fireBoltFromEvent(e)}
+              title={collapsed ? item.label : undefined}
               style={style}
               onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,.04)"; }}
               onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -130,7 +171,7 @@ export default function Sidebar() {
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
                 {item.icon}
               </svg>
-              {item.label}
+              {!collapsed && item.label}
             </Link>
           );
         })}
@@ -142,15 +183,17 @@ export default function Sidebar() {
       <button
         onClick={async (e) => {
           fireBoltFromEvent(e);
-          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => { });
           window.location.href = "/login";
         }}
+        title={collapsed ? "Log out" : undefined}
         style={{
           display: "flex",
           alignItems: "center",
+          justifyContent: collapsed ? "center" : "flex-start",
           gap: "11px",
           height: "40px",
-          padding: "0 13px",
+          padding: collapsed ? "0" : "0 13px",
           fontSize: FONT.base,
           fontWeight: 600,
           color: COLORS.textDim,
@@ -164,7 +207,7 @@ export default function Sidebar() {
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
         </svg>
-        Log out
+        {!collapsed && "Log out"}
       </button>
     </aside>
   );

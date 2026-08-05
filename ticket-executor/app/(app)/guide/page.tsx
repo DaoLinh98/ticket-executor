@@ -7,8 +7,10 @@ import { useBoltsContext } from "../../BoltsContext";
 import { SECTIONS } from "../../guide/content";
 import { DocsLink, SKILLS_CHANGED_EVENT, StatusBadge } from "../../guide/parts";
 import type { SectionStatus } from "../../guide/parts";
-import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, pill, ringBorder, tintedCard } from "@/lib/ui";
 import type { PreflightResult } from "@/lib/preflight";
+import ProviderBadge from "../ProviderBadge";
+import PageHeading from "../PageHeading";
 
 /** Roll the checks of one preflight group up into a single section verdict:
  *  any blocking failure wins, then any warning, otherwise pass. */
@@ -116,8 +118,7 @@ export default function GuidePage() {
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
       <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <span style={logoText(FONT.xl)}>Guide</span>
-        <span style={{ fontSize: FONT.base, color: COLORS.textDim }}>Set up your machine, then get better runs out of it</span>
+        <PageHeading title="Guide" kicker="D-AGENT · SETUP PATH" icon={<><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>} />
         <div style={{ flex: 1 }} />
         <Link
           href="/system-check"
@@ -126,6 +127,7 @@ export default function GuidePage() {
         >
           Open System Check →
         </Link>
+        <ProviderBadge />
       </header>
 
       <main className="te-scroll te-scroll--smooth" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

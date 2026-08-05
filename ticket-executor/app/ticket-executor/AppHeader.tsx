@@ -2,6 +2,8 @@
 
 import type { MouseEvent, RefObject } from "react";
 import SprintPicker, { type IterationOption } from "../SprintPicker";
+import ProviderBadge from "../(app)/ProviderBadge";
+import PageHeading from "../(app)/PageHeading";
 import type { ProviderMeta } from "@/lib/providers";
 import type { ReviewSummaryEntry } from "@/lib/types";
 import { FONT, dropdownPanelStyle, ringBorder } from "@/lib/ui";
@@ -45,10 +47,11 @@ export default function AppHeader({
 }: Props) {
   return (
     <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
-      <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>CLAUDE CODE · {pm.short}</span>
+      <PageHeading title="Ticket Execution" kicker="D-AGENT · RUNS" icon={<path d="M8 5l8 7-8 7" />} />
       <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
       <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} onSelect={onSprintChange} />
       <div style={{ flex: 1 }} />
+      <ProviderBadge provider={pm.id} />
       <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
         <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
       </div>

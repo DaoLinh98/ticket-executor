@@ -59,7 +59,7 @@ export default function TicketSidebar({
       <div style={{ padding: "18px 18px 12px", display: "flex", flexDirection: "column", gap: "12px", flex: "0 0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: FONT.md, fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>Sprint Backlog</h2>
-          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#5B6273" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
+          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           {selectMode ? (

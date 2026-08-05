@@ -63,7 +63,7 @@ export default function OverviewTab({
   // Root Repo has no default — a run can't start without it, so say so on the field.
   const rootRepoMissing = !rootRepo.trim();
   return (
-    <div style={{ maxWidth: "820px", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
       {/* Description and Acceptance Criteria are rendered as the tracker's own
           rich text (already sanitized in lib/richText.ts), so the numbering,
           nesting, tables and screenshots the author wrote survive. They used to
@@ -71,9 +71,11 @@ export default function OverviewTab({
           which silently dropped every sub-item and every image. */}
       <section>
         <h3 style={sectionHeading}>DESCRIPTION</h3>
-        {hasContent(t.description)
-          ? <RichText html={t.description} />
-          : <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>No description.</p>}
+        <div style={card({ padding: "15px 18px", border: COLORS.borderSubtle })}>
+          {hasContent(t.description)
+            ? <RichText html={t.description} />
+            : <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>No description.</p>}
+        </div>
       </section>
       {hasContent(t.criteria) && (
         <section>
