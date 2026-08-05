@@ -7,6 +7,9 @@ import type { ProviderId } from "@/lib/providers";
 export type NodeView = {
   id: string;
   label: string;
+  /** "agent" | "gate" | "check" — what the node *is*. The UI asks this instead
+   *  of recognising a node by its id. */
+  kind: string;
   effects: string;
   state: "pending" | "running" | "done" | "failed";
   attempts: number;
@@ -80,6 +83,11 @@ export type SettingsView = {
   /** Dashboard ROI inputs. 0 hides the ROI tile rather than showing a made-up number. */
   hourlyRateUsd: number;
   hoursPerStoryPoint: number;
+  /** Ceiling for one whole run in USD, checked between nodes. 0 = none. */
+  runBudgetUsd: number;
+  /** Insert the independent review node (+ its bounded fix loop) between
+   *  implement and publish, in the two-phase flow only. */
+  evaluateBeforePublish: boolean;
 };
 
 // The detail-pane tabs.

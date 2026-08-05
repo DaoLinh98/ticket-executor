@@ -112,6 +112,8 @@ export default function TicketExecutor() {
     manageMcp: true,
     hourlyRateUsd: 0,
     hoursPerStoryPoint: 6,
+    runBudgetUsd: 0,
+    evaluateBeforePublish: false,
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -954,6 +956,12 @@ export default function TicketExecutor() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             skillName,
+            // The server resolves the actual skill from Settings (auto vs plan
+            // flow); it only honours `skillName` verbatim when the ticket carries
+            // a hand-picked skill on its Overview tab. A quick-action button's
+            // choice is itself derived from those same settings, so it must not
+            // claim to be explicit.
+            skillExplicit: !!overrides[t.id]?.skill && !skillOverride,
             projectName,
             rootRepo,
             model,
@@ -1174,9 +1182,11 @@ export default function TicketExecutor() {
   const st: UiRunState = ex ? ex.state : "none";
   const execEnabled = st !== "none";
   const resultEnabled = st === "succeeded";
-  // The Plan tab exists only where the run's graph actually has a gate, which is
-  // now read off the node list rather than from a hard-coded list of skills.
-  const hasGate = !!ex?.nodes?.some((n) => n.id === "review");
+  // The Plan tab exists only where the run's graph actually has a gate — asked of
+  // the node's declared `kind`, not recognised by its id. Matching on "review"
+  // was a second, quieter copy of "hard-code what the engine already reports":
+  // rename the node, or add a second gate, and the tab would vanish.
+  const hasGate = !!ex?.nodes?.some((n) => n.kind === "gate");
   const planEnabled = !!ex?.planMarkdown || st === "waiting" || (hasGate && st === "running");
   const planBusyForSel = t ? planBusy[t.id] : undefined;
 

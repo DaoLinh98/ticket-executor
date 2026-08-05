@@ -23,7 +23,7 @@ const BLOCKED = {
 const VERIFICATION = {
   type: "object",
   description:
-    "Report only what you actually ran. The runner blocks publishing on these values, so a false 'passed' ships unverified code.",
+    "Report only what you actually ran. In the two-phase flow the runner blocks publishing on these values; in the one-shot flow publishing has already happened, so a reported failure instead marks the whole run failed and leaves the ticket where it was. Either way a false 'passed' is how unverified code reaches a pull request.",
   properties: {
     tests: { type: "string", enum: ["passed", "failed", "not-run"] },
     build: { type: "string", enum: ["passed", "failed", "not-run"] },
@@ -84,6 +84,40 @@ export const IMPLEMENT_OUTPUT = {
     blocked: BLOCKED,
   },
   required: ["committed", "branch", "summary", "verification", "deviations", "blocked"],
+  additionalProperties: false,
+} as const;
+
+/** evaluate — the independent review that runs between `implement` and
+ *  `publish`, in a **fresh** session so it has not seen the reasoning it is
+ *  judging. Deliberately tiny: `verdict` is read by the evaluate edge, and each
+ *  `blockers[]` entry is fed verbatim into the fix node's prompt. There is no
+ *  `summary` field — the blockers *are* the summary, and a second prose field
+ *  would cost output tokens on every review for nothing to read it. */
+export const EVALUATE_OUTPUT = {
+  type: "object",
+  properties: {
+    verdict: {
+      type: "string",
+      enum: ["pass", "changes-required"],
+      description:
+        "changes-required only for a defect that must not reach a pull request: a bug this change introduces, an acceptance criterion it misses, or a security/data-loss risk. Style preferences and pre-existing problems are not blockers.",
+    },
+    blockers: {
+      type: "array",
+      description: "Empty when verdict is pass. Each entry is handed to the fix step verbatim, so make it actionable.",
+      items: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Path, with a line number when you have one." },
+          issue: { type: "string", description: "What is wrong and what it breaks — one or two sentences." },
+        },
+        required: ["file", "issue"],
+        additionalProperties: false,
+      },
+    },
+    blocked: BLOCKED,
+  },
+  required: ["verdict", "blockers", "blocked"],
   additionalProperties: false,
 } as const;
 

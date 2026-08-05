@@ -230,10 +230,18 @@ async function environmentChecks(): Promise<Check[]> {
 function skillChecks(): Check[] {
   return skillStates().map((s) => {
     const base = { id: `skill-${s.name}`, group: "skills" as const, label: s.name };
+    // An optional skill (one reached only when a setting switches its node on) is
+    // not missing-and-fatal — it is missing-and-unused until that setting is on,
+    // and startRun() refuses the run if it ever isn't. Reporting it as a blocker
+    // here would tell every install it is broken over a feature it never enabled.
     if (s.status === "missing") {
       return {
-        ...base, level: "blocker" as const, status: "fail" as const,
-        message: `Not found in ${skillDirs().length} skill folder(s).`,
+        ...base,
+        level: s.required ? ("blocker" as const) : ("warning" as const),
+        status: s.required ? ("fail" as const) : ("warn" as const),
+        message: s.required
+          ? `Not found in ${skillDirs().length} skill folder(s).`
+          : `Not installed. Only needed while the setting that uses it is on — a run would be refused up front, not left to fail.`,
         fix: "Install it from the Guide or with the Install button here — this repo ships a copy.",
       };
     }

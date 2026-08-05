@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Run" ADD COLUMN     "hops" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "visits" JSONB NOT NULL DEFAULT '{}';
+
+-- AlterTable
+ALTER TABLE "Setting" ADD COLUMN     "runBudgetUsd" DOUBLE PRECISION NOT NULL DEFAULT 0;

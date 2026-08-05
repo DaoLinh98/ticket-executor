@@ -52,6 +52,8 @@ export async function POST(req: Request) {
   if (typeof body.multiTicketMode === "boolean")
     data.multiTicketMode = body.multiTicketMode;
   if (typeof body.manageMcp === "boolean") data.manageMcp = body.manageMcp;
+  if (typeof body.evaluateBeforePublish === "boolean")
+    data.evaluateBeforePublish = body.evaluateBeforePublish;
   if (
     typeof body.concurrentRuns === "number" &&
     Number.isFinite(body.concurrentRuns)
@@ -67,6 +69,10 @@ export async function POST(req: Request) {
     data.hourlyRateUsd = Math.max(0, body.hourlyRateUsd);
   if (typeof body.hoursPerStoryPoint === "number" && Number.isFinite(body.hoursPerStoryPoint))
     data.hoursPerStoryPoint = Math.max(0, body.hoursPerStoryPoint);
+  // Run-level spend ceiling. 0 is meaningful (no run-level ceiling), so it is
+  // clamped rather than treated as unset.
+  if (typeof body.runBudgetUsd === "number" && Number.isFinite(body.runBudgetUsd))
+    data.runBudgetUsd = Math.max(0, body.runBudgetUsd);
 
   const s = await prisma.setting.upsert({
     where: { id: "default" },

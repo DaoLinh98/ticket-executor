@@ -3,11 +3,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { prisma } from "../prisma";
 import type { LogLine, RunState } from "../types";
+import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
 import { cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
-import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, PLAN_FILE } from "./graph/graphs";
+import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, KNOWN_SKILLS, PLAN_FILE, resolveSkill } from "./graph/graphs";
+import { REVIEW_SKILL } from "./graph/prompts";
 import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
 import type { LiveRun } from "./graph/types";
+import { findSkill } from "../skillPack";
 import { store } from "./store";
 
 export type { GateAction };
@@ -49,51 +52,177 @@ function writeWorktreeFile(cwd: string, rel: string, body: string) {
 
 // ---- start ----
 
-export async function startRun(params: {
+/** A run may not start. Thrown inside the admission transaction so the whole
+ *  check-and-create is rolled back as one, and mapped to an HTTP status by the
+ *  route. `blocked` is the BlockedAttempt reason it is recorded under. */
+class AdmissionError extends Error {
+  constructor(message: string, readonly status: number, readonly blocked: string) {
+    super(message);
+  }
+}
+
+/** A run occupying a slot: computing, or parked waiting on a human. Both are
+ *  "in flight" — a parked run still owns its worktree and its branch. */
+const ACTIVE_STATES = ["running", "waiting"];
+
+/** A run actually computing: it holds a child process and is spending money.
+ *  This — not ACTIVE_STATES — is what the concurrency cap counts, because the cap
+ *  bounds machine load. A run parked at a gate costs nothing while it waits, and
+ *  counting it would let two unanswered plan reviews block the whole queue. */
+const COMPUTING_STATES = ["running"];
+
+export type StartRunInput = {
   ticketId: string;
   ticketUrl?: string;
-  skill: string;
+  /** What the caller asked for. The *engine* decides the skill actually run —
+   *  see resolveSkill(); the caller only picks the family. */
+  requestedSkill: string;
+  /** True only when this ticket carries a hand-picked skill on its Overview tab.
+   *  A quick-action button choosing a skill is not "explicit": that choice is
+   *  itself derived from the settings, and re-pinning it here would let the
+   *  client smuggle a graph shape past resolveSkill(). */
+  skillExplicit?: boolean;
   project: string;
   rootRepo: string;
   prUrl?: string;
   provider?: string;
   model?: string;
   effort?: string;
-  /** The team's estimate for this ticket in hours (0 = never sized). */
+  /** The provider's own hour estimate for the ticket, if it has one. */
   estimateHours?: number;
-  /** Ceiling for the whole run in USD; 0 leaves only the per-node ceilings. */
-  budgetUsd?: number;
-  // true (default) → isolate the run in its own git worktree, so it can run
-  // concurrently with other tickets. false (single-ticket mode) → run directly
-  // in rootRepo; the caller guarantees no other run is in flight.
-  isolate?: boolean;
-}): Promise<string> {
+  /** Fallback sizing, converted with Setting.hoursPerStoryPoint. */
+  storyPoints?: number;
+};
+
+export type StartRunResult =
+  | { ok: true; runId: string }
+  | { ok: false; error: string; status: number; blocked: string };
+
+/**
+ * Admission control for a run. This lives here, not in the API route, on
+ * purpose: the shape of a run (which graph, isolated or not) and whether a run
+ * may start at all are engine decisions. A route that re-implemented them would
+ * be a second place to keep in sync, and the one that got it wrong would be the
+ * one that let two runs write to the same working tree.
+ */
+export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   const ticketId = cleanPath(params.ticketId);
-  const skill = cleanPath(params.skill);
   const project = cleanPath(params.project);
   const rootRepo = cleanPath(params.rootRepo);
   const provider = cleanPath(params.provider || "azure-devops");
-  const isolate = params.isolate ?? true;
-  const graph = graphForSkill(skill);
 
-  const row = await prisma.run.create({
-    data: {
-      ticketId,
-      ticketUrl: params.ticketUrl ? cleanPath(params.ticketUrl) : "",
-      provider,
-      project,
-      rootRepo,
-      worktreePath: rootRepo,
-      graphId: graph.id,
-      skill,
-      state: "running",
-      currentNodeId: graph.entry,
-      model: params.model ? cleanPath(params.model) : "",
-      effort: params.effort ? cleanPath(params.effort) : "",
-      estimateHours: Number.isFinite(params.estimateHours) ? Math.max(0, params.estimateHours!) : 0,
-      budgetUsd: Number.isFinite(params.budgetUsd) ? Math.max(0, params.budgetUsd!) : 0,
-    },
+  const setting = await prisma.setting.findUnique({ where: { id: "default" } });
+
+  const skill = resolveSkill(cleanPath(params.requestedSkill), !!params.skillExplicit, {
+    autoImplement: setting?.autoImplement ?? true,
+    autoResolveCodeReview: setting?.autoResolveCodeReview ?? true,
   });
+  if (!skill) {
+    return {
+      ok: false,
+      status: 400,
+      blocked: "unknown-skill",
+      error: `Unknown skill "${params.requestedSkill}". Known skills: ${KNOWN_SKILLS.join(", ")}.`,
+    };
+  }
+
+  // true → isolate in a private git worktree so runs can overlap. false
+  // (single-ticket mode) → execute directly in rootRepo, which is only safe
+  // because the admission check below guarantees nothing else is in flight.
+  const isolate = setting?.multiTicketMode ?? true;
+  // Snapshotted onto the run, not read live: raising the limit mid-run must not
+  // retroactively un-fail a run that already stopped on the old one.
+  const budgetUsd = Math.max(0, setting?.runBudgetUsd ?? 0);
+  // The evaluator changes the graph's shape, so it is resolved here (server-side,
+  // from the stored setting) and baked into graphId — a run parked at the gate
+  // must finish on the shape it started on even if the switch is flipped while it
+  // waits.
+  const evaluate = setting?.evaluateBeforePublish ?? false;
+  const graph = graphForSkill(skill, { evaluate });
+
+  // The evaluate node invokes a skill, so it can only run if that skill is on the
+  // machine. Refuse here rather than letting the run reach the node and hand the
+  // CLI an unknown slash command — by then the plan has been written, a human has
+  // approved it and the code is committed, which is an expensive place to
+  // discover a missing file.
+  if (evaluate && !findSkill(REVIEW_SKILL)) {
+    return {
+      ok: false,
+      status: 400,
+      blocked: "missing-skill",
+      error:
+        `"Review before publishing" is on, but the ${REVIEW_SKILL} skill is not installed. ` +
+        `Install it from the Guide or the System Check page, or turn the setting off.`,
+    };
+  }
+
+  // Prefer the provider's own hours; fall back to converting story points.
+  // Snapshotted onto the run so a later re-estimate cannot rewrite history.
+  const rawHours = Number(params.estimateHours);
+  const rawPoints = Number(params.storyPoints);
+  const estimateHours =
+    Number.isFinite(rawHours) && rawHours > 0
+      ? rawHours
+      : Number.isFinite(rawPoints) && rawPoints > 0
+        ? rawPoints * (setting?.hoursPerStoryPoint ?? 6)
+        : 0;
+
+  let row;
+  try {
+    row = await prisma.$transaction(async (tx) => {
+      // Serialise every admission decision. Without this the check below and the
+      // insert under it are two statements with a gap in between, and two POSTs
+      // arriving together both read "nothing active" and both start — in
+      // single-ticket mode that means two agents committing into the same
+      // working tree, which is the exact failure worktree isolation exists to
+      // prevent. Starting a run is a rare, human-triggered action, so
+      // serialising costs nothing measurable.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('ticket-executor:admission'))`;
+
+      // Read the facts, then let the pure rule judge them (see admissionDenial).
+      const [dup, other, runningOthers] = await Promise.all([
+        tx.run.findFirst({ where: { ticketId, state: { in: ACTIVE_STATES } }, select: { id: true } }),
+        tx.run.findFirst({
+          where: { ticketId: { not: ticketId }, state: { in: ACTIVE_STATES } },
+          select: { ticketId: true },
+        }),
+        tx.run.count({ where: { ticketId: { not: ticketId }, state: { in: COMPUTING_STATES } } }),
+      ]);
+      const denial = admissionDenial({
+        ticketId,
+        duplicate: !!dup,
+        otherTicketId: other?.ticketId ?? "",
+        runningOthers,
+        isolate,
+        cap: setting?.concurrentRuns ?? 2,
+      });
+      if (denial) throw new AdmissionError(denial.message, denial.status, denial.blocked);
+
+      return tx.run.create({
+        data: {
+          ticketId,
+          ticketUrl: params.ticketUrl ? cleanPath(params.ticketUrl) : "",
+          provider,
+          project,
+          rootRepo,
+          worktreePath: rootRepo,
+          graphId: graph.id,
+          skill,
+          state: "running",
+          currentNodeId: graph.entry,
+          model: params.model ? cleanPath(params.model) : "",
+          effort: params.effort ? cleanPath(params.effort) : "",
+          estimateHours,
+          budgetUsd,
+        },
+      });
+    });
+  } catch (e) {
+    if (e instanceof AdmissionError) {
+      return { ok: false, error: e.message, status: e.status, blocked: e.blocked };
+    }
+    throw e;
+  }
 
   const live: LiveRun = {
     id: row.id,
@@ -127,6 +256,7 @@ export async function startRun(params: {
     startedAt: row.startedAt.getTime(),
     endedAt: null,
     seq: 0,
+    hops: 0,
     spentUsd: 0,
     budgetUsd: row.budgetUsd,
     resumedAfterRestart: false,
@@ -140,7 +270,7 @@ export async function startRun(params: {
 
   if (!existsSync(rootRepo)) {
     await finish(live, "failed", `Project folder not found: ${rootRepo}. Set the correct Root repo on the Overview tab.`);
-    return row.id;
+    return { ok: true, runId: row.id };
   }
 
   excludeTeArtifacts(rootRepo);
@@ -168,7 +298,7 @@ export async function startRun(params: {
         "failed",
         `Failed to set up isolated git worktree: ${e instanceof Error ? e.message : e}. Concurrent runs require worktree isolation to avoid commit leakage between tickets.`
       );
-      return row.id;
+      return { ok: true, runId: row.id };
     }
   }
 
@@ -182,7 +312,7 @@ export async function startRun(params: {
   // Fire-and-forget: the route returns immediately and the walk continues in the
   // background until it ends or parks at a gate.
   void drive(live, graph, graph.entry);
-  return row.id;
+  return { ok: true, runId: row.id };
 }
 
 // ---- rehydration ----
@@ -222,7 +352,10 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
       cwd: row.worktreePath || row.rootRepo,
       baseSha: row.baseSha,
       channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
-      visits: {},
+      // Restored, not reset: the hop and cycle budgets belong to the run. A
+      // recovered run that started its counters over would be allowed to loop
+      // once more for every crash it survived.
+      visits: (row.visits as Record<string, number>) ?? {},
     },
     state: row.state as RunState,
     currentNodeId: row.currentNodeId,
@@ -239,6 +372,7 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     startedAt: row.startedAt.getTime(),
     endedAt: row.endedAt ? row.endedAt.getTime() : null,
     seq,
+    hops: row.hops,
     spentUsd,
     budgetUsd: row.budgetUsd,
     // This rebuild IS the recovery — the in-process entry was gone.

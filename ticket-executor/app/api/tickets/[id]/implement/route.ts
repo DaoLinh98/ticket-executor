@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findOtherActiveTicketId, startRun } from "@/lib/executionStore";
+import { startRun } from "@/lib/executionStore";
 import { prisma } from "@/lib/prisma";
 import { validateAgentAccess, validateRootRepo } from "@/lib/preflight";
 
@@ -32,7 +32,11 @@ export async function POST(
   const { id } = await params;
   try {
     const body = await req.json().catch(() => ({}));
-    const skill = String(body.skillName || "implement-ticket-v3");
+    // What the client *asks* for. Which skill actually runs — and therefore
+    // whether the run has a plan gate — is resolved inside startRun() from the
+    // stored settings; see resolveSkill(). The route does not decide run shape.
+    const requestedSkill = String(body.skillName || "implement-ticket-v3");
+    const skillExplicit = body.skillExplicit === true;
     const project = String(body.projectName || "");
     const rootRepo = String(body.rootRepo || "");
     const prUrl = typeof body.prUrl === "string" ? body.prUrl : undefined;
@@ -63,34 +67,31 @@ export async function POST(
       return NextResponse.json({ error: access.error }, { status: 400 });
     }
 
-    const setting = await prisma.setting.findUnique({ where: { id: "default" } });
-    const multiTicketMode = setting?.multiTicketMode ?? true;
-
-    // Prefer the provider's own hour estimate; fall back to converting story
-    // points with the configured rate. Snapshotted onto the run so a later
-    // re-estimate can't rewrite history.
-    const rawHours = Number(body.estimateHours);
-    const rawPoints = Number(body.storyPoints);
-    const estimateHours = Number.isFinite(rawHours) && rawHours > 0
-      ? rawHours
-      : Number.isFinite(rawPoints) && rawPoints > 0
-        ? rawPoints * (setting?.hoursPerStoryPoint ?? 6)
-        : 0;
-    if (!multiTicketMode) {
-      const busyTicketId = await findOtherActiveTicketId(id);
-      if (busyTicketId) {
-        return NextResponse.json(
-          { error: `Ticket #${busyTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.` },
-          { status: 409 }
-        );
-      }
+    // Admission control (run shape, isolation, one-run-at-a-time) lives in the
+    // engine, behind one lock — see startRun(). Re-checking any of it here would
+    // be a second place to keep in sync.
+    const started = await startRun({
+      ticketId: id,
+      ticketUrl,
+      requestedSkill,
+      skillExplicit,
+      project,
+      rootRepo,
+      prUrl,
+      provider,
+      model,
+      effort,
+      estimateHours: Number(body.estimateHours),
+      storyPoints: Number(body.storyPoints),
+    });
+    if (!started.ok) {
+      await recordBlocked(id, provider, project, started.blocked, started.error);
+      return NextResponse.json({ error: started.error }, { status: started.status });
     }
-
-    const runId = await startRun({ ticketId: id, ticketUrl, skill, project, rootRepo, prUrl, provider, model, effort, estimateHours, isolate: multiTicketMode });
     // `warnings` are advisory: the run has started, but something worth showing
     // could not be verified up front.
     return NextResponse.json(
-      access.warnings.length ? { runId, warnings: access.warnings } : { runId }
+      access.warnings.length ? { runId: started.runId, warnings: access.warnings } : { runId: started.runId }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

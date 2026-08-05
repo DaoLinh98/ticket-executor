@@ -27,6 +27,9 @@ export async function saveRun(live: LiveRun) {
       branch: live.branch,
       resultText: live.resultText,
       channels: live.ctx.channels as unknown as Prisma.InputJsonValue,
+      // The loop guards travel with the run, not with the process driving it.
+      hops: live.hops,
+      visits: live.ctx.visits as unknown as Prisma.InputJsonValue,
       parkedAt: live.parkedAt ? new Date(live.parkedAt) : null,
       humanWaitMs: live.humanWaitMs,
       resumedAfterRestart: live.resumedAfterRestart,

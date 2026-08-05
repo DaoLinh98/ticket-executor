@@ -33,6 +33,18 @@ model Setting {
   // converts point-sized tickets to hours when the provider has no hour estimate.
   hourlyRateUsd  Float    @default(0)
   hoursPerStoryPoint Float @default(6)
+  // Insert an independent review node between `implement` and `publish` in the
+  // two-phase flow, with a bounded fix loop behind it. Off by default on
+  // purpose: it costs roughly one extra review turn per run plus whatever the
+  // fixes cost, and whether that pays for itself is a question the dashboard
+  // answers (firstPassRate / reworkFactor against costPerShippedTicket), not one
+  // a default should presume. Flip it, run a batch, compare.
+  evaluateBeforePublish Boolean @default(false)
+  // Ceiling for one whole run in USD, snapshotted onto Run.budgetUsd at start
+  // and checked *between* nodes. 0 = no run-level ceiling, leaving only the
+  // per-node --max-budget-usd. Editable here rather than hidden in an env var:
+  // a spend limit nobody can see or tune is a limit that quietly does nothing.
+  runBudgetUsd   Float    @default(0)
   // true → multi-ticket mode: multi-select/batch runs allowed, each execution
   // isolated in its own git worktree. false → single-ticket mode: only one
   // ticket may run at a time, and it runs directly in rootRepo (no worktree).
@@ -105,9 +117,18 @@ model Run {
   // State channels: nodeId → that node's validated structured output. Append-only;
   // a node only ever writes its own key. This is what edges read.
   channels     Json      @default("{}")
-  // Ceiling for the whole run in USD (0 = no run-level ceiling). Checked between
-  // nodes, so a cycle cannot spend without bound.
+  // Ceiling for the whole run in USD (0 = no run-level ceiling), snapshotted
+  // from Setting.runBudgetUsd at start. Checked between nodes, so a cycle cannot
+  // spend without bound.
   budgetUsd    Float     @default(0)
+  // Transitions this run has taken. Persisted rather than counted in a local
+  // variable because drive() is re-entered on every gate resolution and on every
+  // crash resume — a counter that resets at each of those is not a loop guard.
+  hops         Int       @default(0)
+  // nodeId → how many times that node has been entered. The accounting a bounded
+  // cycle reads ("stop after two fix attempts"); it used to live only in memory,
+  // so a restart silently reset every cycle's budget back to zero.
+  visits       Json      @default("{}")
   model        String    @default("")
   effort       String    @default("")
   // The team's own estimate for this ticket, in hours, snapshotted when the run
@@ -223,7 +244,13 @@ model BlockedAttempt {
   ticketId    String
   provider    String   @default("")
   projectName String   @default("")
-  reason      String   // root-repo | agent-access | single-ticket-mode
+  // root-repo | agent-access        — preflight refused it
+  // duplicate-ticket                — that ticket already has a run in flight
+  // single-ticket-mode              — another ticket holds the only slot
+  // concurrency-cap                 — Setting.concurrentRuns is already reached
+  // unknown-skill                   — the caller asked for a skill no graph serves
+  // missing-skill                   — a node's skill is not installed on this machine
+  reason      String
   detail      String   @default("")
   createdAt   DateTime @default(now())
 

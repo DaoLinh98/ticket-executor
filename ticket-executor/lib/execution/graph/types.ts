@@ -169,6 +169,10 @@ export type LiveRun = {
   endedAt: number | null;
   /** Monotonic counter for Transition.seq. */
   seq: number;
+  /** Transitions taken so far, across every re-entry of drive(). Persisted: a
+   *  gate resolution and a crash resume both call drive() again, and a hop
+   *  counter that restarts there would never catch the loop it exists to catch. */
+  hops: number;
   spentUsd: number;
   budgetUsd: number;
   resumedAfterRestart: boolean;

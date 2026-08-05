@@ -65,6 +65,18 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
   const ownSessionId = resuming ? "" : randomUUID();
   const sessionArgs = resuming ? ["--resume", live.sessionId] : ["--session-id", ownSessionId];
 
+  // A node that asked to resume but has no session to resume into silently ran
+  // as `fresh` — same output shape, quietly different behaviour and a quietly
+  // different bill (a fresh system prompt, and a node re-reading what it was
+  // told it would already know). Say so, so the run's own log explains why the
+  // turn cost what it did.
+  if (node.context === "resume" && !live.sessionId) {
+    live.logLines.push({
+      text: `⚠ ${node.label} declares context "resume" but this run has no session yet — it starts a fresh one and re-reads from scratch.`,
+      kind: "err",
+    });
+  }
+
   await prepareMcp(live);
   live.logLines.push({ text: `▸ ${node.label} — ${prompt.slice(0, 200)}`, kind: "cmd" });
 

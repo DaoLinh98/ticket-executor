@@ -369,6 +369,19 @@ export function codeBlock(opts?: {
   };
 }
 
+// The small spaced-uppercase caption that titles a group inside a detail pane
+// ("FILES CHANGED (3)", "COMMITS"). Distinct from fieldLabel(), which sits above
+// a form input and is a step larger; this one labels read-only content.
+export function sectionCaption(): CSSProperties {
+  return {
+    fontSize: FONT.xs,
+    letterSpacing: ".08em",
+    fontWeight: 700,
+    color: COLORS.faint,
+    textTransform: "uppercase",
+  };
+}
+
 // Dropdown/menu panel chrome shared by SprintPicker, Combobox, and the inline
 // status menu in TicketExecutor.tsx.
 export function dropdownPanelStyle(opts?: {

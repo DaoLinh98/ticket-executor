@@ -17,7 +17,8 @@ const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
   animatedBackground: true, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
-  manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
+  manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6, runBudgetUsd: 0,
+  evaluateBeforePublish: false,
 };
 
 // Reusable pill toggle (ported from the old SettingsModal, deduplicated).
@@ -252,6 +253,11 @@ export default function SettingsPage() {
                 <input type="number" min={0} step={0.5} value={settings.hoursPerStoryPoint} onChange={(e) => setSettings((s) => ({ ...s, hoursPerStoryPoint: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
                 <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5, maxWidth: "320px" }}>Used only when a ticket carries story points instead of an hour estimate.</span>
               </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <span style={fieldLabel()}>RUN BUDGET (USD)</span>
+                <input type="number" min={0} step={0.5} value={settings.runBudgetUsd} onChange={(e) => setSettings((s) => ({ ...s, runBudgetUsd: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
+                <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5, maxWidth: "320px" }}>Ceiling for one whole run, checked between steps — a run that reaches it stops instead of looping on your money. Snapshotted when the run starts. 0 = no run-level ceiling.</span>
+              </label>
             </div>
 
             <div style={divider} />
@@ -276,6 +282,21 @@ export default function SettingsPage() {
                 </div>
               </div>
               <Toggle on={settings.autoResolveCodeReview} title="Toggle auto-resolve-code-review mode" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, autoResolveCodeReview: !s.autoResolveCodeReview })); }} />
+            </div>
+
+            <div style={divider} />
+            <div style={rowStyle}>
+              <div>
+                <div style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Review before publishing</div>
+                <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "2px", lineHeight: 1.5 }}>
+                  Adds an independent reviewer between coding and the pull request. It reads only the
+                  diff, in its own session, so it can disagree with the agent that wrote the code —
+                  blocking findings go back for up to two fix rounds.<br />
+                  Costs roughly one extra review turn per run. Applies to the plan-review flows only
+                  (<span style={{ fontFamily: "var(--font-mono), monospace" }}>-v3</span>); the one-shot flows have already published by then.
+                </div>
+              </div>
+              <Toggle on={settings.evaluateBeforePublish} title="Toggle review-before-publishing" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, evaluateBeforePublish: !s.evaluateBeforePublish })); }} />
             </div>
 
             <div style={divider} />
