@@ -57,6 +57,29 @@ const ADO_MCP_NAME = "@azure-devops/mcp";
 const ADO_MCP_MAJOR = 2;
 const ADO_MCP_PACKAGE = `${ADO_MCP_NAME}@${ADO_MCP_MAJOR}`;
 
+// Only the tool domains the run skills actually call. The server defaults to
+// `all`, which is 91 tools across ten domains — and every one of their schemas is
+// paid for in the system prompt on *every* turn of a run (measured on v2.8.1:
+// work-items 23, repositories 22, pipelines 14, test-plans 9, work 8, wiki 6,
+// core 3, search 3, advanced-security 2, mcp-apps 1).
+//
+// The skills need exactly three: `work-items` (wit_get_work_item,
+// wit_list_work_item_comments, wit_link_work_item_to_pull_request),
+// `repositories` (repo_create_pull_request,
+// repo_list_pull_requests_by_repo_or_project) and `core` for project lookup.
+// That is 48 tools instead of 91; the other 43 are schema the agent reads past.
+//
+// Sprints and iterations are *not* why `work` is absent: this app reads those
+// through its own REST client (lib/ado.ts), never through the run's MCP server.
+//
+// Passed as separate argv entries because the option is declared
+// `type: "string", array: true` — a single comma-joined string arrives as one
+// array element, fails domain validation and silently leaves the server on
+// `all`. The organization stays the *first* argument: it is a demanded
+// positional, and binding it before the array flag keeps yargs from swallowing
+// it.
+const ADO_MCP_DOMAINS = ["-d", "work-items", "repositories", "core"];
+
 const TEMPLATES: Record<string, McpTemplate> = {
   "azure-devops": {
     server: "azure-devops",
@@ -72,8 +95,8 @@ const TEMPLATES: Record<string, McpTemplate> = {
       const env = { AZURE_DEVOPS_TOKEN: pat };
       const installed = globalPackageEntry(ADO_MCP_NAME, ADO_MCP_MAJOR);
       return installed
-        ? { command: process.execPath, args: [installed.entry, slug], env }
-        : { command: "npx", args: ["-y", ADO_MCP_PACKAGE, slug], env };
+        ? { command: process.execPath, args: [installed.entry, slug, ...ADO_MCP_DOMAINS], env }
+        : { command: "npx", args: ["-y", ADO_MCP_PACKAGE, slug, ...ADO_MCP_DOMAINS], env };
     },
   },
   github: {

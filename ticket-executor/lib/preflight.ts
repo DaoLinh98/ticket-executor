@@ -15,7 +15,7 @@ import { homedir } from "os";
 import path from "path";
 import { prisma } from "./prisma";
 import { parseAdoUrl } from "./ado";
-import { decryptSecret } from "./crypto";
+import { resolveCredential } from "./providerCredentials";
 import {
   MANAGED_PACKAGES,
   adoServerOrg,
@@ -105,7 +105,72 @@ const git = (args: string[], opts?: { cwd?: string; timeout?: number }) => run("
 // check groups
 // ---------------------------------------------------------------------------
 
-async function environmentChecks(): Promise<Check[]> {
+/**
+ * Which Claude account runs will execute under — **only when hub mode is on**.
+ *
+ * Returns nothing at all with `Setting.hubEnabled` off. That is deliberate: with
+ * the hub off the CLI uses this machine's own login exactly as it always has,
+ * there is no new thing for this app to check, and a row that appeared anyway
+ * would be a new way for the original setup to look broken.
+ *
+ * The live resolve is confined to the **deep** tier because the only endpoint an
+ * agent can reach returns the credential *material* — there is no metadata-only
+ * route in the contract for an agent audience. Fetching a secret to render a
+ * status line is not something to do on every page load (INTEGRATION.md §4 asks
+ * for the opposite), so the shallow tier says where the answer comes from and
+ * leaves the real check to run start, which is where a missing credential is
+ * refused anyway.
+ */
+async function claudeAccountChecks(deep: boolean): Promise<Check[]> {
+  const setting = await prisma.setting.findUnique({ where: { id: "default" } }).catch(() => null);
+  if (!setting?.hubEnabled) return [];
+
+  const base = {
+    id: "claude-account",
+    group: "environment" as const,
+    label: "Claude account (EmeHub)",
+    level: "blocker" as const,
+  };
+
+  if (!deep) {
+    return [
+      {
+        ...base,
+        status: "warn",
+        message: "Resolved from EmeHub when a run starts.",
+        fix: "Run the deep check to confirm a credential is available before starting a run.",
+      },
+    ];
+  }
+
+  try {
+    const { resolveClaudeCredentialWithToken } = await import("./hubCredential");
+    const credential = await resolveClaudeCredentialWithToken();
+    const account =
+      credential.source === "shared" ? "the shared workspace account" : "your own account";
+    return [
+      {
+        ...base,
+        status: "pass",
+        message:
+          `Runs execute under ${account}${credential.label ? ` (${credential.label})` : ""} — status ${credential.status}.`,
+      },
+    ];
+  } catch (e) {
+    return [
+      {
+        ...base,
+        status: "fail",
+        message: e instanceof Error ? e.message : String(e),
+        fix:
+          "Attach your own credential in EmeHub › Claude Settings, or ask an admin to configure " +
+          "the shared account. With EmeHub on, runs do not fall back to this machine's own Claude login.",
+      },
+    ];
+  }
+}
+
+async function environmentChecks(deep: boolean): Promise<Check[]> {
   const checks: Check[] = [];
 
   // --- database ---
@@ -183,6 +248,11 @@ async function environmentChecks(): Promise<Check[]> {
         }
   );
 
+  // Hub mode only — see claudeAccountChecks(). Sits beside the CLI check because
+  // it answers the other half of the same question: the binary is here, and this
+  // is the account it will run as.
+  checks.push(...(await claudeAccountChecks(deep)));
+
   // --- git ---
   const g = git(["--version"]);
   checks.push(
@@ -211,18 +281,6 @@ async function environmentChecks(): Promise<Check[]> {
           fix: "Set SETTINGS_ENC_KEY in .env. Otherwise changing DATABASE_URL later makes the stored PAT undecryptable.",
         }
   );
-  checks.push(
-    process.env.CLAUDE_MAX_BUDGET_USD
-      ? {
-          id: "budget", group: "environment", label: "Spend cap", level: "warning",
-          status: "pass", message: `CLAUDE_MAX_BUDGET_USD = ${process.env.CLAUDE_MAX_BUDGET_USD}.`,
-        }
-      : {
-          id: "budget", group: "environment", label: "Spend cap", level: "warning",
-          status: "warn", message: "No per-run spend cap configured.",
-          fix: "Set CLAUDE_MAX_BUDGET_USD in .env (e.g. 5) to bound a runaway run.",
-        }
-  );
 
   return checks;
 }
@@ -230,10 +288,18 @@ async function environmentChecks(): Promise<Check[]> {
 function skillChecks(): Check[] {
   return skillStates().map((s) => {
     const base = { id: `skill-${s.name}`, group: "skills" as const, label: s.name };
+    // An optional skill (one reached only when a setting switches its node on) is
+    // not missing-and-fatal — it is missing-and-unused until that setting is on,
+    // and startRun() refuses the run if it ever isn't. Reporting it as a blocker
+    // here would tell every install it is broken over a feature it never enabled.
     if (s.status === "missing") {
       return {
-        ...base, level: "blocker" as const, status: "fail" as const,
-        message: `Not found in ${skillDirs().length} skill folder(s).`,
+        ...base,
+        level: s.required ? ("blocker" as const) : ("warning" as const),
+        status: s.required ? ("fail" as const) : ("warn" as const),
+        message: s.required
+          ? `Not found in ${skillDirs().length} skill folder(s).`
+          : `Not installed. Only needed while the setting that uses it is on — a run would be refused up front, not left to fail.`,
         fix: "Install it from the Guide or with the Install button here — this repo ships a copy.",
       };
     }
@@ -278,9 +344,9 @@ async function connectionChecks(deep: boolean): Promise<Check[]> {
   try {
     const setting = await prisma.setting.findUnique({ where: { id: "default" } });
     provider = normalizeProvider(setting?.provider ?? process.env.TICKET_PROVIDER);
-    const cred = await prisma.providerCredential.findUnique({ where: { provider } });
-    org = cred?.org?.trim() ?? "";
-    pat = decryptSecret(cred?.pat);
+    const cred = await resolveCredential(provider);
+    org = cred.org.trim();
+    pat = cred.pat;
   } catch {
     checks.push({
       id: "conn-stored", group: "connection", label: "Provider connection saved", level: "blocker",
@@ -330,32 +396,54 @@ async function connectionChecks(deep: boolean): Promise<Check[]> {
 
 // Live token check. Mirrors POST /api/settings/test for the wired providers;
 // kept here so preflight has no HTTP hop back into itself.
+//
+// Same two guards as that route, and for the same reason: a provider that
+// rejects a credential may answer with a redirect to its sign-in page rather
+// than a 401, and following it lands on a 200 carrying HTML. `redirect:
+// "manual"` plus a check that the body really is the JSON the endpoint promises
+// is what separates "the token works" from "we were shown a login form".
 async function testConnectionLive(provider: string, org: string, pat: string): Promise<{ ok: boolean; message: string }> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 10000);
+  const bounced = (r: Response) => r.status === 0 || (r.status >= 300 && r.status < 400);
+  const asJson = async (r: Response): Promise<Record<string, unknown> | null> => {
+    if (!(r.headers.get("content-type") ?? "").toLowerCase().includes("json")) return null;
+    const body = await r.json().catch(() => null);
+    return body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  };
+  const rejected = (name: string) => ({ ok: false, message: `${name} rejected the token — expired or missing scopes.` });
   try {
     if (provider === "azure-devops") {
       const slug = org.replace(/^https?:\/\/(dev\.azure\.com\/)?/, "").replace(/\/+$/, "").split("/")[0];
       if (!slug) return { ok: false, message: "Could not read the organization from the saved URL." };
       const r = await fetch(`https://dev.azure.com/${slug}/_apis/projects?api-version=7.0`, {
-        headers: { Authorization: "Basic " + Buffer.from(":" + pat).toString("base64") },
+        headers: { Authorization: "Basic " + Buffer.from(":" + pat).toString("base64"), Accept: "application/json" },
         signal: ctrl.signal,
         cache: "no-store",
+        redirect: "manual",
       });
+      if (bounced(r)) return rejected("Azure DevOps");
       if (r.ok) {
-        const data = (await r.json().catch(() => ({}))) as { count?: number };
-        return { ok: true, message: `Azure DevOps accepted the token — ${slug}${typeof data.count === "number" ? ` (${data.count} projects)` : ""}.` };
+        const data = await asJson(r);
+        if (!data || !Array.isArray(data.value)) return rejected("Azure DevOps");
+        const n = typeof data.count === "number" ? data.count : data.value.length;
+        return { ok: true, message: `Azure DevOps accepted the token — ${slug} (${n} project${n === 1 ? "" : "s"}).` };
       }
-      if (r.status === 401 || r.status === 203) return { ok: false, message: "Azure DevOps rejected the token (401) — expired or missing scopes." };
+      if (r.status === 401 || r.status === 203 || r.status === 403) return rejected("Azure DevOps");
       if (r.status === 404) return { ok: false, message: `Organization "${slug}" not found.` };
       return { ok: false, message: `Azure DevOps returned ${r.status} ${r.statusText}.` };
     }
     if (provider === "github") {
       const r = await fetch("https://api.github.com/user", {
         headers: { Authorization: `Bearer ${pat}`, Accept: "application/vnd.github+json" },
-        signal: ctrl.signal, cache: "no-store",
+        signal: ctrl.signal, cache: "no-store", redirect: "manual",
       });
-      return r.ok ? { ok: true, message: "GitHub accepted the token." } : { ok: false, message: `GitHub returned ${r.status} ${r.statusText}.` };
+      if (bounced(r)) return rejected("GitHub");
+      if (!r.ok) return { ok: false, message: `GitHub returned ${r.status} ${r.statusText}.` };
+      const u = await asJson(r);
+      return typeof u?.login === "string"
+        ? { ok: true, message: "GitHub accepted the token." }
+        : rejected("GitHub");
     }
     return { ok: true, message: "No automated token check for this provider — verify by loading tickets." };
   } catch (e) {
@@ -382,9 +470,9 @@ async function agentAccessChecks(deep: boolean): Promise<{ checks: Check[]; prob
     const setting = await prisma.setting.findUnique({ where: { id: "default" } });
     provider = normalizeProvider(setting?.provider ?? process.env.TICKET_PROVIDER);
     manageMcp = setting?.manageMcp ?? true;
-    const cred = await prisma.providerCredential.findUnique({ where: { provider } });
-    org = cred?.org?.trim() ?? "";
-    pat = decryptSecret(cred?.pat);
+    const cred = await resolveCredential(provider);
+    org = cred.org.trim();
+    pat = cred.pat;
   } catch {
     return {
       checks: [{
@@ -602,9 +690,9 @@ export async function validateAgentAccess(
   try {
     const setting = await prisma.setting.findUnique({ where: { id: "default" } });
     manageMcp = setting?.manageMcp ?? true;
-    const cred = await prisma.providerCredential.findUnique({ where: { provider } });
-    org = cred?.org?.trim() ?? "";
-    pat = decryptSecret(cred?.pat);
+    const cred = await resolveCredential(provider);
+    org = cred.org.trim();
+    pat = cred.pat;
   } catch {
     // The DB is down; startExecution would fail on its own row insert anyway.
     return { ok: true, warnings: [] };
@@ -731,7 +819,7 @@ export async function runPreflight(opts?: { rootRepo?: string; deep?: boolean })
   const rootRepo = (opts?.rootRepo ?? "").trim();
   const deep = !!opts?.deep;
   const [env, conn, agent] = await Promise.all([
-    environmentChecks(),
+    environmentChecks(deep),
     connectionChecks(deep),
     agentAccessChecks(deep),
   ]);

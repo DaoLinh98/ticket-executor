@@ -79,6 +79,9 @@ Fill them honestly. In particular:
 - `verification.tests` / `verification.build` are `passed` **only** if you
   actually ran them and they passed. Use `not-run` when there was nothing to run.
   Never report `passed` for a check you did not run.
+  A reported `failed` marks the whole run failed even though the PR is already
+  open, and the ticket is left where it was — that is the intended outcome, and
+  it is far cheaper than a false `passed` that hides unverified code in a PR.
 - `committed` / `pushed` describe what really happened, not what you intended.
 - `blocked.is` is `true` only on a hard external blocker you cannot work around,
   with a one-sentence `reason`. This ends the run cleanly instead of leaving a

@@ -1,8 +1,7 @@
 import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview, CommitSummary, CommitFile } from "./types";
-import { prisma } from "./prisma";
-import { decryptSecret } from "./crypto";
+import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
-import { sanitizeHtml } from "./richText";
+import { markdownToHtml, sanitizeHtml } from "./richText";
 
 const API = "api-version=7.0";
 
@@ -74,10 +73,9 @@ function decodeSegment(s: string | undefined): string {
  * right org, so old configs keep working.
  */
 export async function adoCreds(): Promise<AdoCreds | null> {
-  const c = await prisma.providerCredential.findUnique({ where: { provider: "azure-devops" } });
-  const { org } = parseAdoUrl(c?.org);
-  const pat = decryptSecret(c?.pat);
-  return org && pat ? { org, pat } : null;
+  const c = await resolveCredential("azure-devops");
+  const { org } = parseAdoUrl(c.org);
+  return org && c.pat ? { org, pat: c.pat } : null;
 }
 
 // Resolve the per-call credentials context. `project` is required for
@@ -166,10 +164,21 @@ async function adoSend<T>(url: string, method: string, body: unknown, contentTyp
  * stored credential.
  */
 function htmlToRich(html: string): string {
-  return sanitizeHtml(html ?? "", {
-    rewriteImageSrc: (src) =>
+  const raw = html ?? "";
+  const opts = {
+    rewriteImageSrc: (src: string) =>
       /\/_apis\/wit\/attachments\//i.test(src) ? `/api/attachments?url=${encodeURIComponent(src)}` : src,
-  });
+  };
+  // ADO now lets a work item store these fields as Markdown instead of HTML,
+  // and both shapes arrive on the same field. A body with no markup at all is
+  // the Markdown one: rendered as HTML its newlines collapse and the whole
+  // numbered list runs together in a single paragraph.
+  return isHtml(raw) ? sanitizeHtml(raw, opts) : markdownToHtml(raw, opts);
+}
+
+/** Does this field value carry HTML markup, or is it a Markdown/plain body? */
+function isHtml(value: string): boolean {
+  return /<\/?(p|div|br|ul|ol|li|h[1-6]|table|img|span|strong|b|em|i|a|pre|code|blockquote)\b[^>]*>/i.test(value);
 }
 
 /** Convert ADO rich-text (HTML) to readable plain text. */
@@ -518,6 +527,30 @@ async function getLinkedPullRequestRef(creds: Creds, ticketId: string, fallbackP
   return null;
 }
 
+/** The ref named by a recorded PR URL, verified by reading the PR itself.
+ *
+ *  Two calls' worth of work item + repository reads are skipped, and the read
+ *  that replaces them is one the caller was going to make anyway. Returns null —
+ *  never throws — when the URL no longer resolves, so the caller falls back to
+ *  the thorough resolution instead of reporting a ticket as having no PR. */
+async function quickPullRequest(creds: Creds, prUrl?: string | null): Promise<{ ref: PrRef; raw: RawPullRequest } | null> {
+  if (!prUrl) return null;
+  const { org, pat, project } = creds;
+  const withProject = prUrl.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  const bare = withProject ? null : prUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  const ref: PrRef | null = withProject
+    ? { repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) }
+    : bare
+      ? { repositoryId: decodeURIComponent(bare[1]), prId: bare[2], project }
+      : null;
+  if (!ref) return null;
+  try {
+    return { ref, raw: await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat) };
+  } catch {
+    return null;
+  }
+}
+
 type RawReviewer = { displayName?: string; vote?: number };
 type RawPullRequest = {
   pullRequestId: number;
@@ -577,14 +610,27 @@ type RawThread = {
 
 const RESOLVED_THREAD_STATUSES = new Set(["fixed", "closed", "wontfix"]);
 
-/** Fetch the PR (if any) linked to a work item, plus its review-comment threads. */
-export async function getPullRequestReview(ticketId: string, fallbackPrUrl?: string | null): Promise<ReviewData> {
+/** Fetch the PR (if any) linked to a work item, plus its review-comment threads.
+ *
+ *  `fast` skips straight to the PR named by `fallbackPrUrl`, spending two calls
+ *  instead of four — the PR read is its own verification, since a repository or
+ *  PR that does not resolve answers 404 and nothing is built from the guess.
+ *  The review bell asks about a whole board on a timer and passes it; the
+ *  Resolve Review tab opens one ticket and does not, because there the extra
+ *  reads buy a link that survives a renamed repository. Either way a URL that
+ *  fails falls back to the thorough resolution rather than reporting "no PR". */
+export async function getPullRequestReview(
+  ticketId: string,
+  fallbackPrUrl?: string | null,
+  opts?: { fast?: boolean }
+): Promise<ReviewData> {
   const creds = await loadCreds();
   const { org, pat, project } = creds;
-  const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
+  const quick = opts?.fast ? await quickPullRequest(creds, fallbackPrUrl) : null;
+  const ref = quick?.ref ?? (await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl));
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
 
-  const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat);
+  const raw = quick?.raw ?? (await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat));
   const pr: PullRequestOverview = {
     id: String(raw.pullRequestId),
     url: prWebUrl(org, ref.project ?? project, raw, fallbackPrUrl),

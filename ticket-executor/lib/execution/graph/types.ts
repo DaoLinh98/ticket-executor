@@ -99,8 +99,6 @@ export type AgentNode = NodeBase & {
   context: ContextPolicy;
   prompt: (c: RunContext) => string;
   output: Record<string, unknown>; // JSON Schema, passed to the CLI as --json-schema
-  /** Per-node ceiling in USD, passed through as --max-budget-usd. */
-  budgetUsd?: number;
 };
 
 /** A stop. The run parks here holding no child process until a human resolves it.
@@ -163,14 +161,31 @@ export type LiveRun = {
   /** The whole run's log, in order. A step persists the slice it produced. */
   logLines: LogLine[];
   mcpConfigPath: string;
+  // ---- EmeHub Claude credential (hub mode only) ----
+  // All three are empty when `Setting.hubEnabled` is off, and every site that
+  // reads them is guarded on that emptiness. An empty `claudeCredentialDir`
+  // means the CLI is spawned with the environment it has always been spawned
+  // with and authenticates against the machine's own login — the original flow,
+  // reached by doing nothing rather than by falling back.
+  /** `CLAUDE_SECURESTORAGE_CONFIG_DIR` for this run's turns — the credential
+   *  file only, never the config root (see lib/claudeConfig.ts). */
+  claudeCredentialDir: string;
+  /** The run-scoped credential grant (emehub ADR 0009), decrypted. Used only to
+   *  hand rotated tokens and spend back to the hub, and to re-resolve mid-run. */
+  claudeGrant: string;
+  /** Which account the hub resolved: "" | own | shared. Recorded for the log and
+   *  the run row; never used to *decide* anything, because the hub decides. */
+  claudeSource: string;
   parkedAt: number | null;
   humanWaitMs: number;
   startedAt: number;
   endedAt: number | null;
   /** Monotonic counter for Transition.seq. */
   seq: number;
-  spentUsd: number;
-  budgetUsd: number;
+  /** Transitions taken so far, across every re-entry of drive(). Persisted: a
+   *  gate resolution and a crash resume both call drive() again, and a hop
+   *  counter that restarts there would never catch the loop it exists to catch. */
+  hops: number;
   resumedAfterRestart: boolean;
   errorMessage: string;
   endReason: string;

@@ -1,7 +1,7 @@
 "use client";
 
 import type { CommitSummary, PullRequestOverview } from "@/lib/types";
-import { FONT, avatar, card, initials, ringBorder } from "@/lib/ui";
+import { FONT, avatar, card, initials, ringBorder, sectionCaption } from "@/lib/ui";
 import { timeAgo } from "../helpers";
 import LoadingRing from "../LoadingRing";
 import { useBoltsContext } from "../../BoltsContext";
@@ -26,7 +26,7 @@ export default function CommitsTab({ pr, commits, onOpenCommit }: Props) {
 
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "14px", animation: "fadeUp .35s both" }}>
-      <div style={{ fontSize: FONT.xs, letterSpacing: ".08em", fontWeight: 700, color: "#5B6273", textTransform: "uppercase" }}>
+      <div style={sectionCaption()}>
         {commits ? `${commits.length} commit${commits.length === 1 ? "" : "s"} on ${pr.branch}` : "Loading commits…"}
       </div>
       {commits === null ? (

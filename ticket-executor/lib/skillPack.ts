@@ -8,9 +8,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { homedir } from "os";
 import path from "path";
 
-/** The skills the UI can start a run with — all four are reachable via the
- *  Settings toggles, so a missing one is a blocker. Lives here rather than in
- *  preflight.ts so preflight can depend on this module without a cycle. */
+/** The skills every install needs: all four are reachable from the Settings
+ *  toggles, so a missing one is a blocker. Lives here rather than in preflight.ts
+ *  so preflight can depend on this module without a cycle. */
 export const REQUIRED_SKILLS = [
   "implement-ticket-v2",
   "implement-ticket-v3",
@@ -18,7 +18,24 @@ export const REQUIRED_SKILLS = [
   "fix-code-review-v3",
 ] as const;
 
-export type SkillName = (typeof REQUIRED_SKILLS)[number];
+/** Bundled and installable exactly like the required four, but only reached when
+ *  a setting switches its node on — so a missing copy is a *warning* in System
+ *  Check, not a blocker on every run. What makes it a hard requirement is the
+ *  setting being on, and that is enforced where it belongs: in startRun()'s
+ *  admission check, which refuses the run rather than letting it fail on an
+ *  unknown slash command a turn later. */
+export const OPTIONAL_SKILLS = [
+  "review-changes-v1", // the `evaluate` node — Setting.evaluateBeforePublish
+] as const;
+
+/** Every skill this repo ships a copy of. */
+export const BUNDLED_SKILLS = [...REQUIRED_SKILLS, ...OPTIONAL_SKILLS] as const;
+
+export type SkillName = (typeof BUNDLED_SKILLS)[number];
+
+export function isRequiredSkill(name: string): boolean {
+  return (REQUIRED_SKILLS as readonly string[]).includes(name);
+}
 
 /** The same directories `GET /api/skills` scans, in the same order. */
 export function skillDirs(): string[] {
@@ -43,6 +60,8 @@ export function findSkill(name: string): string | null {
 
 export type SkillState = {
   name: SkillName;
+  /** false = only needed when the setting that switches its node on is enabled. */
+  required: boolean;
   /** Version shipped in this repo. */
   bundledVersion: string;
   /** Version found on the machine, or null when the skill isn't installed. */
@@ -113,17 +132,20 @@ function cmpVersion(a: string, b: string): number {
 
 /** True when this skill is shipped in the repo and can therefore be installed. */
 export function isBundled(name: string): name is SkillName {
-  return (REQUIRED_SKILLS as readonly string[]).includes(name) && existsSync(path.join(packDir(), name));
+  return (BUNDLED_SKILLS as readonly string[]).includes(name) && existsSync(path.join(packDir(), name));
 }
 
 /** Bundled-vs-installed state for every required skill. Read-only. */
 export function skillStates(): SkillState[] {
-  return REQUIRED_SKILLS.map((name) => {
+  return BUNDLED_SKILLS.map((name) => {
     const src = path.join(packDir(), name, "SKILL.md");
     const bundledVersion = existsSync(src) ? readVersion(src) : "0.0.0";
     const installedPath = findSkill(name);
     if (!installedPath) {
-      return { name, bundledVersion, installedVersion: null, installedPath: null, status: "missing" as const };
+      return {
+        name, required: isRequiredSkill(name),
+        bundledVersion, installedVersion: null, installedPath: null, status: "missing" as const,
+      };
     }
     const installedVersion = readVersion(path.join(installedPath, "SKILL.md"));
     let status: SkillState["status"] = "ok";
@@ -131,7 +153,7 @@ export function skillStates(): SkillState[] {
     // Same version but different bytes: someone edited their copy. Say so
     // rather than silently offering to overwrite it.
     else if (!sameContent(src, path.join(installedPath, "SKILL.md"))) status = "modified";
-    return { name, bundledVersion, installedVersion, installedPath, status };
+    return { name, required: isRequiredSkill(name), bundledVersion, installedVersion, installedPath, status };
   });
 }
 
@@ -144,7 +166,7 @@ export type InstallOutcome = {
 
 /** Copy one bundled skill into ~/.claude/skills/<name>/.
  *
- *  Guardrails: only the four allowlisted names are ever written, the target is
+ *  Guardrails: only allowlisted bundled names are ever written, the target is
  *  always inside the install dir, and an existing folder whose contents differ
  *  is refused unless `force` — a developer may have edited their copy. Nothing
  *  is ever deleted; files not present in the bundle are left alone. */

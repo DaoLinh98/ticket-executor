@@ -5,7 +5,9 @@ import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import type { CountEntry, DashboardMetrics, SkillConsistency } from "@/lib/executionStore";
-import { COLORS, FONT, card, logoText, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, pill, ringBorder, tintedCard } from "@/lib/ui";
+import ProviderBadge from "../ProviderBadge";
+import PageHeading from "../PageHeading";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -330,16 +332,9 @@ export default function DashboardPage() {
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="#0B0C10" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-            <span style={logoText(FONT.xl)}>Run Metrics</span>
-            <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>D-AGENT · ANALYTICS</span>
-          </div>
-        </div>
+      {/* zIndex above the metric grid: the filter dropdowns open downwards over it. */}
+      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+        <PageHeading title="Run Metrics" kicker="D-AGENT · ANALYTICS" icon={<path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />} />
         <div style={{ flex: 1 }} />
         <div style={{ width: "170px" }}>
           <SelectMenu variant="filter" alwaysGlow value={rangeLabel} onChange={setRangeLabel} options={Object.keys(RANGES)} allLabel="Range: All time" ariaLabel="Filter by time range" />
@@ -350,6 +345,7 @@ export default function DashboardPage() {
         <div style={{ width: "210px" }}>
           <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
+        <ProviderBadge />
       </header>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>

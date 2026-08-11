@@ -10,9 +10,18 @@ import { END, FAIL, type Graph, type LiveRun, type NodeResult, type Target } fro
 
 // A backstop, not a policy. Cycles are legitimate (revise the plan, fix what an
 // evaluator found), but a graph that has moved 40 times is looping, and a runaway
-// loop spends real money. Per-node budgets and Run.budgetUsd are the real limits;
-// this catches the case where something is wrong with the graph itself.
+// loop spends real money. This is the *only* automatic stop left in the harness —
+// the USD ceilings it used to sit beside were removed deliberately — so it catches
+// the one failure nobody can catch by hand: a routing bug that re-enters a node
+// forever. Human-driven cycles never come near it (three hops per plan revision).
 const MAX_HOPS = 40;
+
+// Recorded as a Transition's `toNode` when a run is stopped by a person. It is
+// deliberately not part of the Target union: no edge may return it, because a
+// cancellation is not a routing decision the graph made — it is one imposed on
+// it. It exists so the Transition history still answers "why did this run leave
+// the node it was on", which for a cancelled run it previously could not.
+const CANCELLED = "CANCELLED";
 
 // ---- termination ----
 
@@ -41,6 +50,18 @@ async function captureDiff(live: LiveRun) {
   await saveArtifact(live.id, "diff", JSON.stringify(files), "agent");
   const sum = summarizeChanges(files);
   await prisma.run.update({ where: { id: live.id }, data: sum });
+}
+
+/** Stop a run because a person asked, leaving the audit trail intact. Every
+ *  other way out of a node writes a Transition; a cancel used to write none, so
+ *  the history simply stopped mid-node with no record of why. */
+async function abort(live: LiveRun, nodeId: string) {
+  try {
+    if (nodeId) await saveTransition(live, nodeId, CANCELLED, "cancelled by user");
+  } catch {
+    /* the run is ending anyway — never let the audit write block the stop */
+  }
+  await finish(live, "cancelled", "Cancelled by user", "cancelled");
 }
 
 export async function finish(live: LiveRun, state: "succeeded" | "failed" | "cancelled", error: string, endReason: EndReason = "") {
@@ -93,7 +114,15 @@ async function park(live: LiveRun, nodeId: string, artifactKind: string) {
 function promoteContractFields(live: LiveRun, data: Record<string, unknown>) {
   if (typeof data.branch === "string" && data.branch) live.branch = data.branch;
   if (typeof data.prUrl === "string" && data.prUrl) live.prUrl = data.prUrl;
-  if (typeof data.summary === "string" && data.summary) live.resultText = data.summary;
+  // `resultText` is what the Result tab shows as "what this run did", so it must
+  // come from the node that produced the deliverable — not from whichever node
+  // happened to report a `summary` last. The plan nodes also carry one, and a run
+  // that failed at `implement` used to end up displaying the *plan's* summary as
+  // its result. Keyed off `committed` rather than a hard-coded list of node ids:
+  // that field is exactly what distinguishes the delivering contracts
+  // (IMPLEMENT_OUTPUT / ONESHOT_OUTPUT) from the planning one.
+  const delivers = typeof data.committed === "boolean";
+  if (delivers && typeof data.summary === "string" && data.summary) live.resultText = data.summary;
 }
 
 // ---- the driver ----
@@ -105,11 +134,19 @@ function promoteContractFields(live: LiveRun, data: Record<string, unknown>) {
  *  longer means copy-pasting a third. */
 export async function drive(live: LiveRun, graph: Graph, from: Target) {
   let target: Target = from;
-  let hops = 0;
+  // The reason recorded on the edge that sent this run to FAIL. Kept here rather
+  // than dug back out of the log afterwards: the harness already owns this value
+  // at the moment it decides, and re-deriving it with a regex over its own log
+  // was the last surviving copy of the "guess the state" anti-pattern the graph
+  // runtime exists to remove.
+  let failReason = "";
 
   try {
     while (target !== END && target !== FAIL) {
-      if (++hops > MAX_HOPS) {
+      // Counted on the run, not on this call: drive() is re-entered every time a
+      // gate is resolved and every time a crashed run is recovered, so a local
+      // counter would reset on exactly the paths a runaway loop travels.
+      if (++live.hops > MAX_HOPS) {
         await finish(live, "failed", `Graph exceeded ${MAX_HOPS} transitions — it is looping.`, "hop-limit");
         return;
       }
@@ -119,17 +156,9 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
         return;
       }
       if (live.cancelled) {
-        await finish(live, "cancelled", "Cancelled by user", "cancelled");
+        await abort(live, node.id);
         return;
       }
-      // Checked between nodes rather than inside one: a node already running is
-      // bounded by its own --max-budget-usd, and killing it mid-write would leave
-      // the worktree in a state nothing downstream expects.
-      if (live.budgetUsd > 0 && live.spentUsd >= live.budgetUsd) {
-        await finish(live, "failed", `Run budget of $${live.budgetUsd.toFixed(2)} reached.`, "budget");
-        return;
-      }
-
       live.currentNodeId = node.id;
       live.ctx.visits[node.id] = (live.ctx.visits[node.id] ?? 0) + 1;
 
@@ -146,10 +175,8 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       const logs = live.logLines.slice(step.logStart);
       await closeStep(step.id, result.ok ? "succeeded" : "failed", result, logs, Date.now() - t0);
 
-      live.spentUsd += result.usage.costUsd;
-
       if (live.cancelled) {
-        await finish(live, "cancelled", "Cancelled by user", "cancelled");
+        await abort(live, node.id);
         return;
       }
 
@@ -163,13 +190,14 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
         return;
       }
       const next = edge(live.ctx, result);
+      if (next.to === FAIL) failReason = next.reason;
       await saveTransition(live, node.id, next.to, next.reason);
       target = next.to;
       await saveRun(live);
     }
 
     if (target === END) await finish(live, "succeeded", "");
-    else await finish(live, "failed", lastReason(live) || "Run failed");
+    else await finish(live, "failed", failReason || "Run failed");
   } catch (e) {
     // A persistence failure lands here. The old engine swallowed those because
     // memory was the source of truth; with a graph, Postgres is, so a lost write
@@ -188,19 +216,6 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       releaseMcp(live);
     }
   }
-}
-
-/** The reason recorded on the transition that sent the run to FAIL — the useful
- *  half of "the run failed". */
-function lastReason(live: LiveRun): string {
-  for (let i = live.logLines.length - 1; i >= 0; i--) {
-    const l = live.logLines[i];
-    if (l.kind === "step" && l.text.includes("→ FAIL")) {
-      const m = l.text.match(/\(([^)]*)\)\s*$/);
-      if (m) return m[1];
-    }
-  }
-  return "";
 }
 
 // ---- gate resolution ----
@@ -261,6 +276,6 @@ export function cancel(live: LiveRun): boolean {
     /* already gone */
   }
   // A parked run holds no child process, so nothing above would end it.
-  if (live.state === "waiting") void finish(live, "cancelled", "Cancelled by user", "cancelled");
+  if (live.state === "waiting") void abort(live, live.currentNodeId);
   return true;
 }

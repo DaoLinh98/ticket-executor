@@ -5,8 +5,11 @@ import { FONT, dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
 
 export type IterationOption = {
-  id: string;
+  id?: string;
   name: string;
+  /** The provider's rooted iteration path, when it has one. Not rendered — it
+   *  is what the caller sends back when loading that sprint's tickets. */
+  path?: string;
   timeFrame?: "past" | "current" | "future";
 };
 
@@ -24,12 +27,18 @@ export default function SprintPicker({
   value,
   onSelect,
   leading = defaultLeading,
+  currentName = "",
 }: {
   label: string;
   options: IterationOption[];
   value: string;
   onSelect: (name: string, e: { clientX: number; clientY: number }) => void;
   leading?: ReactNode;
+  /** The one option to mark CURRENT. Named explicitly rather than read off each
+   *  option's `timeFrame`, which is date-derived: a project with per-team
+   *  iteration sub-trees really does have several sprints spanning today, and
+   *  badging all of them says "current" about sprints the app is not on. */
+  currentName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -98,7 +107,10 @@ export default function SprintPicker({
             const isSel = o.name === value;
             return (
               <button
-                key={o.id}
+                // Keyed on the provider's identifier, then its path, then the
+                // name — two releases can each hold a "Sprint 1", and the
+                // project picker's options carry no id at all.
+                key={o.id || o.path || o.name}
                 type="button"
                 onClick={(e) => {
                   onSelect(o.name, e);
@@ -129,7 +141,7 @@ export default function SprintPicker({
                 }}
               >
                 <span>{o.name}</span>
-                {o.timeFrame === "current" && (
+                {o.name === currentName && (
                   <span
                     style={{
                       ...pill({ color: "#35D6A4", background: "rgba(53,214,164,.12)", size: "xs", weight: 700 }),

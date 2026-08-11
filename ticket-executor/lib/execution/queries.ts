@@ -13,6 +13,11 @@ import { store } from "./store";
 export type NodeView = {
   id: string;
   label: string;
+  /** "agent" | "gate" | "check". Reported so the UI can ask what a node *is*
+   *  rather than recognising it by name: the Plan tab used to test for the id
+   *  "review", which silently stops being true the moment a graph names its gate
+   *  anything else. */
+  kind: string;
   effects: string;
   state: "pending" | "running" | "done" | "failed";
   attempts: number;
@@ -39,7 +44,7 @@ function nodeViews(graph: Graph, steps: StepRow[], currentNodeId: string, runSta
     if (state === "pending" && n.id === currentNodeId && (runState === "running" || runState === "waiting")) {
       state = "running";
     }
-    return { id: n.id, label: n.label, effects: n.effects, state, attempts: attempts.get(n.id) ?? 0 };
+    return { id: n.id, label: n.label, kind: n.kind, effects: n.effects, state, attempts: attempts.get(n.id) ?? 0 };
   });
 }
 
@@ -60,6 +65,12 @@ export type RunView = {
   errorMessage: string;
   prUrl: string;
   branch: string;
+  /** Which Claude account paid for this run: `own` | `shared` (both EmeHub), or
+   *  `""` when the hub was off and the machine's own login was used. Surfaced
+   *  because a run's bill lands on a real person's quota, and until this reached
+   *  the UI the only way to answer "was that the shared account or mine" was a
+   *  database query. Recorded, never decided here — the hub owns the choice. */
+  claudeSource: string;
   /** The latest plan Artifact, when the graph has a gate and one has been written. */
   planMarkdown: string;
   filesChanged: FileChange[];
@@ -116,6 +127,7 @@ export async function getRun(id: string): Promise<RunView | null> {
     errorMessage: live.errorMessage,
     prUrl: live.prUrl,
     branch: live.branch,
+    claudeSource: live.claudeSource,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
     channels: live.ctx.channels,
@@ -155,6 +167,7 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     errorMessage: row.errorMessage,
     prUrl: row.prUrl,
     branch: row.branch,
+    claudeSource: row.claudeSource,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
     channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
@@ -210,8 +223,11 @@ export async function listRuns(ticketId: string) {
 }
 
 /** The graph a skill will run on, for the UI's pre-run progress preview. */
-export function outlineForSkill(skill: string): { id: string; label: string; effects: string }[] {
-  return Object.values(graphForSkill(skill).nodes).map((n) => ({
+export function outlineForSkill(
+  skill: string,
+  opts: { evaluate?: boolean } = {}
+): { id: string; label: string; effects: string }[] {
+  return Object.values(graphForSkill(skill, opts).nodes).map((n) => ({
     id: n.id,
     label: n.label,
     effects: n.effects,
@@ -530,7 +546,19 @@ export async function dashboardMetrics(filter?: {
   const replanSteps = await prisma.step.count({
     where: { nodeId: "replan", runId: { in: scoped.map((r) => r.id) } },
   });
-  const blockedOnVerification = scoped.filter((r) => r.endReason === "" && r.state === "failed" && !r.prUrl).length;
+  // Counted off the routing decision itself, not guessed from the run's shape.
+  // The old proxy — "failed, and no PR" — counted *every* agent failure, so a run
+  // that died on a missing credential was reported as one the harness had stopped
+  // for shipping unverified code. These reason strings are produced by the
+  // implement edge from the typed `verification` field, so the metric is now tied
+  // to the contract that actually did the blocking.
+  const blockedOnVerification = await prisma.transition.count({
+    where: {
+      runId: { in: scoped.map((r) => r.id) },
+      toNode: "FAIL",
+      reason: { startsWith: "verification." },
+    },
+  });
 
   // ---- consistency (per skill) ----
   const skillDurations = new Map<string, { ms: number[]; cost: number[] }>();
