@@ -63,9 +63,25 @@ export function canImplement(status: string): boolean {
   return IMPLEMENTABLE_STATES.has((status ?? "").trim().toLowerCase());
 }
 
-// A ticket in the review lane can be code-reviewed.
-// Run code-review feature disabled for now — kept for a possible future reopen.
-// const REVIEWABLE_STATES = new Set(["code review", "in review"]);
+// A ticket in the review lane — i.e. one that plausibly has an open PR.
+//
+// Used to decide which tickets the review bell is worth asking the provider
+// about. It is deliberately **not** the only condition: a ticket whose run
+// recorded a PR URL is polled regardless of its state, because a process
+// template may name the review lane something this set has never heard of, and
+// a bell that silently stops ringing is worse than one that polls a little wide.
+const REVIEWABLE_STATES = new Set([
+  "code review",
+  "in code review",
+  "in review",
+  "review",
+  "peer review",
+  "resolved",
+]);
+
+export function isReviewable(status: string): boolean {
+  return REVIEWABLE_STATES.has((status ?? "").trim().toLowerCase());
+}
 
 export type ActionInfo = { label: string; skill: string };
 
@@ -518,6 +534,40 @@ export function ctaButtonStyle(
     ...base,
     color: "#ECEEF3",
     ...ringBorder({ fill: "#1A1E25", duration: 3.2, cornerPx }),
+  };
+}
+
+// The tab-bar button used by the ticket detail pane's tabs and the Settings
+// page's section tabs. Active = the outline ring over a dark fill; inactive =
+// fully transparent chrome, so switching tabs only moves the ring. A disabled
+// tab dims rather than disappearing — the pane exists, it just has nothing in it
+// yet, and hiding it would make the bar's shape change as a run progresses.
+export function tabStyle(opts: {
+  active: boolean;
+  enabled?: boolean;
+}): CSSProperties {
+  const { active, enabled = true } = opts;
+  const base: CSSProperties = {
+    padding: "6px 13px",
+    fontSize: FONT.sm,
+    fontWeight: 600,
+    cursor: enabled ? "pointer" : "not-allowed",
+    marginBottom: "3px",
+    transition: "color .15s, transform .12s",
+    opacity: enabled ? 1 : 0.5,
+    clipPath: clipCorner(6),
+  };
+  if (active)
+    return {
+      ...base,
+      color: "#F3F5F9",
+      ...ringBorder({ fill: "#171A21", duration: 3.2, shape: "none" }),
+    };
+  return {
+    ...base,
+    border: "1.5px solid transparent",
+    background: "transparent",
+    color: enabled ? COLORS.textDim : "#3A4150",
   };
 }
 

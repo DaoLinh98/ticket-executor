@@ -1,7 +1,7 @@
 ---
 name: implement-ticket-v3
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab in reviewable phases — draft a plan, implement it locally once approved, then publish the branch and PR as a separate final step
-version: 2.0.0
+version: 2.1.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations.
@@ -129,7 +129,15 @@ Never stage `.te/` or `.te-worktrees/`; the app already lists both in the repo's
 ## Phase: publish
 
 The code is committed and final. This phase publishes it and does nothing else —
-no source edits, no commits, no re-verification, no re-reading the plan.
+no source edits, no commits, no re-verification, no reviewing the diff.
+
+**You will usually start this phase in a fresh session**, with no memory of
+planning or implementing the ticket. That is deliberate and nothing has gone
+wrong: replaying the earlier phases costs more than the whole of publishing, and
+nothing here needs them. The caller passes `Branch:` — if it is missing, take the
+branch from `git branch --show-current` in this working tree. Take the PR title
+and description from `.te/plan.md` and `git log`; do **not** re-read the source
+to work out what changed.
 
 **This phase may be retried after a crash, so every step must be safe to repeat.**
 The runner cannot know whether an interrupted publish had already pushed, so it

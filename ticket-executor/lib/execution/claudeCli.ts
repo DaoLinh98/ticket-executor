@@ -9,7 +9,6 @@ import { ZERO_USAGE } from "./graph/types";
 // ---- optional guardrails via env ----
 export const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MCP_CONFIG = process.env.CLAUDE_MCP_CONFIG || ""; // path to MCP json; empty = inherit
-const MAX_BUDGET = process.env.CLAUDE_MAX_BUDGET_USD || ""; // e.g. "5"
 const EXTRA = (process.env.CLAUDE_EXTRA_ARGS ?? "").split(" ").filter(Boolean);
 // Escape hatch: keep the machine's plugins loaded for runs (see disablePluginArgs).
 const KEEP_PLUGINS = /^(1|true)$/i.test(process.env.CLAUDE_KEEP_PLUGINS ?? "");
@@ -75,8 +74,6 @@ export type TurnArgs = {
    *  final `result` event. Required for agent nodes — a node with no declared
    *  output gives its edges nothing to branch on. */
   outputSchema: Record<string, unknown>;
-  /** Per-node ceiling; falls back to the process-wide CLAUDE_MAX_BUDGET_USD. */
-  budgetUsd?: number;
 };
 
 export function commonArgs(a: TurnArgs): string[] {
@@ -91,8 +88,6 @@ export function commonArgs(a: TurnArgs): string[] {
   ];
   if (MCP_CONFIG) args.push("--mcp-config", MCP_CONFIG, "--strict-mcp-config");
   else if (a.mcpConfigPath) args.push("--mcp-config", a.mcpConfigPath, "--strict-mcp-config");
-  const budget = a.budgetUsd && a.budgetUsd > 0 ? String(a.budgetUsd) : MAX_BUDGET;
-  if (budget) args.push("--max-budget-usd", budget);
   return [...args, ...disablePluginArgs(a.cwd), ...EXTRA];
 }
 
@@ -197,6 +192,21 @@ export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
     try {
       child = spawn(CLAUDE_BIN, args, {
         cwd: live.ctx.cwd,
+        // In hub mode the run authenticates with a credential EmeHub resolved,
+        // materialised into its own directory (lib/claudeConfig.ts). With the
+        // hub off `claudeCredentialDir` is empty and the environment is passed
+        // through untouched, so the CLI reads the machine's own login exactly as
+        // it always has — that path is not overridden, it is simply not entered.
+        //
+        // `CLAUDE_SECURESTORAGE_CONFIG_DIR`, never `CLAUDE_CONFIG_DIR`: the
+        // narrow variable relocates the credential file alone, while the wide
+        // one also relocates `skills/`, `settings.json` and `projects/`. Pointing
+        // the wide one at a credential-only directory took the run's own skills
+        // with it, and `/implement-ticket-v3` came back `Unknown command`. See
+        // lib/claudeConfig.ts for the measurement.
+        env: live.claudeCredentialDir
+          ? { ...process.env, CLAUDE_SECURESTORAGE_CONFIG_DIR: live.claudeCredentialDir }
+          : process.env,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       });

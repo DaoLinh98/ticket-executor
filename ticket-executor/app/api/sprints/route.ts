@@ -1,21 +1,22 @@
 import { NextResponse } from "next/server";
-import { listIterations } from "@/lib/ado";
+import { loadSprints, normalizeProvider } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
-// Sprint picker data for the Azure DevOps provider: full iteration list (newest
-// first) plus which one ADO considers "current" today. Scoped to a project's
-// default team, so the `project` query param is required.
+// Sprint picker data: the full iteration list (newest first) plus whichever the
+// provider considers "current" today.
+//
+// The dispatch lives in `lib/tickets.ts`, not here, so hub mode is decided in
+// the one place every other provider read decides it. This route used to call
+// `listIterations()` straight from `lib/ado.ts`, which with the hub switched on
+// would have been the single call site still reaching for a credential the app
+// no longer holds.
 export async function GET(req: Request) {
-  const project = new URL(req.url).searchParams.get("project") ?? "";
-  if (!project) return NextResponse.json({ sprints: [], current: "" });
+  const params = new URL(req.url).searchParams;
+  const provider = normalizeProvider(params.get("provider") ?? process.env.TICKET_PROVIDER);
+  const project = params.get("project") ?? "";
   try {
-    const iterations = await listIterations(project);
-    const sprints = [...iterations].sort((a, b) =>
-      (b.startDate ?? "").localeCompare(a.startDate ?? "")
-    );
-    const current = iterations.find((i) => i.timeFrame === "current")?.name ?? "";
-    return NextResponse.json({ sprints, current });
+    return NextResponse.json(await loadSprints(provider, project));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message, sprints: [], current: "" }, { status: 500 });

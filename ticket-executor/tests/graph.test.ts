@@ -357,6 +357,37 @@ test("the reviewer judges with a FRESH context — anything else is marking its 
   }
 });
 
+test("publish resumes only where it must: fresh to open a PR, resume to answer review threads", () => {
+  // Opening a PR needs the branch, the ticket, .te/plan.md and git log — all of
+  // which the harness hands over — so it must NOT replay the plan+implement
+  // transcript. That replay was measured at roughly a fifth of a run's cost.
+  for (const graph of [v3, v3e]) {
+    const publish = graph.nodes.publish;
+    assert.equal(
+      publish.kind === "agent" ? publish.context : "",
+      "fresh",
+      `${graph.id}: publish resumed the implement session to run a push and a PR create — the transcript it replays is never read`
+    );
+  }
+  // The review flow is the exception, and deliberately so: which threads this run
+  // addressed exists only in the session that addressed them. A fresh session
+  // would have to guess, on someone else's pull request.
+  for (const graph of [reviewV3, reviewV3e]) {
+    const publish = graph.nodes.publish;
+    assert.equal(
+      publish.kind === "agent" ? publish.context : "",
+      "resume",
+      `${graph.id}: publish went fresh, so it cannot know which review threads to reply to`
+    );
+  }
+});
+
+test("publish stays the external leaf whichever context it runs in", () => {
+  for (const graph of [v3, v3e, reviewV3, reviewV3e]) {
+    assert.equal(graph.nodes.publish.effects, "external");
+  }
+});
+
 // ---- the invariant everything else rests on ----
 
 // Probes spanning every field any contract in the engine declares, so an edge

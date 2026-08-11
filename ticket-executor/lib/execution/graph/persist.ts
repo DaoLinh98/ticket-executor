@@ -42,7 +42,10 @@ export async function saveRun(live: LiveRun) {
  *  rather than overwriting the earlier row — the history of what was tried is
  *  the point of having Step rows at all. */
 export async function openStep(live: LiveRun, node: Node): Promise<{ id: string; logStart: number }> {
-  const prior = await prisma.step.count({ where: { runId: live.id, nodeId: node.id } });
+  const [prior, priorAnyNode] = await Promise.all([
+    prisma.step.count({ where: { runId: live.id, nodeId: node.id } }),
+    prisma.step.count({ where: { runId: live.id } }),
+  ]);
   const row = await prisma.step.create({
     data: {
       runId: live.id,
@@ -55,7 +58,14 @@ export async function openStep(live: LiveRun, node: Node): Promise<{ id: string;
     },
     select: { id: true },
   });
-  return { id: row.id, logStart: live.logLines.length };
+  // The run's *first* step adopts the log from index 0, so everything the run
+  // printed before any node opened — which account EmeHub resolved, the isolated
+  // worktree it created — is persisted with it. `Step.logLines` is the only
+  // durable home a log line has (drive() stores `live.logLines.slice(logStart)`),
+  // so those lines used to exist purely in memory and vanish on restart: the run
+  // that spent the shared account could not afterwards be shown to have done so.
+  // Every later step still starts at the current tail, so no line is stored twice.
+  return { id: row.id, logStart: priorAnyNode === 0 ? 0 : live.logLines.length };
 }
 
 export async function closeStep(

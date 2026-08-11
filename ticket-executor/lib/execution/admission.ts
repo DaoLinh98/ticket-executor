@@ -56,9 +56,8 @@ export function admissionDenial(f: AdmissionFacts): AdmissionDenial | null {
   // The concurrency ceiling. Until this existed it lived *only* in the Ticket
   // Execution screen's state, so two browser tabs — or one reload mid-batch —
   // could put an unbounded number of Claude processes, worktrees and MCP servers
-  // on the machine, each with its own per-run budget and nothing capping the sum.
-  // The client queue still decides who goes *next*; this decides how many may be
-  // in flight at all.
+  // on the machine at once. The client queue still decides who goes *next*; this
+  // decides how many may be in flight at all.
   const cap = Math.max(1, f.cap);
   if (f.runningOthers >= cap) {
     return {

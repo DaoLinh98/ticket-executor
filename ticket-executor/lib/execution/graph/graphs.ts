@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "fs";
 import path from "path";
-import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, invokeSkill, PUBLISH_PROMPT, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
+import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, invokeSkill, publishPrompt, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
   blockedOf,
   EVALUATE_OUTPUT,
@@ -84,7 +84,6 @@ function turnGuard(r: NodeResult): { to: typeof FAIL; reason: string } | null {
 const MAX_FIX_ATTEMPTS = 2;
 
 function twoPhaseGraph(review: boolean, evaluate: boolean): Graph {
-  const publishPrompt = review ? REVIEW_PUBLISH_PROMPT : PUBLISH_PROMPT;
   const publishSchema = review ? REVIEW_PUBLISH_OUTPUT : PUBLISH_OUTPUT;
 
   const afterPlan: Edge = (_c, r) => {
@@ -192,8 +191,15 @@ function twoPhaseGraph(review: boolean, evaluate: boolean): Graph {
         label: review ? "Push & resolve threads" : "Push & open PR",
         // The one node that leaves this machine. Leaf by construction.
         effects: "external",
-        context: "resume",
-        prompt: () => publishPrompt,
+        // Asymmetric on purpose, and the asymmetry is load-bearing — see the two
+        // prompt definitions. Opening a PR needs four facts the harness already
+        // holds (branch, ticket, plan file, git log), so it runs `fresh` and skips
+        // replaying a transcript it would never read: that replay was ~20% of a
+        // run's cost. Answering review threads needs to know *which threads this
+        // run addressed*, which lives nowhere but the session that addressed
+        // them, so that one still resumes.
+        context: review ? "resume" : "fresh",
+        prompt: review ? () => REVIEW_PUBLISH_PROMPT : publishPrompt,
         output: publishSchema as unknown as Record<string, unknown>,
       },
     },

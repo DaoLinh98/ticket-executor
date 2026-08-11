@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import { useBoltsContext } from "./BoltsContext";
+import { ensureHubSession } from "./hubSession";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
 import CommitFilesModal from "./ticket-executor/CommitFilesModal";
@@ -27,12 +28,26 @@ import type {
 } from "./ticket-executor/types";
 import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
+import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
-import { FONT, RUN_COLOR, actionInfoFor, branchOf, clipCorner, ctaButtonStyle, isFixReviewSkill, nextStatusAfter, pill, ringBorder } from "@/lib/ui";
+import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, nextStatusAfter, pill, tabStyle as uiTabStyle } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
 // in ./ticket-executor/*.
+
+// How often the review bell re-asks the provider. Minutes rather than seconds:
+// each poll costs one provider round-trip per candidate ticket, and a reviewer's
+// comment is not a real-time event. The moments the answer genuinely changes —
+// a run publishing a PR, a fix-review run finishing — call
+// refreshReviewSummary() directly instead of waiting for the tick.
+const REVIEW_POLL_MS = 120_000;
+
+// A hard floor between two summary reads, whatever asked for them. The interval
+// above is the schedule; this is the guard, because an interval owned by an
+// effect is only as stable as that effect's dependencies — and the cost of
+// getting those wrong is paid at the provider, one round-trip per ticket.
+const REVIEW_MIN_GAP_MS = 20_000;
 
 // One place that turns the API's RunView into the UI's ExecView. This used to be
 // written out three times (open a past run / stream update / rehydrate), which is
@@ -55,10 +70,27 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     costUsd: run.costUsd as number | undefined,
     inputTokens: run.inputTokens as number | undefined,
     outputTokens: run.outputTokens as number | undefined,
+    claudeSource: (run.claudeSource as string) ?? "",
     planMarkdown: (run.planMarkdown as string) || prev?.planMarkdown,
     filesChanged: (run.filesChanged as FileChange[]) ?? [],
     channels: (run.channels as ExecView["channels"]) ?? {},
   };
+}
+
+/**
+ * A picked sprint *name* as the value a ticket load should actually send.
+ *
+ * The picker shows names, but Azure DevOps' `System.IterationPath` is a rooted
+ * path (`RIS\Sprint 61`), and a query built from the bare name is not a query
+ * that matches nothing — ADO rejects it outright with a 400. The hub hands the
+ * path out alongside the name for exactly this, so use it when it is there.
+ *
+ * Falls back to the name, which is correct for the direct Azure DevOps client:
+ * it has no paths and resolves the override by name against the team's
+ * iterations before ever building a query.
+ */
+function iterationPathFor(options: IterationOption[], name: string): string {
+  return options.find((o) => o.name === name)?.path || name;
 }
 
 export default function TicketExecutor() {
@@ -68,6 +100,25 @@ export default function TicketExecutor() {
   const [sprintLabel, setSprintLabel] = useState<string>("");
   const [sprintOptions, setSprintOptions] = useState<IterationOption[]>([]);
   const [selectedSprint, setSelectedSprint] = useState<string>("");
+  // The one iteration the provider says the team is actually on — the same
+  // answer WIQL's `@currentIteration` gives. Tracked separately from each
+  // option's `timeFrame`, which is date-derived and says "current" for every
+  // sprint spanning today: a project with per-team iteration sub-trees has
+  // several, and badging them all claims the app is on sprints it is not.
+  const [currentSprint, setCurrentSprint] = useState<string>("");
+  // Which view of the project's work the screen is on: the sprint, the
+  // unscheduled backlog, or the board. Not a filter over one list — each is a
+  // different query at the provider (lib/ticketScope.ts), so switching it
+  // reloads rather than re-filtering.
+  const [scope, setScope] = useState<TicketScope>("sprint");
+  // Mirror of `scope` for the stable (empty-dep) `reloadTickets` callback, same
+  // reason as `selectedIdRef` below.
+  const scopeRef = useRef<TicketScope>(scope);
+  scopeRef.current = scope;
+  // Same, for turning a picked sprint *name* into the provider's rooted
+  // iteration path before a ticket load sends it — see `iterationPathFor`.
+  const sprintOptionsRef = useRef<IterationOption[]>(sprintOptions);
+  sprintOptionsRef.current = sprintOptions;
   // Connection-level project selector (org-scoped). Distinct from the per-ticket
   // "area" override on the Overview tab (getArea/onProjectChange) — this drives
   // which project's tickets + sprints the whole screen loads.
@@ -112,8 +163,9 @@ export default function TicketExecutor() {
     manageMcp: true,
     hourlyRateUsd: 0,
     hoursPerStoryPoint: 6,
-    runBudgetUsd: 0,
     evaluateBeforePublish: false,
+    hubEnabled: false,
+    hubConnectionId: "",
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -123,6 +175,9 @@ export default function TicketExecutor() {
   const [openCommit, setOpenCommit] = useState<CommitSummary | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[] | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummaryEntry[]>([]);
+  // The last poll could not reach the provider. The bell keeps showing what it
+  // last knew and says so, rather than rendering an outage as "all clear".
+  const [reviewDegraded, setReviewDegraded] = useState(false);
   // skill → the node list its graph walks, so the progress timeline can be drawn
   // before a run exists. Fetched once; the graphs are static code on the server.
   const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; effects: string }[]>>({});
@@ -154,18 +209,30 @@ export default function TicketExecutor() {
 
   // ---- data load ----
   // Fetch the ticket list for a given provider/project (and optional sprint override) and refresh the header sprint.
-  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean }) => {
+  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean; scope?: TicketScope }) => {
+    // The caller's scope wins over the ref: a switch calls this in the same tick
+    // it sets the new scope, and reading state here would load the old view.
+    // Everything else — mount, a project switch — means "the view I am on".
+    const viewScope = opts?.scope ?? scopeRef.current;
     setLoading(true);
     setLoadError("");
     setTicketsNotice("");
     try {
-      const qs = new URLSearchParams({ provider });
+      // Every entry point into a ticket load goes through here — mount, refresh,
+      // a project or sprint switch — so this is where an expired hub session is
+      // renewed. A no-op unless hub mode is on.
+      await ensureHubSession();
+      const qs = new URLSearchParams({ provider, scope: viewScope });
       if (project) qs.set("project", project);
-      if (sprint) qs.set("sprint", sprint);
+      // A sprint only bounds the sprint view; sending it with a backlog or a
+      // board would be asking for two different lists at once. Sent as the
+      // provider's iteration *path*, never the displayed name.
+      if (sprint && viewScope === "sprint") qs.set("sprint", iterationPathFor(sprintOptionsRef.current, sprint));
       const r = await fetch(`/api/tickets?${qs.toString()}`);
       const data = await r.json();
       if (data.error) setLoadError(data.error);
       if (data.notice) setTicketsNotice(data.notice);
+      else if (data.truncated) setTicketsNotice(`Showing the first ${(data.tickets ?? []).length} work items — this ${SCOPE_LABEL[viewScope].toLowerCase()} has more.`);
       setSprintLabel(typeof data.sprint === "string" ? data.sprint : "");
       const list: Ticket[] = data.tickets ?? [];
       setTickets(list);
@@ -210,21 +277,48 @@ export default function TicketExecutor() {
   const loadSprintOptions = useCallback(async (provider: ProviderId, project: string): Promise<string> => {
     if (provider !== "azure-devops" || !project) {
       setSprintOptions([]);
+      sprintOptionsRef.current = [];
       setSelectedSprint("");
+      setCurrentSprint("");
       return "";
     }
     try {
-      const r = await fetch(`/api/sprints?project=${encodeURIComponent(project)}`);
+      const r = await fetch(`/api/sprints?provider=${provider}&project=${encodeURIComponent(project)}`);
       const data = await r.json();
-      setSprintOptions(Array.isArray(data.sprints) ? data.sprints : []);
+      const list: IterationOption[] = Array.isArray(data.sprints) ? data.sprints : [];
+      setSprintOptions(list);
+      // The ref is written here as well as on render: every caller loads the
+      // tickets in the very next statement, before React has re-rendered, and a
+      // ref still holding the previous project's iterations would fail to find
+      // the new sprint's path and send its name — the shape the provider 400s.
+      sprintOptionsRef.current = list;
+      // An empty picker renders as a plain label with no chevron, which is
+      // indistinguishable from a project that has one iteration. When the read
+      // actually failed, say so — this is the exact failure that read as "the
+      // dropdown stopped working" rather than "the hub refused the call".
+      const why = data.error || data.notice;
+      if (why && scopeRef.current === "sprint") showToast(`Sprints could not be loaded — ${why}`, 9000, "error");
       const current = typeof data.current === "string" ? data.current : "";
+      setCurrentSprint(current);
       setSelectedSprint(current);
       return current;
-    } catch {
+    } catch (e) {
       setSprintOptions([]);
+      sprintOptionsRef.current = [];
+      if (scopeRef.current === "sprint") showToast(`Sprints could not be loaded — ${e instanceof Error ? e.message : String(e)}`, 9000, "error");
       return "";
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showToast is declared later but stable (empty-dep useCallback)
   }, []);
+
+  // User switched view (Sprint / Backlog / Board). A different query at the
+  // provider, so it reloads rather than re-filtering what is already on screen.
+  const onScopeChange = (next: TicketScope, e: MouseEvent) => {
+    fireBoltFromEvent(e);
+    if (next === scope) return;
+    setScope(next);
+    reloadTickets(settings.provider, selectedProject, next === "sprint" ? selectedSprint : undefined, { scope: next });
+  };
 
   // User picked a specific sprint from the dropdown — reload tickets for it.
   const onSprintChange = (value: string, e: { clientX: number; clientY: number }) => {
@@ -244,6 +338,12 @@ export default function TicketExecutor() {
   useEffect(() => {
     (async () => {
       let provider: ProviderId = "azure-devops";
+      // In hub mode every read below goes through EmeHub on a token that lasts
+      // 15 minutes, so opening this screen after a pause found the session gone
+      // and the only recovery was a trip to Settings. Re-mint before the first
+      // read; with hub mode off this is a single local request and nothing else.
+      const session = await ensureHubSession();
+      if (session.status === "failed") showToast(session.error, 10000, "error");
       try {
         const r = await fetch("/api/settings");
         const data = await r.json();
@@ -413,30 +513,96 @@ export default function TicketExecutor() {
     });
   }, []);
 
-  // Poll the bell's unresolved-review-comment summary across every loaded ticket.
+  // Poll the bell's unresolved-review-comment summary.
+  //
+  // Three things bound the cost, because each poll costs the provider one
+  // round-trip *per ticket asked about*:
+  //  - only tickets in the review lane are offered as candidates (the server
+  //    adds back any ticket this app opened a PR for, whatever its state);
+  //  - a hidden tab polls not at all, and refreshes the moment it comes back;
+  //  - the interval is minutes, not seconds — a review comment is not a
+  //    real-time event, and `refreshReviewSummary` is called directly at the
+  //    moments the answer actually changes (a run publishing, a fix landing).
+  const reviewPollIds = useMemo(() => {
+    const ids = tickets.map((tk) => tk.id);
+    // The same "effective status" getStatus() computes — spelled out because
+    // that helper is declared further down the component and this runs during
+    // render. A locally-applied status change re-narrows the candidate set
+    // without waiting for the next ticket reload.
+    const reviewable = tickets
+      .filter((tk) => isReviewable(statusOverrides[tk.id] || tk.status))
+      .map((tk) => tk.id);
+    // Joined into strings, not returned as an array or an object. These become
+    // effect dependencies below, and React compares dependencies by identity: a
+    // fresh array with identical contents — which every ticket reload produces —
+    // would restart the poll and fire a request, which is how a two-minute
+    // interval quietly became a thirty-second one.
+    return { ids: ids.join(","), reviewable: reviewable.join(",") };
+  }, [tickets, statusOverrides]);
+
+  // The current parameters, reachable from a callback that must never be
+  // re-created: a fetch function that changes identity restarts the interval
+  // that owns it.
+  const reviewPollRef = useRef({ ids: "", reviewable: "", provider: settings.provider });
+  reviewPollRef.current = { ...reviewPollIds, provider: settings.provider };
+  const reviewFetchedAt = useRef(0);
+
+  const refreshReviewSummary = useCallback(async (opts?: { force?: boolean }) => {
+    const { ids, reviewable, provider } = reviewPollRef.current;
+    if (!ids) return;
+    // A floor on the rate, independent of whatever caused the call. The interval
+    // is the schedule; this is what stops a re-render storm, a remount or a
+    // burst of run updates from turning into a burst of provider reads.
+    if (!opts?.force && Date.now() - reviewFetchedAt.current < REVIEW_MIN_GAP_MS) return;
+    reviewFetchedAt.current = Date.now();
+    try {
+      const qs = new URLSearchParams({ provider, ids, reviewable });
+      const r = await fetch(`/api/reviews/summary?${qs}`);
+      const data = await r.json();
+      // A degraded answer is not an answer. Keeping the last known list is the
+      // difference between "the hub is down" and "you have nothing to review".
+      if (data.degraded) {
+        setReviewDegraded(true);
+        return;
+      }
+      setReviewDegraded(false);
+      setReviewSummary(Array.isArray(data.reviews) ? data.reviews : []);
+    } catch {
+      setReviewDegraded(true);
+    }
+    // Deliberately no dependencies: every parameter is read from a ref above, so
+    // this function's identity never changes and the interval below is never
+    // torn down by a re-render.
+  }, []);
+
   useEffect(() => {
-    if (tickets.length === 0) {
+    if (!reviewPollIds.ids) {
       setReviewSummary([]);
+      setReviewDegraded(false);
       return;
     }
-    let cancelled = false;
-    const fetchSummary = async () => {
-      try {
-        const ids = tickets.map((tk) => tk.id).join(",");
-        const r = await fetch(`/api/reviews/summary?provider=${settings.provider}&ids=${ids}`);
-        const data = await r.json();
-        if (!cancelled) setReviewSummary(Array.isArray(data.reviews) ? data.reviews : []);
-      } catch {
-        /* keep last known summary */
-      }
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      void refreshReviewSummary();
+      timer = setInterval(() => void refreshReviewSummary({ force: true }), REVIEW_POLL_MS);
     };
-    fetchSummary();
-    const id = setInterval(fetchSummary, 45000);
+    const stop = () => {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => (document.hidden ? stop() : start());
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      cancelled = true;
-      clearInterval(id);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [tickets, settings.provider]);
+    // `reviewPollIds.ids` is a string, so this restarts only when the board
+    // genuinely changes — a reload that returns the same tickets does not.
+  }, [reviewPollIds.ids, refreshReviewSummary]);
 
   // Close the bell dropdown on outside click.
   useEffect(() => {
@@ -787,12 +953,17 @@ export default function TicketExecutor() {
         });
       }
       loadHistory(ticketId);
+      // The bell's answer just changed for this ticket — a publish added a PR to
+      // poll, a fix-review run resolved threads. Ask now rather than leaving the
+      // notification up to two minutes stale; `force` because this is a known
+      // change, not a re-render that merely might be one.
+      void refreshReviewSummary({ force: true });
       // Free this ticket's batch-queue slot (no-op if it wasn't batch-started)
       // and let the next queued ticket, if any, take its place.
       if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
       return true;
     },
-    [showToast, loadHistory, notify, settings.provider, stopTracking, resyncStatus]
+    [showToast, loadHistory, notify, settings.provider, stopTracking, resyncStatus, refreshReviewSummary]
   );
 
   const startPollingFallback = useCallback(
@@ -1198,31 +1369,8 @@ export default function TicketExecutor() {
       )?.[0]
     : undefined;
 
-  const tabStyle = (name: string, enabled: boolean): CSSProperties => {
-    const active = tab === name;
-    const base: CSSProperties = {
-      padding: "6px 13px",
-      fontSize: FONT.sm,
-      fontWeight: 600,
-      cursor: enabled ? "pointer" : "not-allowed",
-      marginBottom: "3px",
-      transition: "color .15s, transform .12s",
-      opacity: enabled ? 1 : 0.5,
-      clipPath: clipCorner(6),
-    };
-    if (active)
-      return {
-        ...base,
-        color: "#F3F5F9",
-        ...ringBorder({ fill: "#171A21", duration: 3.2, shape: "none" }),
-      };
-    return {
-      ...base,
-      border: "1.5px solid transparent",
-      background: "transparent",
-      color: !enabled ? "#3A4150" : "#8A90A0",
-    };
-  };
+  const tabStyle = (name: string, enabled: boolean): CSSProperties =>
+    uiTabStyle({ active: tab === name, enabled });
 
   // action button
   let action: Action;
@@ -1425,9 +1573,16 @@ export default function TicketExecutor() {
     >
       <AppHeader
         pm={pm}
-        sprintLabel={sprintLabel}
+        scope={scope}
+        onScopeChange={onScopeChange}
+        // The picked sprint's *name* wins over whatever the ticket load echoed
+        // back: the chip is a name, and the value sent to load those tickets is
+        // a rooted iteration path. Falls back to the echo only when nothing is
+        // picked — which is the case the echo exists for.
+        sprintLabel={selectedSprint || sprintLabel}
         sprintOptions={sprintOptions}
         selectedSprint={selectedSprint}
+        currentSprint={currentSprint}
         onSprintChange={onSprintChange}
         projectOptions={projectList}
         selectedProject={selectedProject}
@@ -1438,6 +1593,7 @@ export default function TicketExecutor() {
         onToggleBell={(e) => { fireBoltFromEvent(e); setBellOpen((o) => !o); }}
         reviewBadgeCount={reviewBadgeCount}
         reviewSummary={reviewSummary}
+        reviewDegraded={reviewDegraded}
         reviewReadMap={reviewReadMap}
         onOpenReview={(rv, e) => { markReviewRead(rv); selectTicket(rv.ticketId, e); setTab("resolve-review"); setBellOpen(false); }}
       />
@@ -1446,6 +1602,7 @@ export default function TicketExecutor() {
         <TicketSidebar
           tickets={tickets}
           filtered={filtered}
+          scope={scope}
           loading={loading}
           loadError={loadError}
           ticketsNotice={ticketsNotice}

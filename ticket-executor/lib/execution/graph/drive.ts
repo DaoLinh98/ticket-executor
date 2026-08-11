@@ -10,8 +10,10 @@ import { END, FAIL, type Graph, type LiveRun, type NodeResult, type Target } fro
 
 // A backstop, not a policy. Cycles are legitimate (revise the plan, fix what an
 // evaluator found), but a graph that has moved 40 times is looping, and a runaway
-// loop spends real money. Per-node budgets and Run.budgetUsd are the real limits;
-// this catches the case where something is wrong with the graph itself.
+// loop spends real money. This is the *only* automatic stop left in the harness —
+// the USD ceilings it used to sit beside were removed deliberately — so it catches
+// the one failure nobody can catch by hand: a routing bug that re-enters a node
+// forever. Human-driven cycles never come near it (three hops per plan revision).
 const MAX_HOPS = 40;
 
 // Recorded as a Transition's `toNode` when a run is stopped by a person. It is
@@ -157,14 +159,6 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
         await abort(live, node.id);
         return;
       }
-      // Checked between nodes rather than inside one: a node already running is
-      // bounded by its own --max-budget-usd, and killing it mid-write would leave
-      // the worktree in a state nothing downstream expects.
-      if (live.budgetUsd > 0 && live.spentUsd >= live.budgetUsd) {
-        await finish(live, "failed", `Run budget of $${live.budgetUsd.toFixed(2)} reached.`, "budget");
-        return;
-      }
-
       live.currentNodeId = node.id;
       live.ctx.visits[node.id] = (live.ctx.visits[node.id] ?? 0) + 1;
 
@@ -180,8 +174,6 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       const result = await execNode(live, node);
       const logs = live.logLines.slice(step.logStart);
       await closeStep(step.id, result.ok ? "succeeded" : "failed", result, logs, Date.now() - t0);
-
-      live.spentUsd += result.usage.costUsd;
 
       if (live.cancelled) {
         await abort(live, node.id);

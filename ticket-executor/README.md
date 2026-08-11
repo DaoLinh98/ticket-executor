@@ -207,7 +207,7 @@ is remembered as "passed" — and it costs no Claude tokens.
 
 | Section | What it verifies |
 |---|---|
-| ENVIRONMENT | Postgres reachable, all migrations applied, `claude --version` runs, `git --version` runs, plus two advisory warnings (`SETTINGS_ENC_KEY` set explicitly, `CLAUDE_MAX_BUDGET_USD` set) |
+| ENVIRONMENT | Postgres reachable, all migrations applied, `claude --version` runs, `git --version` runs, plus an advisory warning when `SETTINGS_ENC_KEY` is not set explicitly |
 | SKILLS | Each of the four required skills resolves to a real folder, and shows which one |
 | PROVIDER CONNECTION | A credential is saved for the selected provider, and that the provider is actually wired up (only Azure DevOps is) |
 | CLAUDE'S PROVIDER ACCESS | Whether the run's MCP path exists at all — app-managed, your own server, or nothing. With your own server it also compares the **organization baked into it** against Settings (a mismatch reads the wrong work items without erroring); app-managed adds a Node/npx check |
@@ -301,7 +301,8 @@ What happens when you press the CTA, in order — the cheap guards come first:
   consumers: `GET /api/preflight` for the System Check page, and
   `validateRootRepo()` for the implement route. Add new checks there, not in a
   route.
-- Cost control: set `CLAUDE_MAX_BUDGET_USD` while you are getting familiar.
+- Cost control: there is no spend ceiling by design (see `CLAUDE.md`). Watch what
+  a run costs on the Dashboard's OPERATIONS tier, and use Cancel to stop one.
 - Architecture, module layout and conventions: see `CLAUDE.md` (repo root and
   this folder) and `UI-STYLEGUIDE.md` before changing code.
 - This project pins `next@16.2.10` / `react@19.2.4` — read

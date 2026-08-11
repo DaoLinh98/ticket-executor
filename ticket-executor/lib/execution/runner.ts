@@ -12,6 +12,14 @@ import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
 import type { LiveRun } from "./graph/types";
 import { findSkill } from "../skillPack";
 import { store } from "./store";
+import { encryptSecret, decryptSecret } from "../crypto";
+import { claudeCredentialDir, writeClaudeCredential, type ClaudeAccountSource } from "../claudeConfig";
+import { isHubError } from "../hub";
+import {
+  mintClaudeGrant,
+  resolveClaudeCredentialWithToken,
+  type ResolvedClaudeCredential,
+} from "../hubCredential";
 
 export type { GateAction };
 
@@ -98,6 +106,96 @@ export type StartRunResult =
   | { ok: true; runId: string }
   | { ok: false; error: string; status: number; blocked: string };
 
+// ---- the Claude credential, in hub mode ----
+
+/**
+ * The Claude account this run will execute under, when `Setting.hubEnabled` is
+ * on. Returns `null` when it is off — and that is the whole guard: every hub
+ * credential step downstream is reached only through a non-null value here, so
+ * with the hub off the run is spawned exactly as it always was, against the
+ * machine's own `claude` login.
+ *
+ * Resolved **before** the admission transaction, with the plain agent token, so
+ * a workspace with no Claude credential is refused as a `BlockedAttempt` with no
+ * `Run` row — the same shape as every other admission denial. Failing after the
+ * row existed would record "no credential configured" as an agent failure and
+ * count it against the success rate.
+ *
+ * **No fallback to the machine's own login.** With the hub on, that login is a
+ * different account from the one the workspace chose — possibly a personal one
+ * where the workspace picked the shared account. Spending it silently is exactly
+ * the drift hub mode exists to remove (INTEGRATION.md §5: refuse, never proceed
+ * on an unavailable credential).
+ */
+async function hubClaudeCredential(
+  hubEnabled: boolean,
+): Promise<
+  | { ok: true; credential: ResolvedClaudeCredential | null }
+  | { ok: false; error: string }
+> {
+  if (!hubEnabled) return { ok: true, credential: null };
+  try {
+    return { ok: true, credential: await resolveClaudeCredentialWithToken() };
+  } catch (e) {
+    // The four hub failures read differently to a person and must keep doing so
+    // (INTEGRATION.md §5): "nobody has configured one" is fixed by an admin,
+    // "you are signed out" by reconnecting, "the hub is down" by waiting.
+    const detail = isHubError(e) ? e.message : e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      error:
+        `EmeHub could not provide a Claude credential for this run: ${detail} ` +
+        `Attach your own credential in EmeHub › Claude Settings, or ask an admin to configure the shared account.`,
+    };
+  }
+}
+
+/**
+ * Put the credential where the CLI will find it, and take out this run's grant.
+ *
+ * Runs after the `Run` row exists because the grant is minted **for a run id**:
+ * the hub records it in the audit trail, which is what makes a resolved
+ * credential traceable back to the run that asked for it.
+ *
+ * A failed mint is logged, not fatal. The credential is already in hand and the
+ * run can execute on it; what is lost is the ability to hand rotated tokens and
+ * spend back to the hub later, and refusing an otherwise-ready run over
+ * bookkeeping would be the wrong trade. It is written to the log rather than
+ * swallowed, because for a shared account a run of these adds up to a credential
+ * going stale for everybody.
+ */
+async function materialiseHubClaude(
+  live: LiveRun,
+  credential: ResolvedClaudeCredential,
+): Promise<void> {
+  const source = credential.source as ClaudeAccountSource;
+  live.claudeCredentialDir = await writeClaudeCredential(source, credential.credentials);
+  live.claudeSource = source;
+  live.logLines.push({
+    text: `● Claude credential: EmeHub — ${source === "shared" ? "shared workspace account" : "your own account"}${credential.label ? ` (${credential.label})` : ""}, status ${credential.status}.`,
+    kind: "step",
+  });
+
+  try {
+    const grant = await mintClaudeGrant(live.id);
+    live.claudeGrant = grant.grant;
+    await prisma.run.update({
+      where: { id: live.id },
+      data: {
+        claudeSource: source,
+        claudeGrant: encryptSecret(grant.grant),
+        claudeGrantExpiresAt: grant.expiresAt,
+      },
+    });
+  } catch (e) {
+    await prisma.run.update({ where: { id: live.id }, data: { claudeSource: source } });
+    live.logLines.push({
+      text: `⚠ EmeHub issued no credential grant for this run (${e instanceof Error ? e.message : e}) — it will execute normally, but a token the CLI rotates cannot be handed back and this run's spend will not reach the hub's ledger.`,
+      kind: "err",
+    });
+  }
+}
+
 /**
  * Admission control for a run. This lives here, not in the API route, on
  * purpose: the shape of a run (which graph, isolated or not) and whether a run
@@ -130,9 +228,6 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // (single-ticket mode) → execute directly in rootRepo, which is only safe
   // because the admission check below guarantees nothing else is in flight.
   const isolate = setting?.multiTicketMode ?? true;
-  // Snapshotted onto the run, not read live: raising the limit mid-run must not
-  // retroactively un-fail a run that already stopped on the old one.
-  const budgetUsd = Math.max(0, setting?.runBudgetUsd ?? 0);
   // The evaluator changes the graph's shape, so it is resolved here (server-side,
   // from the stored setting) and baked into graphId — a run parked at the gate
   // must finish on the shape it started on even if the switch is flipped while it
@@ -154,6 +249,14 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
         `"Review before publishing" is on, but the ${REVIEW_SKILL} skill is not installed. ` +
         `Install it from the Guide or the System Check page, or turn the setting off.`,
     };
+  }
+
+  // Hub mode only — see hubClaudeCredential(). Checked here, beside the other
+  // admission rules and before the transaction, so a workspace with no Claude
+  // credential is refused without a Run row.
+  const claude = await hubClaudeCredential(setting?.hubEnabled ?? false);
+  if (!claude.ok) {
+    return { ok: false, status: 400, blocked: "claude-credential", error: claude.error };
   }
 
   // Prefer the provider's own hours; fall back to converting story points.
@@ -213,7 +316,6 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
           model: params.model ? cleanPath(params.model) : "",
           effort: params.effort ? cleanPath(params.effort) : "",
           estimateHours,
-          budgetUsd,
         },
       });
     });
@@ -251,14 +353,15 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     cancelled: false,
     logLines: [],
     mcpConfigPath: "",
+    claudeCredentialDir: "",
+    claudeGrant: "",
+    claudeSource: "",
     parkedAt: null,
     humanWaitMs: 0,
     startedAt: row.startedAt.getTime(),
     endedAt: null,
     seq: 0,
     hops: 0,
-    spentUsd: 0,
-    budgetUsd: row.budgetUsd,
     resumedAfterRestart: false,
     errorMessage: "",
     endReason: "",
@@ -267,6 +370,10 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     resultText: "",
   };
   store.set(row.id, live);
+
+  // Hub mode only: `claude` is null with the hub off, and the run proceeds to be
+  // spawned with an untouched environment.
+  if (claude.credential) await materialiseHubClaude(live, claude.credential);
 
   if (!existsSync(rootRepo)) {
     await finish(live, "failed", `Project folder not found: ${rootRepo}. Set the correct Root repo on the Overview tab.`);
@@ -315,6 +422,42 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   return { ok: true, runId: row.id };
 }
 
+/**
+ * Re-materialise the credential before a paused run starts computing again.
+ *
+ * Called on the two paths that resume execution — a gate being answered and
+ * crash recovery — and deliberately **not** on every rehydrate: `liveOf()` also
+ * serves read-only polling, and a hub round trip per poll would be absurd.
+ *
+ * It is needed at all because what is on disk proves nothing. The CLI rewrites
+ * `.credentials.json` in place, blanking every token when a refresh fails, and a
+ * parked run can sit for hours while the file is rotated by other runs or wiped
+ * by a failed one. The hub holds the authoritative copy, so the run takes a
+ * fresh one on its way back in.
+ *
+ * A failure here is logged and the run continues on what it has: the alternative
+ * is refusing to resume an approved plan because a bookkeeping call timed out.
+ * If the credential really is dead, the CLI says so on the next turn and the run
+ * fails with the reason in its own log. No-op with the hub off.
+ */
+async function refreshHubClaude(live: LiveRun): Promise<void> {
+  if (!live.claudeGrant || !live.claudeSource) return;
+  try {
+    const { resolveClaudeCredential } = await import("../hubCredential");
+    const credential = await resolveClaudeCredential(live.claudeGrant);
+    live.claudeCredentialDir = await writeClaudeCredential(
+      credential.source as ClaudeAccountSource,
+      credential.credentials,
+    );
+    live.claudeSource = credential.source;
+  } catch (e) {
+    live.logLines.push({
+      text: `⚠ Could not re-read the Claude credential from EmeHub (${e instanceof Error ? e.message : e}) — resuming on the copy already on this machine.`,
+      kind: "err",
+    });
+  }
+}
+
 // ---- rehydration ----
 
 /** Rebuild a usable LiveRun from its rows. The in-process map is process-local:
@@ -332,7 +475,6 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     const ls = Array.isArray(s.logLines) ? (s.logLines as unknown as LogLine[]) : [];
     logLines.push(...ls);
   }
-  const spentUsd = row.steps.reduce((a, s) => a + s.costUsd, 0);
   const seq = await prisma.transition.count({ where: { runId: id } });
 
   const live: LiveRun = {
@@ -352,7 +494,7 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
       cwd: row.worktreePath || row.rootRepo,
       baseSha: row.baseSha,
       channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
-      // Restored, not reset: the hop and cycle budgets belong to the run. A
+      // Restored, not reset: the hop and cycle counters belong to the run. A
       // recovered run that started its counters over would be allowed to loop
       // once more for every crash it survived.
       visits: (row.visits as Record<string, number>) ?? {},
@@ -367,14 +509,22 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     cancelled: false,
     logLines,
     mcpConfigPath: "",
+    // Restored rather than re-resolved. Minting a grant needs a live 15-minute
+    // access token, which needs the browser — after a restart there may be no
+    // way to get one, so a recovered run continues on the grant it started with
+    // for as long as that lives. A run started with the hub off has all three
+    // empty and is respawned against the machine's own login, unchanged.
+    claudeCredentialDir: row.claudeSource
+      ? claudeCredentialDir(row.claudeSource as ClaudeAccountSource)
+      : "",
+    claudeGrant: decryptSecret(row.claudeGrant),
+    claudeSource: row.claudeSource,
     parkedAt: row.parkedAt ? row.parkedAt.getTime() : null,
     humanWaitMs: row.humanWaitMs,
     startedAt: row.startedAt.getTime(),
     endedAt: row.endedAt ? row.endedAt.getTime() : null,
     seq,
     hops: row.hops,
-    spentUsd,
-    budgetUsd: row.budgetUsd,
     // This rebuild IS the recovery — the in-process entry was gone.
     resumedAfterRestart: true,
     errorMessage: row.errorMessage,
@@ -456,6 +606,10 @@ export async function resolvePlan(
     await saveArtifact(id, "feedback", feedback, "human");
   }
 
+  // Hub mode only, and only for an action that actually resumes the walk —
+  // `cancel` starts no turn and needs no credential.
+  if (action !== "cancel") await refreshHubClaude(live);
+
   await resolveGate(live, graph, action);
   return { ok: true };
 }
@@ -518,6 +672,7 @@ export async function recoverInterruptedRuns(): Promise<number> {
     const graph = graphById(live.graphId, live.ctx.skill);
     const resumeFrom = open?.nodeId || live.currentNodeId || graph.entry;
     live.logLines.push({ text: `↻ Resuming "${resumeFrom}" after a server restart`, kind: "step" });
+    await refreshHubClaude(live); // hub mode only; no-op otherwise
     void drive(live, graph, resumeFrom);
     recovered += 1;
   }

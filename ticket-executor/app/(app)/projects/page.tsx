@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import { COLORS, FONT, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
+import { ensureHubSession } from "../../hubSession";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 
@@ -22,13 +23,22 @@ export default function ProjectsPage() {
     (async () => {
       setLoading(true);
       try {
+        // In hub mode the project list is read *through* EmeHub, and the hub
+        // token lasts 15 minutes — so arriving here after a pause used to fail
+        // with an expired session and send the user to Settings to press
+        // Connect. Re-mint first instead; off hub mode this is a no-op.
+        const session = await ensureHubSession();
         const sr = await fetch("/api/settings");
         const sd = await sr.json();
         const provider = sd.settings?.provider ?? "azure-devops";
         const r = await fetch(`/api/projects?provider=${provider}`);
         const data = await r.json();
         if (data.error) setError(data.error);
-        if (data.notice) setNotice(data.notice);
+        // A failed sign-in is the more actionable of the two messages: the load
+        // below can only report "the session has expired", while this says which
+        // of the four hub failures it actually was.
+        if (session.status === "failed") setNotice(session.error);
+        else if (data.notice) setNotice(data.notice);
         setProjects(Array.isArray(data.projects) ? data.projects : []);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

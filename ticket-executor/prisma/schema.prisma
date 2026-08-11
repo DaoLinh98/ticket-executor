@@ -40,11 +40,6 @@ model Setting {
   // answers (firstPassRate / reworkFactor against costPerShippedTicket), not one
   // a default should presume. Flip it, run a batch, compare.
   evaluateBeforePublish Boolean @default(false)
-  // Ceiling for one whole run in USD, snapshotted onto Run.budgetUsd at start
-  // and checked *between* nodes. 0 = no run-level ceiling, leaving only the
-  // per-node --max-budget-usd. Editable here rather than hidden in an env var:
-  // a spend limit nobody can see or tune is a limit that quietly does nothing.
-  runBudgetUsd   Float    @default(0)
   // true → multi-ticket mode: multi-select/batch runs allowed, each execution
   // isolated in its own git worktree. false → single-ticket mode: only one
   // ticket may run at a time, and it runs directly in rootRepo (no worktree).
@@ -55,6 +50,41 @@ model Setting {
   // configured themselves. false → the app never touches MCP; preflight only
   // verifies what the machine already has.
   manageMcp      Boolean  @default(true)
+  // EmeHub integration. false (default) → this app behaves exactly as it always
+  // has: it talks to the provider itself, with credentials from
+  // ProviderCredential, edited on the Settings page. true → **EmeHub is the only
+  // gateway**: every provider read and write goes out as an HTTP call to the hub
+  // (lib/hubGateway.ts), and this app holds no provider credential of its own.
+  //
+  // Off by default and off is not a degraded mode: an install with no hub is the
+  // normal case, and nothing below matters while this is false.
+  hubEnabled     Boolean  @default(false)
+  // Which of the hub's connections every provider call is routed through — the
+  // hub's own `provider_connections.id`, as a string. The hub can hold several
+  // connections of the same kind, so "use the hub" is not by itself an answer;
+  // something has to pick one, and a wrong pick is a run against the wrong
+  // organization. Empty means none chosen yet, which the gateway reports as "not
+  // configured" rather than guessing at the first row.
+  hubConnectionId String  @default("")
+  // ---- the hub session ----
+  //
+  // The hub's access token is the *whole* of what this app stores about EmeHub.
+  // There is deliberately no mirror of the hub's connections or their PATs: a
+  // second editable copy of a credential is the drift the hub exists to remove,
+  // and a copy nobody edits still goes stale the moment the hub rotates a PAT.
+  //
+  // Only the browser can mint one — `POST {hub}/auth/agent-token` authenticates
+  // with the shared refresh cookie, which server code cannot see (INTEGRATION.md
+  // §2) — so the browser mints and hands it to `POST /api/hub/token`, which is
+  // the only writer. Encrypted with lib/crypto.ts and never returned to a page.
+  hubToken       String   @default("")
+  // When the token above stops being accepted. A hub call past this refuses with
+  // "signed out" rather than making a request it knows will 401 — §5 requires
+  // that to read differently from "the hub is down".
+  hubTokenExpiresAt DateTime?
+  // The token's `sid`. §2: a new sid means a new hub session, so anything cached
+  // against the old one is dropped rather than served to a different login.
+  hubSid         String   @default("")
   updatedAt      DateTime @updatedAt
 }
 
@@ -107,7 +137,7 @@ model Run {
   state        String    @default("running") // running | waiting | succeeded | failed | cancelled
   currentNodeId String   @default("")
   // Why a run ended somewhere other than plain success: "" | cancelled |
-  // plan-rejected | blocked | budget | hop-limit | needs-review. `cancelled` and
+  // plan-rejected | blocked | hop-limit | needs-review. `cancelled` and
   // `plan-rejected` are human decisions and must never be scored as agent failures.
   endReason    String    @default("")
   errorMessage String    @default("")
@@ -117,17 +147,13 @@ model Run {
   // State channels: nodeId → that node's validated structured output. Append-only;
   // a node only ever writes its own key. This is what edges read.
   channels     Json      @default("{}")
-  // Ceiling for the whole run in USD (0 = no run-level ceiling), snapshotted
-  // from Setting.runBudgetUsd at start. Checked between nodes, so a cycle cannot
-  // spend without bound.
-  budgetUsd    Float     @default(0)
   // Transitions this run has taken. Persisted rather than counted in a local
   // variable because drive() is re-entered on every gate resolution and on every
   // crash resume — a counter that resets at each of those is not a loop guard.
   hops         Int       @default(0)
   // nodeId → how many times that node has been entered. The accounting a bounded
   // cycle reads ("stop after two fix attempts"); it used to live only in memory,
-  // so a restart silently reset every cycle's budget back to zero.
+  // so a restart silently reset every cycle's count back to zero.
   visits       Json      @default("{}")
   model        String    @default("")
   effort       String    @default("")
@@ -153,6 +179,25 @@ model Run {
   // Set when the run had to be rebuilt from this row because the in-process
   // state was lost (server restart) — a session a bare terminal would have dropped.
   resumedAfterRestart Boolean @default(false)
+  // ── EmeHub Claude credential (hub mode only) ──────────────────────────────
+  // All three are empty on a run started with `Setting.hubEnabled` off, which is
+  // the original flow: the CLI authenticates with the machine's own login and
+  // this app never sees a credential.
+  //
+  // Which Claude account the run executes under: "" (hub off — the machine's
+  // login) | own | shared. Recorded, never decided here: the hub owns the
+  // own → shared precedence and the user's prefer_shared choice, so a second
+  // opinion on this row could only ever be a wrong one.
+  claudeSource String   @default("")
+  // The run-scoped credential grant (emehub ADR 0009), encrypted at rest.
+  //
+  // On the row rather than in memory for one reason: crash recovery. Minting a
+  // grant needs a live 15-minute access token, which needs the browser — after a
+  // server restart there may be no way to mint another. A recovered run can
+  // still re-resolve the credential from the grant it was started with, for as
+  // long as that grant lives.
+  claudeGrant  String   @default("")
+  claudeGrantExpiresAt DateTime?
   startedAt    DateTime  @default(now())
   endedAt      DateTime?
 
@@ -250,6 +295,13 @@ model BlockedAttempt {
   // concurrency-cap                 — Setting.concurrentRuns is already reached
   // unknown-skill                   — the caller asked for a skill no graph serves
   // missing-skill                   — a node's skill is not installed on this machine
+  // claude-credential               — hub mode is on and EmeHub has no Claude
+  //                                   credential this run could execute under.
+  //                                   Refused here rather than falling back to
+  //                                   the machine's own login: with the hub on,
+  //                                   that login is a different account from the
+  //                                   one the workspace chose, and silently
+  //                                   spending it is the drift hub mode removes.
   reason      String
   detail      String   @default("")
   createdAt   DateTime @default(now())
@@ -277,3 +329,45 @@ model RootRepoProjectMap {
   rootRepo  String
   updatedAt DateTime @updatedAt
 }
+
+// Which pull request a ticket's review lives on, once anything has resolved it.
+//
+// `Run.prUrl` already answers this for a PR **this app opened**. It answers
+// nothing for a PR a human opened, and that gap is expensive: resolving a work
+// item's PR from scratch at the provider costs a work-item read with relations
+// expanded, then a repository read to verify the link, before the PR itself —
+// four calls where a known URL costs two. The review bell asks about the same
+// tickets every poll, so an unrecorded PR pays that difference forever.
+//
+// So every path that successfully resolves one writes it here, and the bell
+// reads it back. Deliberately a **cache with no expiry rather than a mirror**:
+// nothing is served *from* this row, it only shortens a lookup. A URL that has
+// gone stale — repository renamed, PR deleted — simply fails its read and the
+// caller falls through to the full resolution, which is the same fallback a
+// stale `Run.prUrl` already relies on. That is why there is no TTL to tune and
+// no invalidation to get wrong.
+model TicketPullRequest {
+  id        String   @id @default(cuid())
+  provider  String
+  ticketId  String
+  prUrl     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, ticketId])
+}
+
+// There is no HubConnection table, and its absence is the design.
+//
+// This app used to mirror the hub's connections — label, org URL, and the PAT —
+// into a local table, refreshed by a "Sync from EmeHub" button. That is gone.
+// In hub mode the hub is not a place to copy configuration *from*, it is the
+// gateway every provider call goes *through* (`lib/hubGateway.ts`), so there is
+// nothing left to mirror: the connection list is read live from
+// `GET {hub}/connections`, and the only credential a run still needs is fetched
+// per run from `GET {hub}/connections/{id}/secret` and never written down.
+//
+// A copy nobody edits still rots — the hub rotating a PAT leaves the mirror
+// authenticating as a credential that no longer works, and the mirror cannot
+// tell that from a hub that is merely offline. Not storing it removes the
+// question. What replaces the table is `Setting.hubToken`: one short-lived
+// access token, which is the whole of what this app persists about EmeHub.

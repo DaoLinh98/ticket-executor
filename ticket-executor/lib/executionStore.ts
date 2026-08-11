@@ -5,7 +5,7 @@
 //   graph/graphs.ts   — the graph definitions themselves (pure data + pure edges)
 //   graph/prompts.ts  — the prompt each node sends
 //   graph/exec.ts     — one node execution (per-turn MCP, spawn, contract check)
-//   graph/drive.ts    — the driver loop, gates, budget/hop guards, termination
+//   graph/drive.ts    — the driver loop, gates, the hop guard, termination
 //   graph/persist.ts  — every DB write the walk makes (all allowed to throw)
 //   claudeCli.ts      — CLI args and the NDJSON stream-json turn runner
 //   git.ts            — post-run diff collection against the worktree's base commit

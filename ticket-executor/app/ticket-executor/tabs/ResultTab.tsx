@@ -75,7 +75,14 @@ function NoteList({ caption, items }: { caption: string; items: { title: string;
 export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpenDiff, onOpenPr }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   const totalTokens = (ex.inputTokens ?? 0) + (ex.outputTokens ?? 0);
-  const hasUsage = (ex.costUsd ?? 0) > 0 || totalTokens > 0;
+  // Which account footed the bill. Empty means EmeHub was off and the run used
+  // this machine's own `claude` login — the original behaviour, and not something
+  // to label, since there is no second account it could have been.
+  const accountLabel =
+    ex.claudeSource === "shared" ? "EmeHub · shared account"
+      : ex.claudeSource === "own" ? "EmeHub · your account"
+        : "";
+  const hasUsage = (ex.costUsd ?? 0) > 0 || totalTokens > 0 || !!accountLabel;
 
   const channels: Bag[] = Object.values(ex.channels ?? {});
   const delivered = channels.find((c) => typeof c.committed === "boolean");
@@ -122,6 +129,12 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
                 <span style={pill({ color: COLORS.info, background: "rgba(91,157,255,.09)", border: "#26314A", size: "sm" })}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 2 2 7l10 5 10-5-10-5Z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
                   {formatTokenCount(totalTokens)} tokens
+                </span>
+              )}
+              {accountLabel && (
+                <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.09)", border: "#3A3222", size: "sm" })}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="8" r="3.6" /><path d="M4.5 20a7.5 7.5 0 0 1 15 0" /></svg>
+                  {accountLabel}
                 </span>
               )}
             </div>

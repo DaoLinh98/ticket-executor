@@ -21,6 +21,12 @@ export type Ticket = {
   // hours is a setting, applied where the run is started, not here.
   estimateHours?: number;
   storyPoints?: number;
+  // The kanban column this item sits in, which is **not** its status: a board
+  // maps several states onto one column and can carry custom ones, so a board
+  // grouped by status draws a different board than the provider does. Absent for
+  // a type that is not on a board (a Task, usually) and for providers that have
+  // no board concept — the board view falls back to `status` there.
+  boardColumn?: string;
 };
 
 export type TicketComment = {
@@ -49,7 +55,6 @@ export type EndReason =
   | "cancelled"
   | "plan-rejected"
   | "blocked"
-  | "budget"
   | "hop-limit"
   | "needs-review";
 
