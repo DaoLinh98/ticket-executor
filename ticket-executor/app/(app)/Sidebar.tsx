@@ -67,6 +67,11 @@ export default function Sidebar() {
   const { fireBoltFromEvent } = useBoltsContext();
   // Collapsed rail: icons only. Remembered so it survives navigation/reload.
   const [collapsed, setCollapsed] = useState(false);
+  // The collapse chevron floats on the rail's outer edge, over the page beside
+  // it. Shown only while the pointer is on the rail: it is a control for the
+  // sidebar, and parking it permanently in the content area reads as part of
+  // whatever page is underneath.
+  const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     setCollapsed(localStorage.getItem("te.sidebarCollapsed") === "1");
@@ -84,6 +89,8 @@ export default function Sidebar() {
 
   return (
     <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         position: "relative",
         zIndex: 6,
@@ -122,11 +129,20 @@ export default function Sidebar() {
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         aria-expanded={!collapsed}
+        // Focus reveals it too, so the control is still reachable by keyboard —
+        // a pointer-only affordance would simply be missing for anyone tabbing.
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
         style={{
           position: "absolute", top: "74px", right: "-13px", zIndex: 8,
           display: "flex", alignItems: "center", justifyContent: "center",
           width: "26px", height: "26px", color: COLORS.textDim, cursor: "pointer",
-          transition: "color .15s",
+          opacity: hovered ? 1 : 0,
+          // Not just invisible: while hidden it sits over the page beside the
+          // rail, and an unseen button that still swallows clicks is worse than
+          // a visible one.
+          pointerEvents: hovered ? "auto" : "none",
+          transition: "color .15s, opacity .15s ease",
           ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }),
         }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}

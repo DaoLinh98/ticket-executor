@@ -1,18 +1,236 @@
+/* ============================================================================
+   THEME LAYER — the only place a palette lives.
+   ============================================================================
+
+   `lib/ui.ts` no longer holds colour literals; its COLORS tokens point at the
+   custom properties below, so the entire app repaints by flipping one attribute
+   on <html>. Two themes:
+
+     :root                     D-Agent — the original prototype look. Unchanged
+                               values, moved here verbatim.
+     :root[data-theme=emehub]  EmeHub — EMESOFT red, glass panels, rounded
+                               corners. Tokens from
+                               emehub/design/design_handoff_emehub/README.md
+                               (§Design Tokens) with the default EMESOFT Red
+                               accent, over the Q-Agent foundations it extends.
+
+   Rules for anything added here:
+   - A token is defined in BOTH blocks or in neither. A one-sided token is how
+     one theme silently inherits the other's colour.
+   - Shape tokens (--te-clip-*, --te-radius-*) exist because the two designs
+     differ in more than hue: D-Agent chips are corner-cut hexagons, EmeHub's
+     are plain rounded rectangles. A colour-only theme still reads as D-Agent.
+   - Never reintroduce a raw hex in a component. Add a token.                  */
+
+:root {
+  /* palette — mirrors COLORS in lib/ui.ts, one for one */
+  --te-accent: #FB7250;
+  --te-success: #35D6A4;
+  --te-danger: #FF6B6B;
+  --te-warning: #F5B341;
+  --te-info: #5B9DFF;
+  --te-indigo: #9BA6E8;
+  --te-text: #ECEEF3;
+  --te-text-soft: #C7CCD8;
+  --te-text-dim: #8A90A0;
+  --te-text-muted: #6B7283;
+  --te-faint: #5B6273;
+  --te-border: #262B36;
+  --te-border-subtle: #1E232C;
+  --te-panel-bg: #111419;
+  --te-panel-bg-dark: #0A0B0E;
+
+  /* surfaces that were inline literals before the theme layer existed */
+  --te-app-bg: #06070A;
+  --te-inset-bg: #0E1015;   /* inputs, code blocks, dropdown panels */
+  --te-modal-bg: #14171D;   /* modal + toast shells */
+
+  /* shape */
+  --te-clip-6: polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+  --te-clip-7: polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);
+  --te-clip-8: polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  /* Paired with the clips: the corner-cut shape IS the radius here, so chips
+     take none of their own. EmeHub drops the clip and uses this instead. */
+  --te-radius-chip: 0px;
+  --te-radius-card: 10px;
+  --te-radius-panel: 14px;
+  --te-panel-blur: none;
+
+  /* type */
+  --te-font-ui: var(--font-hanken), 'Hanken Grotesk', sans-serif;
+  --te-font-display: var(--font-space), 'Space Grotesk', sans-serif;
+  --te-font-mono: var(--font-mono), 'JetBrains Mono', monospace;
+
+  /* ambient blooms (AppBlooms) — off in the D-Agent look, whose atmosphere
+     comes from the reactor instead */
+  --te-bloom-1: transparent;
+  --te-bloom-2: transparent;
+  --te-bloom-opacity: 0;
+
+  --te-selection-bg: rgba(251,114,80,.35);
+
+  /* tinted banner cards (tintedCard) and toast shells */
+  --te-tint-success-bd: #24382F;
+  --te-tint-success-bg: linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02));
+  --te-tint-danger-bd: #4A2626;
+  --te-tint-danger-bg: rgba(255,107,107,.06);
+  --te-tint-warning-bd: #3A2F22;
+  --te-tint-warning-bg: rgba(245,179,65,.06);
+  --te-tint-accent-bd: #2A2018;
+  --te-tint-accent-bg: linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02));
+
+  /* Semantic data hues — ADO work-item types and ticket statuses. Named by hue
+     rather than by role because one hue serves several roles (amber is both
+     "Active" and "Running"), and a status map that pointed at role tokens would
+     collapse distinctions the board relies on. */
+  --te-hue-purple: #9B8CFF;   --te-hue-purple-tint: rgba(155,140,255,.13);
+  --te-hue-red: #FF6B6B;      --te-hue-red-tint: rgba(255,107,107,.13);
+  --te-hue-blue: #5B9DFF;     --te-hue-blue-tint: rgba(91,157,255,.13);
+  --te-hue-green: #35D6A4;    --te-hue-green-tint: rgba(53,214,164,.13);
+  --te-hue-amber: #F5B341;    --te-hue-amber-tint: rgba(245,179,65,.13);
+  --te-hue-orange: #FF9F45;   --te-hue-orange-tint: rgba(255,159,69,.13);
+  --te-hue-neutral: #8A90A0;
+
+  /* Button chrome. Each variant is a {fill, text} pair plus the ring colours
+     ringBorder() sweeps; EmeHub replaces the whole ring with a hairline, so
+     there only the fill and the text survive. */
+  --te-btn-primary-fill: var(--te-accent);
+  --te-btn-primary-text: #0B0C10;
+  --te-btn-primary-shadow: none;
+  --te-btn-success-fill: #162F2C;
+  --te-btn-success-text: #5BE8B8;
+  --te-btn-success-sheen: #baf5e3;
+  --te-btn-warning-fill: #2A2E38;
+  --te-btn-warning-text: #C7CCD8;
+  --te-btn-danger-fill: #2E1A1C;
+  --te-btn-danger-text: #FFB3AD;
+  --te-btn-danger-sheen: #ffd3ce;
+  --te-btn-outline-border: #2A2F3A;
+  --te-btn-outline-text: #C7CCD8;
+  --te-btn-ghost-fill: #1A1E25;
+  --te-btn-ghost-text: #ECEEF3;
+  --te-tab-fill: #171A21;
+  --te-tab-text: #F3F5F9;
+  --te-tab-disabled-text: #3A4150;
+
+  /* scrollbars */
+  --te-scroll: #2A2F3A;
+  --te-scroll-hover: #39404E;
+}
+
+:root[data-theme="emehub"] {
+  --te-accent: #e1172b;
+  --te-success: #6ee7b7;
+  --te-danger: #fb7185;
+  --te-warning: #fbbf24;
+  --te-info: #a5f3fc;
+  --te-indigo: #c4b5fd;
+  --te-text: #ECECF1;
+  --te-text-soft: #dcdce4;
+  --te-text-dim: #a9a9bc;
+  --te-text-muted: #8b8b9e;
+  --te-faint: #7a7a8c;
+  --te-border: rgba(255,255,255,.07);
+  --te-border-subtle: rgba(255,255,255,.05);
+  /* Panels are glass: a translucent fill over the ambient background, not a
+     solid slab. This is the token that makes --te-panel-blur meaningful. */
+  --te-panel-bg: rgba(255,255,255,.035);
+  --te-panel-bg-dark: rgba(20,20,28,.55);
+
+  --te-app-bg: #0a0a0f;
+  --te-inset-bg: rgba(8,8,13,.6);
+  --te-modal-bg: #191921;
+
+  /* No corner cuts in this design language — rounded rectangles throughout. */
+  --te-clip-6: none;
+  --te-clip-7: none;
+  --te-clip-8: none;
+  --te-radius-chip: 11px;
+  --te-radius-card: 16px;
+  --te-radius-panel: 20px;
+  --te-panel-blur: blur(22px);
+
+  /* Satoshi is EmeHub's UI face (Fontshare). It is not bundled — self-host it
+     to make this pixel-faithful; until then the chain falls through to the
+     same fallback EmeHub itself declares. */
+  --te-font-ui: Satoshi, 'Segoe UI', system-ui, sans-serif;
+  --te-font-display: Satoshi, 'Segoe UI', system-ui, sans-serif;
+  --te-font-mono: var(--font-mono), 'JetBrains Mono', monospace;
+
+  --te-bloom-1: rgba(225,23,43,.28);
+  --te-bloom-2: rgba(150,160,180,.2);
+  --te-bloom-opacity: 1;
+
+  --te-selection-bg: rgba(225,23,43,.4);
+
+  /* EmeHub status tints are a flat alpha wash on the status hue — no gradient,
+     and the border is the same hue rather than a desaturated brown. */
+  --te-tint-success-bd: rgba(16,185,129,.28);
+  --te-tint-success-bg: rgba(16,185,129,.13);
+  --te-tint-danger-bd: rgba(244,63,94,.3);
+  --te-tint-danger-bg: rgba(244,63,94,.14);
+  --te-tint-warning-bd: rgba(251,191,36,.28);
+  --te-tint-warning-bg: rgba(251,191,36,.13);
+  --te-tint-accent-bd: rgba(225,23,43,.34);
+  --te-tint-accent-bg: rgba(225,23,43,.14);
+
+  --te-hue-purple: #c4b5fd;   --te-hue-purple-tint: rgba(139,92,246,.14);
+  --te-hue-red: #fb7185;      --te-hue-red-tint: rgba(244,63,94,.14);
+  --te-hue-blue: #a5f3fc;     --te-hue-blue-tint: rgba(34,211,238,.13);
+  --te-hue-green: #6ee7b7;    --te-hue-green-tint: rgba(16,185,129,.13);
+  --te-hue-amber: #fbbf24;    --te-hue-amber-tint: rgba(251,191,36,.13);
+  --te-hue-orange: #ff9d7a;   --te-hue-orange-tint: rgba(217,119,87,.14);
+  --te-hue-neutral: #8b8b9e;
+
+  /* Primary is the flat EMESOFT red. It must stay a plain color: ringBorder()
+     wraps the fill in `linear-gradient(fill,fill)`, which is invalid CSS when
+     the fill is itself a gradient — the whole background declaration is then
+     dropped and the button renders unfilled. No glow either; the handoff's
+     drop shadow read as a blur halo around every CTA. */
+  --te-btn-primary-fill: #e1172b;
+  --te-btn-primary-text: #fff;
+  --te-btn-primary-shadow: none;
+  --te-btn-success-fill: rgba(16,185,129,.14);
+  --te-btn-success-text: #6ee7b7;
+  --te-btn-success-sheen: #6ee7b7;
+  --te-btn-warning-fill: rgba(251,191,36,.13);
+  --te-btn-warning-text: #fbbf24;
+  --te-btn-danger-fill: rgba(244,63,94,.14);
+  --te-btn-danger-text: #fb7185;
+  --te-btn-danger-sheen: #fb7185;
+  --te-btn-outline-border: rgba(255,255,255,.08);
+  --te-btn-outline-text: #c3c3d0;
+  --te-btn-ghost-fill: rgba(255,255,255,.04);
+  --te-btn-ghost-text: #ECECF1;
+  --te-tab-fill: rgba(225,23,43,.14);
+  --te-tab-text: #ECECF1;
+  --te-tab-disabled-text: #6c6c7e;
+
+  --te-scroll: rgba(255,255,255,.09);
+  --te-scroll-hover: rgba(255,255,255,.18);
+
+  /* The spinning conic "energy ring" is a D-Agent signature. EmeHub borders are
+     a flat hairline plus a soft shadow, so ringBorder() reads this override for
+     its whole border-box layer (the conic is its var() fallback). */
+  --te-ring-image: linear-gradient(var(--te-border), var(--te-border));
+}
+
 /* Ported verbatim from the prototype (Ticket Executor.dc.html) — do not restyle. */
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;height:100%;background:#06070A;}
-body{font-family:var(--font-hanken),'Hanken Grotesk',sans-serif;-webkit-font-smoothing:antialiased;}
+html,body{margin:0;padding:0;height:100%;background:var(--te-app-bg);}
+body{font-family:var(--te-font-ui);-webkit-font-smoothing:antialiased;}
+::selection{background:var(--te-selection-bg);color:#fff;}
 button{font-family:inherit;}
 input{font-family:inherit;}
 ::-webkit-scrollbar{width:10px;height:10px;}
-::-webkit-scrollbar-thumb{background:#262B36;border-radius:8px;border:2px solid transparent;background-clip:padding-box;}
-::-webkit-scrollbar-thumb:hover{background:#333947;}
+::-webkit-scrollbar-thumb{background:var(--te-scroll);border-radius:8px;border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:var(--te-scroll-hover);}
 ::-webkit-scrollbar-track{background:transparent;}
-*{scrollbar-width:thin;scrollbar-color:#2A2F3A transparent;}
+*{scrollbar-width:thin;scrollbar-color:var(--te-scroll) transparent;}
 
 /* Consistent, subtle scrollbars for the app's scroll regions
    (tickets list, overview/detail pane, terminal log, combobox dropdown). */
-.te-scroll{scrollbar-width:thin;scrollbar-color:#2A2F3A transparent;overscroll-behavior:contain;}
+.te-scroll{scrollbar-width:thin;scrollbar-color:var(--te-scroll) transparent;overscroll-behavior:contain;}
 .te-scroll::-webkit-scrollbar{width:10px;height:10px;}
 .te-scroll::-webkit-scrollbar-track{background:transparent;margin:4px 0;}
 .te-scroll::-webkit-scrollbar-thumb{background:#2A2F3A;border-radius:999px;border:3px solid transparent;background-clip:padding-box;min-height:40px;transition:background .2s ease;}

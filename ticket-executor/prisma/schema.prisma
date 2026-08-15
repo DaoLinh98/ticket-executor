@@ -11,7 +11,15 @@ datasource db {
 model Setting {
   id             String   @id @default("default")
   provider       String   @default("azure-devops") // azure-devops | github | jira | gitlab
+  // false → the 3D reactor backdrop is not rendered at all (AppReactor unmounts
+  // it, disposing the WebGL context). Not a "pause": the setting means no
+  // backdrop, so the globe and the star field go too.
   animatedBackground Boolean @default(true)
+  // true → the whole UI is repainted in the EmeHub design language (EMESOFT red
+  // accent, glass panels, rounded corners, ambient blooms). false (default) →
+  // the D-Agent look, unchanged. Purely presentational: it selects a palette of
+  // CSS custom properties (app/globals.css) and nothing reads it server-side.
+  emehubTheme    Boolean  @default(false)
   // true (default) → the lightning-bolt effect fires on clicks and self-strikes
   // into every mounted spinner (running buttons). false → both are suppressed;
   // the effect layer stays mounted but never emits a bolt.
@@ -354,6 +362,50 @@ model TicketPullRequest {
   updatedAt DateTime @updatedAt
 
   @@unique([provider, ticketId])
+}
+
+// What the harness has learned about one repository, accumulated across runs.
+//
+// A run already discovers durable facts about the repo it works in — which test
+// command actually exists, where a generated file must not be edited, the
+// convention a reviewer keeps re-raising — and then throws all of it away: the
+// worktree is removed, the session ends, and the next ticket rediscovers the
+// same thing at full token price. This table is the only place that survives
+// both.
+//
+// It is written from **contract fields**, not from prose: the delivering and
+// reviewing nodes each answer a `lessons` array in their JSON Schema (see
+// graph/schemas.ts), so nothing here comes from scraping a log. That is also why
+// there is no `learn` node — an extra node would change every graph's shape
+// (and therefore its `graphId`), cost an extra agent turn per run, and be
+// impossible to fit into the one-shot graph, which publishes inside its only
+// node.
+//
+// Scoped by `rootRepo` because that is what a lesson is *about*. `fingerprint`
+// is the normalized text and carries the uniqueness: the same lesson learned by
+// ten runs is one row with `hits = 10`, which is also the ranking signal when
+// more notes exist than may be injected into a prompt.
+//
+// `active` exists so a wrong lesson can be retired without deleting the evidence
+// that it was learned. Nothing routes on this table and no run fails because of
+// it — it only shapes a prompt.
+model KnowledgeNote {
+  id          String   @id @default(cuid())
+  rootRepo    String
+  // "implement" | "review" — which flow family reported it. Kept so a review
+  // convention is not injected into a plan prompt that has no PR in sight.
+  scope       String
+  text        String
+  fingerprint String
+  active      Boolean  @default(true)
+  hits        Int      @default(1)
+  firstRunId  String
+  lastRunId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([rootRepo, fingerprint])
+  @@index([rootRepo, active])
 }
 
 // There is no HubConnection table, and its absence is the design.

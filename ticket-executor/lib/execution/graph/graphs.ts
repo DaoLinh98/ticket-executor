@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "fs";
 import path from "path";
-import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, invokeSkill, publishPrompt, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
+import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, openingPrompt, publishPrompt, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
   blockedOf,
   EVALUATE_OUTPUT,
@@ -110,7 +110,7 @@ function twoPhaseGraph(review: boolean, evaluate: boolean): Graph {
         label: "Draft plan",
         effects: "local", // writes only .te/plan.md
         context: "fresh",
-        prompt: (c) => invokeSkill(c, "plan"),
+        prompt: (c) => openingPrompt(c, "plan"),
         output: PLAN_OUTPUT as unknown as Record<string, unknown>,
       },
       planCheck: {
@@ -282,7 +282,7 @@ function oneShotGraph(review: boolean): Graph {
         label: review ? "Resolve review" : "Implement & open PR",
         effects: "external",
         context: "fresh",
-        prompt: (c) => invokeSkill(c, ""),
+        prompt: (c) => openingPrompt(c, ""),
         output: (review ? REVIEW_ONESHOT_OUTPUT : ONESHOT_OUTPUT) as unknown as Record<string, unknown>,
       },
     },

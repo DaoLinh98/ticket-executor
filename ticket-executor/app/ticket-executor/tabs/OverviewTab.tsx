@@ -120,7 +120,7 @@ export default function OverviewTab({
         <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
         {rootRepoMissing && (
           <div style={{ gridColumn: "1 / -1", display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={COLORS.warning} strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2" style={{ stroke: COLORS.warning, flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
             <span style={{ fontSize: FONT.base, color: COLORS.warning, lineHeight: 1.55 }}>
               Set <strong>ROOT REPO</strong> before running — the local git clone this ticket should be implemented in (e.g. <span style={{ fontFamily: "var(--font-mono), monospace" }}>C:\repos\my-service</span>). It is remembered per project, so you only pick it once.
             </span>

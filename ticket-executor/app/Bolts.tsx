@@ -8,6 +8,11 @@ type Bolt = { id: string; d: string; d2: string | null; big: boolean };
 type Flash = { id: string; x: number; y: number };
 
 const ACCENT = COLORS.accent;
+// The accent at two alphas. These used to be `${ACCENT}55` / `${ACCENT}18` —
+// appending an alpha byte to a hex, which stopped working the moment the palette
+// became CSS custom properties (`var(--te-accent)55` parses as nothing).
+const ACCENT_A33 = `color-mix(in srgb, ${ACCENT} 33%, transparent)`;
+const ACCENT_A09 = `color-mix(in srgb, ${ACCENT} 9%, transparent)`;
 
 function zigzagPath(x1: number, y1: number, x2: number, y2: number, segs: number, jitter: number) {
   const pts: [number, number][] = [[x1, y1]];
@@ -86,7 +91,7 @@ export function BoltLayer({ bolts, flashes }: { bolts: Bolt[]; flashes: Flash[] 
             borderRadius: "50%",
             pointerEvents: "none",
             zIndex: 94,
-            background: `radial-gradient(circle, ${ACCENT}55 0%, ${ACCENT}18 40%, transparent 72%)`,
+            background: `radial-gradient(circle, ${ACCENT_A33} 0%, ${ACCENT_A09} 40%, transparent 72%)`,
             animation: "boltFlash 520ms ease-out forwards",
           }}
         />

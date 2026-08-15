@@ -6,7 +6,8 @@ import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
 import { cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
-import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, KNOWN_SKILLS, PLAN_FILE, resolveSkill } from "./graph/graphs";
+import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, isReviewSkill, KNOWN_SKILLS, PLAN_FILE, resolveSkill } from "./graph/graphs";
+import { loadKnowledge } from "./knowledgeStore";
 import { REVIEW_SKILL } from "./graph/prompts";
 import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
 import type { LiveRun } from "./graph/types";
@@ -340,6 +341,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       rootRepo,
       cwd: rootRepo,
       baseSha: "",
+      knowledge: "", // resolved below, once the worktree exists
       channels: {},
       visits: {},
     },
@@ -414,6 +416,19 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // the plan phase reads that file — an earlier ticket's plan is a confusing,
   // token-costing thing for the agent to have to recognise and discard.
   clearRunArtifacts(live.ctx.cwd);
+
+  // What earlier runs learned about this repo, resolved once here so the prompt
+  // builders stay pure and synchronous. Best-effort: a run that cannot read its
+  // knowledge is a run that costs a few more tokens, not a run that must not
+  // start.
+  try {
+    live.ctx.knowledge = await loadKnowledge(rootRepo, isReviewSkill(skill) ? "review" : "implement");
+    if (live.ctx.knowledge) {
+      live.logLines.push({ text: `● Applying what earlier runs learned about ${rootRepo}`, kind: "step" });
+    }
+  } catch {
+    /* no knowledge this run */
+  }
 
   await saveRun(live);
   // Fire-and-forget: the route returns immediately and the walk continues in the
@@ -493,6 +508,11 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
       rootRepo: row.rootRepo,
       cwd: row.worktreePath || row.rootRepo,
       baseSha: row.baseSha,
+      // Not restored, and not re-read: only the run's *first* turn carries the
+      // knowledge block, and a rehydrated run has already taken that turn. Every
+      // node it can still reach either resumes a session that already holds the
+      // block or is publishing work that is final.
+      knowledge: "",
       channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
       // Restored, not reset: the hop and cycle counters belong to the run. A
       // recovered run that started its counters over would be allowed to loop

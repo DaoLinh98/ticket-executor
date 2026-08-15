@@ -79,7 +79,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "18px", animation: "fadeUp .35s both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard(awaiting ? "accent" : "warning", { padding: "16px 18px", radius: "13px" }) }}>
         <span style={{ flex: "0 0 auto", width: "40px", height: "40px", borderRadius: "11px", background: "rgba(251,114,80,.14)", border: `1px solid ${COLORS.accent}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={COLORS.accent} strokeWidth="2.2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeWidth="2.2" style={{ stroke: COLORS.accent }}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
         </span>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>

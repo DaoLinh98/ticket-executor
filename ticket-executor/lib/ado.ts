@@ -2,6 +2,7 @@ import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverv
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
 import { markdownToHtml, sanitizeHtml } from "./richText";
+import type { TicketScope } from "./ticketScope";
 
 const API = "api-version=7.0";
 
@@ -273,43 +274,79 @@ type WorkItemDetail = {
   fields: Record<string, unknown>;
 };
 
-/** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to ADO's current iteration. */
-export async function getSprintTickets(
-  project: string,
-  sprintOverride?: string
-): Promise<{ tickets: Ticket[]; sprintName: string }> {
-  const { org, pat, project: proj } = await loadCreds(project);
-  const iteration = await resolveIteration(project, sprintOverride);
+const TICKET_FIELDS = [
+  "System.Id",
+  "System.Title",
+  "System.State",
+  "System.WorkItemType",
+  "System.AssignedTo",
+  "System.AreaPath",
+  "System.IterationPath",
+  "System.Description",
+  "Microsoft.VSTS.Common.AcceptanceCriteria",
+  "Microsoft.VSTS.Scheduling.OriginalEstimate",
+  "Microsoft.VSTS.Scheduling.StoryPoints",
+  // The kanban column the item sits in, which is **not** its state: a board maps
+  // several states onto one column and may carry custom ones, so grouping a
+  // board view by state draws a different board than Azure DevOps does.
+  "System.BoardColumn",
+].join(",");
 
-  const wiUrl = `https://dev.azure.com/${org}/${encodeURIComponent(
-    proj
-  )}/_apis/work/teamsettings/iterations/${iteration.id}/workitems?${API}`;
-  const rel = await adoGet<WorkItemRelations>(wiUrl, pat);
-  const ids = Array.from(
-    new Set(rel.workItemRelations.map((r) => r.target?.id).filter(Boolean) as number[])
-  );
-  if (ids.length === 0) return { tickets: [], sprintName: iteration.name };
+/** ADO's own cap on the `ids` parameter of the batch work-item read. */
+const BATCH_SIZE = 200;
 
-  const fields = [
-    "System.Id",
-    "System.Title",
-    "System.State",
-    "System.WorkItemType",
-    "System.AssignedTo",
-    "System.AreaPath",
-    "System.Description",
-    "Microsoft.VSTS.Common.AcceptanceCriteria",
-    "Microsoft.VSTS.Scheduling.OriginalEstimate",
-    "Microsoft.VSTS.Scheduling.StoryPoints",
-  ].join(",");
+/**
+ * Cap on one fetch, matching the hub's `MAX_TICKETS`. A sprint is bounded by its
+ * iteration, but a backlog or a board is not — a 2000-item project would
+ * otherwise hang the page load.
+ */
+const MAX_TICKETS = 200;
 
-  // Work-item batch GET is capped at 200 ids; chunk to be safe.
+/**
+ * States that mean the item has left the board. Named literally because WIQL
+ * cannot query ADO's state *category*, and the names differ per process template
+ * — Agile closes at "Closed", Scrum and Basic at "Done", and both Scrum and
+ * Agile use "Removed" for abandoned work. Only backlog and board apply it; a
+ * sprint is bounded by its iteration and shows its closed work on purpose.
+ */
+const CLOSED_STATES = ["Closed", "Removed", "Done"];
+
+/** A WIQL string literal's body. Doubling a quote is ADO's own escape — a
+ *  project or sprint name with an apostrophe would otherwise terminate the
+ *  literal and produce a syntax error. */
+function wiqlQuoted(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * The work items one view asks for. Mirrors the hub's `dagent_provider._wiql`
+ * so the same three views mean the same thing on both sides of the hub switch.
+ *
+ * - `backlog` — open work not scheduled into any iteration yet. In ADO that is
+ *   the iteration path still sitting at the project root, which is what an
+ *   unassigned work item inherits.
+ * - `board` — every open work item in the project, whatever iteration it is in.
+ *   That is what a kanban board shows, and it is why this is not the sprint
+ *   query with a filter: a board's cards routinely live in iterations the
+ *   sprint view excludes.
+ */
+function wiqlFor(project: string, scope: Exclude<TicketScope, "sprint">): string {
+  const clauses = [`[System.TeamProject] = '${wiqlQuoted(project)}'`];
+  if (scope === "backlog") clauses.push(`[System.IterationPath] = '${wiqlQuoted(project)}'`);
+  clauses.push(`[System.State] NOT IN (${CLOSED_STATES.map((s) => `'${s}'`).join(",")})`);
+  return `SELECT [System.Id] FROM WorkItems WHERE ${clauses.join(" AND ")} ORDER BY [System.Id] DESC`;
+}
+
+/** Batch-read work items by id and map them to the UI `Ticket` shape. Shared by
+ *  all three scopes so a field added for one view is present in the others. */
+async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
+  const { org, pat, project: proj } = creds;
   const tickets: Ticket[] = [];
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const chunk = ids.slice(i, i + BATCH_SIZE);
     const batchUrl = `https://dev.azure.com/${org}/_apis/wit/workitems?ids=${chunk.join(
       ","
-    )}&fields=${fields}&${API}`;
+    )}&fields=${TICKET_FIELDS}&${API}`;
     const det = await adoGet<{ value: WorkItemDetail[] }>(batchUrl, pat);
     for (const w of det.value) {
       const f = w.fields;
@@ -329,12 +366,80 @@ export async function getSprintTickets(
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
         storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
+        // Empty for a work item type that is not on a board (a Task, usually).
+        // The caller falls back to the state, the closest true answer.
+        boardColumn: (f["System.BoardColumn"] as string) || undefined,
       });
     }
   }
+  return tickets;
+}
+
+/**
+ * One view's work items, straight from Azure DevOps.
+ *
+ * The three scopes are three different questions, bounded differently at the
+ * provider, and they reach two different endpoints on purpose:
+ *
+ * - `sprint` goes through **team iterations** (`work/teamsettings/iterations/
+ *   {id}/workitems`), because that is the only scope a sprint has in ADO — it is
+ *   the list the user sees at `_sprints/backlog/<team>/…`, and reading the
+ *   project's classification tree instead returns every team's sub-tree at once.
+ * - `backlog` and `board` have no team-scoped endpoint, so they are WIQL, using
+ *   the same clauses the hub builds (`wiqlFor`).
+ *
+ * `truncated` is the honest half of `MAX_TICKETS`: neither a backlog nor a board
+ * is bounded by an iteration, so a big project silently losing its tail would
+ * read as a short board rather than a capped one.
+ */
+export async function getScopedTickets(
+  project: string,
+  scope: TicketScope,
+  sprintOverride?: string
+): Promise<{ tickets: Ticket[]; sprintName: string; truncated: boolean }> {
+  if (scope === "sprint") {
+    const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
+    return { tickets, sprintName, truncated: false };
+  }
+  const creds = await loadCreds(project);
+  const { org, pat, project: proj } = creds;
+  const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
+  const res = await adoSend<{ workItems?: { id: number }[] }>(
+    wiqlUrl,
+    "POST",
+    { query: wiqlFor(proj, scope) },
+    "application/json",
+    pat
+  );
+  const found = (res.workItems ?? []).map((w) => w.id);
+  const ids = found.slice(0, MAX_TICKETS);
+  // Neither view is an iteration, so there is no sprint name to claim.
+  return { tickets: await fetchWorkItems(creds, ids), sprintName: "", truncated: found.length > ids.length };
+}
+
+/** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to
+ *  ADO's current iteration. Reached through `getScopedTickets`, which is the
+ *  module's one entry point for a ticket list — a second exported one is how a
+ *  caller ends up serving a sprint when it was asked for a board. */
+async function getSprintTickets(
+  project: string,
+  sprintOverride?: string
+): Promise<{ tickets: Ticket[]; sprintName: string }> {
+  const creds = await loadCreds(project);
+  const { org, pat, project: proj } = creds;
+  const iteration = await resolveIteration(project, sprintOverride);
+
+  const wiUrl = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
+  )}/_apis/work/teamsettings/iterations/${iteration.id}/workitems?${API}`;
+  const rel = await adoGet<WorkItemRelations>(wiUrl, pat);
+  const ids = Array.from(
+    new Set(rel.workItemRelations.map((r) => r.target?.id).filter(Boolean) as number[])
+  );
+  if (ids.length === 0) return { tickets: [], sprintName: iteration.name };
 
   // Keep ADO's board order roughly stable by id.
-  return { tickets, sprintName: iteration.name };
+  return { tickets: await fetchWorkItems(creds, ids), sprintName: iteration.name };
 }
 
 type RawWorkItemState = { name: string };

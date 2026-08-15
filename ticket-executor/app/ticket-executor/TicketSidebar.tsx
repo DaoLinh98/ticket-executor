@@ -131,7 +131,7 @@ export default function TicketSidebar({
           <span style={typeBadge(tk.type)}>{tk.type}</span>
           <div style={{ flex: 1 }} />
           {queued ? (
-            <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.1)", border: COLORS.warning + "55", size: "xs", weight: 700 })}>Queued</span>
+            <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.1)", border: `color-mix(in srgb, ${COLORS.warning} 33%, transparent)`, size: "xs", weight: 700 })}>Queued</span>
           ) : est === "running" ? (
             <span
               title="Running"

@@ -74,6 +74,8 @@ export type SettingsView = {
   pat: string;
   hasPat: boolean;
   animatedBackground: boolean;
+  /** Repaint the whole UI in the EmeHub design language. Presentational only. */
+  emehubTheme: boolean;
   /** Fire the lightning-bolt effect on clicks and from every mounted spinner. */
   clickEffects: boolean;
   autoImplement: boolean;

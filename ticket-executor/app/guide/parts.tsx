@@ -97,7 +97,7 @@ export function Shot({ src, caption }: { src: string; caption: string }) {
     // icon, so it's obvious what still needs a screenshot.
     return (
       <div style={{ ...card({ padding: "22px 14px" }), borderStyle: "dashed", display: "flex", flexDirection: "column", alignItems: "center", gap: "7px" }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={COLORS.faint} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10.5" r="1.5" /><path d="M21 16l-5-5-4 4-2-2-7 7" /></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: COLORS.faint }}><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10.5" r="1.5" /><path d="M21 16l-5-5-4 4-2-2-7 7" /></svg>
         <span style={{ fontSize: FONT.sm, color: COLORS.faint, textAlign: "center", lineHeight: 1.5 }}>
           Screenshot pending — {caption}
         </span>
@@ -209,15 +209,18 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
     const tx = n ? x + 30 + (w - 30) / 2 : x + w / 2;
     return (
       <g>
-        <rect x={x} y={y} width={w} height={h} rx="10" fill={COLORS.panelBgDark} stroke={color} strokeWidth="1.6" />
+        {/* Colours come through `style`, never the SVG presentation attribute:
+            the palette is CSS custom properties and an attribute does not
+            resolve var(). Applies to every fill/stroke in this file. */}
+        <rect x={x} y={y} width={w} height={h} rx="10" style={{ fill: COLORS.panelBgDark, stroke: color }} strokeWidth="1.6" />
         {n && (
           <>
-            <circle cx={x + 17} cy={y + h / 2} r="9" fill={color} />
-            <text x={x + 17} y={y + h / 2 + 3.6} textAnchor="middle" fill={COLORS.panelBgDark} fontSize="10.5" fontWeight="800">{n}</text>
+            <circle cx={x + 17} cy={y + h / 2} r="9" style={{ fill: color }} />
+            <text x={x + 17} y={y + h / 2 + 3.6} textAnchor="middle" style={{ fill: COLORS.panelBgDark }} fontSize="10.5" fontWeight="800">{n}</text>
           </>
         )}
-        <text x={tx} y={y + h / 2 - 3} textAnchor="middle" fill={COLORS.text} fontSize="12.5" fontWeight="700">{title}</text>
-        <text x={tx} y={y + h / 2 + 12} textAnchor="middle" fill={COLORS.textDim} fontSize="10">{sub}</text>
+        <text x={tx} y={y + h / 2 - 3} textAnchor="middle" style={{ fill: COLORS.text }} fontSize="12.5" fontWeight="700">{title}</text>
+        <text x={tx} y={y + h / 2 + 12} textAnchor="middle" style={{ fill: COLORS.textDim }} fontSize="10">{sub}</text>
       </g>
     );
   };
@@ -225,12 +228,11 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
   const lane = (d: string, color: string, marker: string) => (
     <path
       d={d}
-      stroke={color}
       strokeWidth="2.2"
       strokeDasharray="7 5"
       strokeLinecap="round"
       markerEnd={`url(#${marker})`}
-      style={{ animation: "dashFlow 1.1s linear infinite" }}
+      style={{ stroke: color, animation: "dashFlow 1.1s linear infinite" }}
     />
   );
 
@@ -248,10 +250,10 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
       <svg viewBox="0 0 484 172" style={{ display: "block", width: "100%", height: "auto" }} fill="none">
         <defs>
           <marker id="gdArrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-            <path d="M0 0 L10 5 L0 10 Z" fill={COLORS.accent} />
+            <path d="M0 0 L10 5 L0 10 Z" style={{ fill: COLORS.accent }} />
           </marker>
           <marker id="gdArrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-            <path d="M0 0 L10 5 L0 10 Z" fill={COLORS.indigo} />
+            <path d="M0 0 L10 5 L0 10 Z" style={{ fill: COLORS.indigo }} />
           </marker>
         </defs>
 
@@ -259,8 +261,8 @@ export function AccessDiagram({ providerLabel = "Azure DevOps" }: { providerLabe
         {lane("M148 43 C 236 43, 248 72, 330 72", COLORS.accent, "gdArrowA")}
         {lane("M148 129 C 236 129, 248 100, 330 100", COLORS.indigo, "gdArrowB")}
 
-        <text x="243" y="28" textAnchor="middle" fill={COLORS.accent} fontSize="10.5" fontWeight="700">reads tickets, sprints, PR status</text>
-        <text x="243" y="155" textAnchor="middle" fill={COLORS.indigo} fontSize="10.5" fontWeight="700">reads the work item, opens the PR</text>
+        <text x="243" y="28" textAnchor="middle" style={{ fill: COLORS.accent }} fontSize="10.5" fontWeight="700">reads tickets, sprints, PR status</text>
+        <text x="243" y="155" textAnchor="middle" style={{ fill: COLORS.indigo }} fontSize="10.5" fontWeight="700">reads the work item, opens the PR</text>
 
         {box(8, 18, 152, 50, "1", "This app", "REST + your PAT", COLORS.accent)}
         {box(8, 104, 152, 50, "2", "Claude CLI", "its own MCP server", COLORS.indigo)}

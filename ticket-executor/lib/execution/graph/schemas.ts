@@ -44,6 +44,39 @@ const ASSUMPTIONS = {
   },
 } as const;
 
+/**
+ * Durable facts about the *repository*, harvested into `KnowledgeNote` and read
+ * back into the next run's opening prompt (lib/execution/knowledge.ts).
+ *
+ * Its consumer is that table, not an edge: nothing routes on it and no run fails
+ * over it. It rides on contracts that already exist rather than on a `learn`
+ * node of its own, because a node would change every graph's shape — and the
+ * one-shot graph has nowhere to put one, since its single node has already
+ * published by the time anything could reflect.
+ *
+ * The description is doing the real work here. Left open, a model answers this
+ * with a summary of the ticket it just finished, which is worth nothing to the
+ * next ticket and costs output tokens every run; the constraints below are what
+ * make the difference between a knowledge base and a diary.
+ */
+const LESSONS = {
+  type: "array",
+  maxItems: 3,
+  description:
+    "Durable facts about THIS REPOSITORY that would have saved you time if you had known them when you started, and that will still be true for an unrelated ticket next month. Good: the command that actually builds/tests it, a generated file that must never be hand-edited, a convention reviewers keep enforcing, a trap in the setup. Not this: anything about this ticket, this branch, this PR or these files; anything already written in the repo's CLAUDE.md/README; anything you are guessing at. Usually empty — return [] rather than inventing one.",
+  items: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "One sentence, imperative, self-contained. It will be shown with no other context.",
+      },
+    },
+    required: ["text"],
+    additionalProperties: false,
+  },
+} as const;
+
 /** plan / replan — consumed by the plan edge (park vs fail) and the Plan tab. */
 export const PLAN_OUTPUT = {
   type: "object",
@@ -81,9 +114,10 @@ export const IMPLEMENT_OUTPUT = {
         additionalProperties: false,
       },
     },
+    lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["committed", "branch", "summary", "verification", "deviations", "blocked"],
+  required: ["committed", "branch", "summary", "verification", "deviations", "lessons", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -115,9 +149,12 @@ export const EVALUATE_OUTPUT = {
         additionalProperties: false,
       },
     },
+    // The reviewer is the best-placed node to spot a *recurring* defect: it is
+    // fresh, it judges rather than defends, and it sees the finished diff.
+    lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["verdict", "blockers", "blocked"],
+  required: ["verdict", "blockers", "lessons", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -151,9 +188,10 @@ export const ONESHOT_OUTPUT = {
     pushed: { type: "boolean" },
     prUrl: { type: "string" },
     linked: { type: "boolean" },
+    lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["committed", "branch", "summary", "verification", "pushed", "prUrl", "linked", "blocked"],
+  required: ["committed", "branch", "summary", "verification", "pushed", "prUrl", "linked", "lessons", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -184,11 +222,12 @@ export const REVIEW_ONESHOT_OUTPUT = {
     prUrl: { type: "string" },
     threadsReplied: { type: "integer" },
     threadsResolved: { type: "integer" },
+    lessons: LESSONS,
     blocked: BLOCKED,
   },
   required: [
     "committed", "branch", "summary", "verification",
-    "pushed", "prUrl", "threadsReplied", "threadsResolved", "blocked",
+    "pushed", "prUrl", "threadsReplied", "threadsResolved", "lessons", "blocked",
   ],
   additionalProperties: false,
 } as const;
@@ -222,6 +261,16 @@ export function verificationOf(data: Record<string, unknown>): Verification {
 /** A verification result that must stop the run before anything is published.
  *  "not-run" is not a failure — plenty of repos have no test command — but a
  *  check that ran and failed is. */
+/** The `lessons` a node reported, as plain strings. Absent on the contracts that
+ *  do not carry the field (plan, publish, gate) — those simply yield none. */
+export function lessonsOf(data: Record<string, unknown>): string[] {
+  const raw = data.lessons;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((l) => (typeof (l as { text?: unknown })?.text === "string" ? (l as { text: string }).text : ""))
+    .filter(Boolean);
+}
+
 export function verificationFailed(v: Verification): string {
   if (v.tests === "failed") return "verification.tests=failed";
   if (v.build === "failed") return "verification.build=failed";

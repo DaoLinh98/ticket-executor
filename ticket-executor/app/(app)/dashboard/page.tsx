@@ -189,15 +189,18 @@ function CostTrend({ trend }: { trend: DashboardMetrics["cost"]["trend"] }) {
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="160" preserveAspectRatio="none" style={{ display: "block" }}>
         <defs>
           <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={COLORS.accent} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={COLORS.accent} stopOpacity="0" />
+            {/* Through `style`, not the presentation attribute: the palette is
+                CSS custom properties now, and an SVG attribute does not resolve
+                var(). Same reason for every stroke/fill below. */}
+            <stop offset="0%" style={{ stopColor: COLORS.accent }} stopOpacity="0.28" />
+            <stop offset="100%" style={{ stopColor: COLORS.accent }} stopOpacity="0" />
           </linearGradient>
         </defs>
         <polygon points={area} fill="url(#costFill)" />
-        <polyline points={shippedPts} fill="none" stroke={COLORS.success} strokeWidth="1.6" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" opacity="0.85" />
-        <polyline points={pts} fill="none" stroke={COLORS.accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <polyline points={shippedPts} fill="none" style={{ stroke: COLORS.success }} strokeWidth="1.6" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" opacity="0.85" />
+        <polyline points={pts} fill="none" style={{ stroke: COLORS.accent }} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {trend.map((t, i) => (
-          <circle key={t.date} cx={x(i)} cy={y(t.costUsd, maxCost)} r="2.6" fill={COLORS.accent} />
+          <circle key={t.date} cx={x(i)} cy={y(t.costUsd, maxCost)} r="2.6" style={{ fill: COLORS.accent }} />
         ))}
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", fontSize: FONT.xs, color: COLORS.faint, fontFamily: "var(--font-mono), monospace" }}>

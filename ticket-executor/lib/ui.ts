@@ -10,42 +10,56 @@ import type { UiRunState } from "./types";
 // helpers: whether a run has a human gate is a property of its graph, not a
 // hard-coded list of skill names.
 
+// Hue tokens rather than literals — see app/globals.css. These are *data*
+// colours (a work-item type, a ticket status), so they are themed by hue and not
+// folded into the role palette: amber is both "Active" and "Running", and
+// collapsing them onto one role token would lose a distinction the board reads.
+const HUE = {
+  purple: "var(--te-hue-purple)",
+  red: "var(--te-hue-red)",
+  blue: "var(--te-hue-blue)",
+  green: "var(--te-hue-green)",
+  amber: "var(--te-hue-amber)",
+  orange: "var(--te-hue-orange)",
+  neutral: "var(--te-hue-neutral)",
+} as const;
+
 const TYPES: Record<string, { c: string; bg: string }> = {
-  Feature: { c: "#9B8CFF", bg: "rgba(155,140,255,.13)" },
-  Bug: { c: "#FF6B6B", bg: "rgba(255,107,107,.13)" },
-  Task: { c: "#5B9DFF", bg: "rgba(91,157,255,.13)" },
-  Story: { c: "#35D6A4", bg: "rgba(53,214,164,.13)" },
-  "User Story": { c: "#35D6A4", bg: "rgba(53,214,164,.13)" },
-  Issue: { c: "#F5B341", bg: "rgba(245,179,65,.13)" },
-  Epic: { c: "#FF9F45", bg: "rgba(255,159,69,.13)" },
+  Feature: { c: HUE.purple, bg: "var(--te-hue-purple-tint)" },
+  Bug: { c: HUE.red, bg: "var(--te-hue-red-tint)" },
+  Task: { c: HUE.blue, bg: "var(--te-hue-blue-tint)" },
+  Story: { c: HUE.green, bg: "var(--te-hue-green-tint)" },
+  "User Story": { c: HUE.green, bg: "var(--te-hue-green-tint)" },
+  Issue: { c: HUE.amber, bg: "var(--te-hue-amber-tint)" },
+  Epic: { c: HUE.orange, bg: "var(--te-hue-orange-tint)" },
 };
 
 // Prototype only had New/Active. Extended for real ADO states — same pill,
 // only the text colour varies by state.
 const STATUS_COLORS: Record<string, string> = {
-  New: "#8A90A0",
-  "To Do": "#8A90A0",
-  Approved: "#8A90A0",
-  "Ready for Dev": "#F5B341",
-  "Ready for Development": "#F5B341",
-  Active: "#F5B341",
-  "In Progress": "#F5B341",
-  Committed: "#F5B341",
-  Doing: "#F5B341",
-  "Code Review": "#9B8CFF",
-  "In Review": "#9B8CFF",
-  "Ready for QA": "#5B9DFF",
-  "In QA": "#5B9DFF",
-  Testing: "#5B9DFF",
-  Resolved: "#35D6A4",
-  Done: "#35D6A4",
-  Closed: "#35D6A4",
-  Completed: "#35D6A4",
-  Removed: "#FF6B6B",
+  New: HUE.neutral,
+  "To Do": HUE.neutral,
+  Approved: HUE.neutral,
+  "Ready for Dev": HUE.amber,
+  "Ready for Development": HUE.amber,
+  Active: HUE.amber,
+  "In Progress": HUE.amber,
+  Committed: HUE.amber,
+  Doing: HUE.amber,
+  "Code Review": HUE.purple,
+  "In Review": HUE.purple,
+  "Ready for QA": HUE.blue,
+  "In QA": HUE.blue,
+  Testing: HUE.blue,
+  Resolved: HUE.green,
+  Done: HUE.green,
+  Closed: HUE.green,
+  Completed: HUE.green,
+  Removed: HUE.red,
 };
 
 export function statusColor(status: string): string {
-  return STATUS_COLORS[status] ?? "#8A90A0";
+  return STATUS_COLORS[status] ?? HUE.neutral;
 }
 
 // A ticket can be implemented only when it is actively in the dev lane:
@@ -110,12 +124,12 @@ export function isFixReviewSkill(skill?: string): boolean {
 }
 
 export const RUN_COLOR: Record<UiRunState, string> = {
-  running: "#F5B341",
-  waiting: "#9BA6E8",
-  succeeded: "#35D6A4",
-  failed: "#FF6B6B",
-  cancelled: "#5B6273",
-  none: "#5B6273",
+  running: HUE.amber,
+  waiting: "var(--te-indigo)",
+  succeeded: HUE.green,
+  failed: HUE.red,
+  cancelled: "var(--te-faint)",
+  none: "var(--te-faint)",
 };
 
 export const RUN_LABEL: Record<UiRunState, string> = {
@@ -132,25 +146,80 @@ export const RUN_LABEL: Record<UiRunState, string> = {
 // across TicketExecutor.tsx, SprintPicker.tsx, Combobox.tsx and Bolts.tsx.
 // See UI-STYLEGUIDE.md — any new element should compose these instead of
 // re-typing raw gradient/clip-path/color literals.
+/**
+ * Every token is a `var()`, not a literal, and that is what makes the EmeHub
+ * theme possible: the values live in `app/globals.css` under `:root` and
+ * `:root[data-theme="emehub"]`, so flipping one attribute on <html> repaints the
+ * app without a single component re-rendering.
+ *
+ * Two consequences to respect when using these:
+ *
+ * 1. **They are CSS values, not colours.** Anything that needs a real hex — a
+ *    WebGL/canvas/three.js colour — must resolve one at runtime with
+ *    `resolveColor()` below. Handing `var(--te-accent)` to `new THREE.Color()`
+ *    throws.
+ * 2. **They cannot be string-manipulated.** `COLORS.warning + "55"` used to
+ *    append an alpha byte to a hex; that is now `var(--te-warning)55` and paints
+ *    nothing. Use `color-mix()` or a literal rgba for a tinted variant.
+ *
+ * SVG *presentation attributes* (`fill="…"`, `stroke="…"`) do not resolve
+ * `var()` either — those sites pass the token through `style` instead, which
+ * does.
+ */
 export const COLORS = {
-  accent: "#FB7250",
-  success: "#35D6A4",
-  danger: "#FF6B6B",
-  warning: "#F5B341",
-  info: "#5B9DFF",
-  indigo: "#9BA6E8",
-  text: "#ECEEF3",
+  accent: "var(--te-accent)",
+  success: "var(--te-success)",
+  danger: "var(--te-danger)",
+  warning: "var(--te-warning)",
+  info: "var(--te-info)",
+  indigo: "var(--te-indigo)",
+  text: "var(--te-text)",
   /** One step below `text` — list labels and secondary button copy. Was an
    *  inline literal in several places before it was named here. */
-  textSoft: "#C7CCD8",
-  textDim: "#8A90A0",
-  textMuted: "#6B7283",
-  faint: "#5B6273",
-  border: "#262B36",
-  borderSubtle: "#1E232C",
-  panelBg: "#111419",
-  panelBgDark: "#0A0B0E",
+  textSoft: "var(--te-text-soft)",
+  textDim: "var(--te-text-dim)",
+  textMuted: "var(--te-text-muted)",
+  faint: "var(--te-faint)",
+  border: "var(--te-border)",
+  borderSubtle: "var(--te-border-subtle)",
+  panelBg: "var(--te-panel-bg)",
+  panelBgDark: "var(--te-panel-bg-dark)",
 } as const;
+
+/** Surfaces that were inline hex literals scattered through the helpers below.
+ *  Named and themed for the same reason the palette is. */
+export const SURFACE = {
+  app: "var(--te-app-bg)",
+  inset: "var(--te-inset-bg)",
+  modal: "var(--te-modal-bg)",
+} as const;
+
+/** Shape tokens. The two design languages differ in more than hue — D-Agent
+ *  chips are corner-cut hexagons, EmeHub's are rounded rectangles — so the
+ *  clip-path and the radius are both themed and always applied together. */
+export const SHAPE = {
+  radiusChip: "var(--te-radius-chip)",
+  radiusCard: "var(--te-radius-card)",
+  radiusPanel: "var(--te-radius-panel)",
+  panelBlur: "var(--te-panel-blur)",
+} as const;
+
+/**
+ * Resolve a `var(--…)` token to the literal the browser computed for it.
+ *
+ * For the handful of consumers that cannot take a CSS value at all: three.js
+ * materials, canvas `fillStyle`, anything doing colour maths. Returns the
+ * fallback during SSR (there is no computed style on the server) and whenever
+ * the property is unset, so a caller never gets an empty string — which
+ * three.js reads as black.
+ */
+export function resolveColor(token: string, fallback = "#FB7250"): string {
+  if (typeof window === "undefined") return fallback;
+  const name = token.trim().replace(/^var\(\s*/, "").replace(/\s*\)$/, "").split(",")[0].trim();
+  if (!name.startsWith("--")) return token;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 
 /**
  * The type scale. Before this existed the app used **16 different sizes** between
@@ -185,7 +254,14 @@ export const FONT = {
 // tabs, search bar, settings/close buttons). Prototype used 6/7/8px corners
 // interchangeably — pick one of those three, don't invent a new radius.
 export function clipCorner(px: 6 | 7 | 8 = 8): string {
-  return `polygon(${px}px 0,100% 0,100% calc(100% - ${px}px),calc(100% - ${px}px) 100%,0 100%,0 ${px}px)`;
+  return `var(--te-clip-${px})`;
+}
+
+/** The chip shape, both halves of it. A theme that drops the corner cut has to
+ *  put a radius back or every chip turns into a bare rectangle, so the two are
+ *  never applied separately. */
+export function chipShape(px: 6 | 7 | 8 = 8): CSSProperties {
+  return { clipPath: clipCorner(px), borderRadius: SHAPE.radiusChip };
 }
 
 type RingOpts = {
@@ -236,7 +312,12 @@ export function ringBorder(opts: RingOpts): CSSProperties {
       : `conic-gradient(from var(--angle), transparent, ${ring}, ${highlight}, ${ring}, transparent 70%)`;
   const style: CSSProperties = {
     border: "2.25px solid transparent",
-    background: `linear-gradient(${fill},${fill}) padding-box, ${conic} border-box`,
+    // The border-box layer is themeable as a whole. D-Agent leaves
+    // `--te-ring-image` unset and gets the spinning conic; EmeHub sets it to a
+    // flat hairline, because a rotating energy ring is not in that design
+    // language. The spinAngle animation then drives a `--angle` nobody reads,
+    // which costs nothing and keeps this branch-free.
+    background: `linear-gradient(${fill},${fill}) padding-box, var(--te-ring-image, ${conic}) border-box`,
     animation: extraAnimation
       ? `spinAngle ${duration}s linear infinite, ${extraAnimation}`
       : `spinAngle ${duration}s linear infinite`,
@@ -258,7 +339,7 @@ export function card(opts?: {
 }): CSSProperties {
   const {
     padding = "11px 13px",
-    radius = "10px",
+    radius = SHAPE.radiusCard,
     border = COLORS.border,
     background = COLORS.panelBg,
   } = opts || {};
@@ -276,18 +357,10 @@ const TINT: Record<
   "success" | "danger" | "warning" | "accent",
   { border: string; background: string }
 > = {
-  success: {
-    border: "#24382F",
-    background:
-      "linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02))",
-  },
-  danger: { border: "#4A2626", background: "rgba(255,107,107,.06)" },
-  warning: { border: "#3A2F22", background: "rgba(245,179,65,.06)" },
-  accent: {
-    border: "#2A2018",
-    background:
-      "linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02))",
-  },
+  success: { border: "var(--te-tint-success-bd)", background: "var(--te-tint-success-bg)" },
+  danger: { border: "var(--te-tint-danger-bd)", background: "var(--te-tint-danger-bg)" },
+  warning: { border: "var(--te-tint-warning-bd)", background: "var(--te-tint-warning-bg)" },
+  accent: { border: "var(--te-tint-accent-bd)", background: "var(--te-tint-accent-bg)" },
 };
 export function tintedCard(
   tone: keyof typeof TINT,
@@ -310,7 +383,7 @@ export function modalShellStyle(opts?: { radius?: string }): CSSProperties {
   return {
     border: `1px solid ${COLORS.border}`,
     borderRadius: opts?.radius ?? "16px",
-    background: "#14171D",
+    background: SURFACE.modal,
     boxShadow: "0 40px 90px -30px #000",
     animation: "slideIn .28s both",
   };
@@ -353,7 +426,7 @@ export function fieldInput(opts?: {
   fontSize?: string;
 }): CSSProperties {
   return {
-    ...card({ padding: "0 13px", radius: "9px", background: "#0E1015" }),
+    ...card({ padding: "0 13px", radius: "9px", background: SURFACE.inset }),
     height: opts?.height ?? "40px",
     color: COLORS.text,
     fontFamily: "var(--font-mono), monospace",
@@ -373,7 +446,7 @@ export function codeBlock(opts?: {
     ...card({
       padding: opts?.padding ?? "10px 12px",
       radius: "9px",
-      background: "#0E1015",
+      background: SURFACE.inset,
     }),
     color: COLORS.text,
     fontFamily: "var(--font-mono), monospace",
@@ -407,7 +480,7 @@ export function dropdownPanelStyle(opts?: {
   return {
     border: `1px solid ${COLORS.border}`,
     borderRadius: "11px",
-    background: "#0E1015",
+    background: SURFACE.inset,
     boxShadow: "0 22px 54px -24px #000",
     padding: "5px",
     ...(opts?.minWidth ? { minWidth: opts.minWidth } : {}),
@@ -476,64 +549,71 @@ export function ctaButtonStyle(
   if (variant === "primary")
     return {
       ...base,
-      color: "#0B0C10",
-      ...ringBorder({ fill: COLORS.accent, variant: "filled", cornerPx }),
+      color: "var(--te-btn-primary-text)",
+      ...ringBorder({ fill: "var(--te-btn-primary-fill)", variant: "filled", cornerPx }),
+      borderRadius: SHAPE.radiusChip,
+      boxShadow: "var(--te-btn-primary-shadow)",
       animation: undefined,
     };
   if (variant === "success")
     return {
       ...base,
-      color: "#5BE8B8",
+      color: "var(--te-btn-success-text)",
       // Opaque fill (not the translucent rgba used for static success tints) — ringBorder's
       // mask only hides the spinning conic-gradient inside the padding-box when that layer
       // is fully opaque; a translucent fill lets the sweep bleed through the whole button.
+      // (EmeHub overrides the ring with a flat hairline, so a tint is safe there.)
       ...ringBorder({
-        fill: "#162F2C",
+        fill: "var(--te-btn-success-fill)",
         ring: COLORS.success,
-        highlight: "#baf5e3",
+        highlight: "var(--te-btn-success-sheen)",
         duration: 3,
         cornerPx,
       }),
+      borderRadius: SHAPE.radiusChip,
     };
   if (variant === "warning")
     return {
       ...base,
-      color: "#C7CCD8",
+      color: "var(--te-btn-warning-text)",
       ...ringBorder({
-        fill: "#2A2E38",
+        fill: "var(--te-btn-warning-fill)",
         ring: COLORS.warning,
         highlight: COLORS.warning,
         duration: 1.6,
         cornerPx,
       }),
+      borderRadius: SHAPE.radiusChip,
     };
   if (variant === "danger")
     return {
       ...base,
-      color: "#FFB3AD",
+      color: "var(--te-btn-danger-text)",
       ...ringBorder({
-        fill: "#2E1A1C",
+        fill: "var(--te-btn-danger-fill)",
         ring: COLORS.danger,
-        highlight: "#ffd3ce",
+        highlight: "var(--te-btn-danger-sheen)",
         duration: 4.2,
         cornerPx,
       }),
+      borderRadius: SHAPE.radiusChip,
     };
   if (variant === "outline")
     return {
       ...base,
-      color: "#C7CCD8",
+      color: "var(--te-btn-outline-text)",
       fontWeight: 600,
-      border: "1.5px solid #2A2F3A",
+      border: "1.5px solid var(--te-btn-outline-border)",
       background: "transparent",
-      clipPath: clipCorner(opts?.cornerPx ?? 7),
+      ...chipShape(opts?.cornerPx ?? 7),
       animation: undefined,
     };
   // ghost — dark fill + accent ring (the "secondary next action" button)
   return {
     ...base,
-    color: "#ECEEF3",
-    ...ringBorder({ fill: "#1A1E25", duration: 3.2, cornerPx }),
+    color: "var(--te-btn-ghost-text)",
+    ...ringBorder({ fill: "var(--te-btn-ghost-fill)", duration: 3.2, cornerPx }),
+    borderRadius: SHAPE.radiusChip,
   };
 }
 
@@ -555,19 +635,20 @@ export function tabStyle(opts: {
     marginBottom: "3px",
     transition: "color .15s, transform .12s",
     opacity: enabled ? 1 : 0.5,
-    clipPath: clipCorner(6),
+    ...chipShape(6),
   };
   if (active)
     return {
       ...base,
-      color: "#F3F5F9",
-      ...ringBorder({ fill: "#171A21", duration: 3.2, shape: "none" }),
+      color: "var(--te-tab-text)",
+      ...ringBorder({ fill: "var(--te-tab-fill)", duration: 3.2, shape: "none" }),
+      borderRadius: SHAPE.radiusChip,
     };
   return {
     ...base,
     border: "1.5px solid transparent",
     background: "transparent",
-    color: enabled ? COLORS.textDim : "#3A4150",
+    color: enabled ? COLORS.textDim : "var(--te-tab-disabled-text)",
   };
 }
 
@@ -592,19 +673,23 @@ export function statusPillActive(status: string): CSSProperties {
     ...pill({ color: statusColor(status), size: "md", weight: 700 }),
     cursor: "pointer",
     outline: "none",
-    ...ringBorder({ fill: "#171A21", shape: "pill" }),
+    ...ringBorder({ fill: "var(--te-tab-fill)", shape: "pill" }),
   };
 }
 
 // Toast accent colors — success (default) vs error variant. Border/stroke/progress-bar
 // all key off the same tone so a failure toast reads unmistakably differently.
-export function toastStyle(kind: "success" | "error"): {
+// `warning` is the third tone on purpose: it is what an action that *succeeded*
+// but left something unusable looks like. Reporting one of those in the danger
+// palette reads as "your change was rejected", which is the opposite of what
+// happened. Border matches TINT.warning so the two agree.
+export function toastStyle(kind: "success" | "error" | "warning"): {
   border: string;
   accent: string;
 } {
-  return kind === "error"
-    ? { border: "#4A2626", accent: COLORS.danger }
-    : { border: "#24382F", accent: COLORS.success };
+  if (kind === "error") return { border: "var(--te-tint-danger-bd)", accent: COLORS.danger };
+  if (kind === "warning") return { border: "var(--te-tint-warning-bd)", accent: COLORS.warning };
+  return { border: "var(--te-tint-success-bd)", accent: COLORS.success };
 }
 
 export function hue(name: string): number {

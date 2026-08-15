@@ -4,8 +4,9 @@ import type { EndReason } from "../../types";
 import { fmtDuration } from "../format";
 import { collectFileChanges, summarizeChanges } from "../git";
 import { execNode, releaseMcp } from "./exec";
+import { recordLessons } from "../knowledgeStore";
 import { closeStep, openStep, saveArtifact, saveRun, saveTransition } from "./persist";
-import { clearRunArtifacts, readPlanFile } from "./graphs";
+import { clearRunArtifacts, isReviewSkill, readPlanFile } from "./graphs";
 import { END, FAIL, type Graph, type LiveRun, type NodeResult, type Target } from "./types";
 
 // A backstop, not a policy. Cycles are legitimate (revise the plan, fix what an
@@ -125,6 +126,29 @@ function promoteContractFields(live: LiveRun, data: Record<string, unknown>) {
   if (delivers && typeof data.summary === "string" && data.summary) live.resultText = data.summary;
 }
 
+/** Bank whatever this node learned about the repository (lib/execution/knowledge.ts).
+ *
+ *  Unlike every other write in drive(), a failure here is swallowed — and that
+ *  is not the old "persist() swallows everything" habit coming back. The rule
+ *  above is that Postgres is the source of truth *between nodes*: a lost channel
+ *  or transition means the run continues on a history that never happened.
+ *  A lesson is between *runs* and nothing routes on it, so losing one costs the
+ *  next ticket some tokens and nothing else. Failing a committed run over a note
+ *  would be the more expensive mistake.
+ *
+ *  Only a node that failed is skipped: a turn that errored out did not learn
+ *  anything about the repo, it learned something about itself. */
+async function harvestLessons(live: LiveRun, nodeId: string, r: NodeResult) {
+  if (!r.ok) return;
+  try {
+    const scope = isReviewSkill(live.ctx.skill) ? "review" : "implement";
+    const n = await recordLessons(live.ctx.rootRepo, live.id, scope, r.data);
+    if (n) live.logLines.push({ text: `● ${nodeId}: recorded ${n} repo lesson(s)`, kind: "step" });
+  } catch {
+    /* knowledge is an optimisation for the next run, never this run's business */
+  }
+}
+
 // ---- the driver ----
 
 /** Walk the graph from `from` until it parks, ends, or fails.
@@ -183,6 +207,7 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       // The reducer: a node writes only its own channel, never another's.
       live.ctx.channels[node.id] = result.data;
       promoteContractFields(live, result.data);
+      await harvestLessons(live, node.id, result);
 
       const edge = graph.edges[node.id];
       if (!edge) {

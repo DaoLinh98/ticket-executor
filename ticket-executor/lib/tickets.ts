@@ -1,6 +1,6 @@
 import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
-  adoCreds, getSprintTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  adoCreds, getScopedTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations,
   type ProjectInfo,
@@ -102,18 +102,6 @@ export async function loadTickets(
       return { tickets: [], sprint: "", connected: false, notice: hubNotice(e) };
     }
   }
-  // Off the hub, only the sprint view exists. Said rather than silently served
-  // as a sprint: the two lists look alike enough that a wrong one would be
-  // taken at face value, and the fix ("turn on EmeHub") is not one the user
-  // could guess from a list of the wrong tickets.
-  if (scope !== "sprint") {
-    return {
-      tickets: [],
-      sprint: "",
-      connected: true,
-      notice: `The ${scope} view reads through EmeHub. Turn on "Part of EmeHub" in Settings, or switch back to Sprint.`,
-    };
-  }
   switch (provider) {
     case "azure-devops": {
       if (!(await adoCreds())) {
@@ -127,13 +115,28 @@ export async function loadTickets(
       if (!project) {
         return { tickets: [], sprint: "", connected: true, notice: "Select a project to load its tickets." };
       }
-      const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true };
+      // All three views, off the hub as well as on it. Each is its own provider
+      // query (`getScopedTickets`) — none of them is a filter this side could
+      // apply to a sprint fetch, because a backlog item and most of a board sit
+      // outside the iteration the sprint query is bounded by.
+      const { tickets, sprintName, truncated } = await getScopedTickets(project, scope, sprintOverride);
+      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true, truncated };
     }
     case "github": {
       const creds = await githubCreds();
       if (!creds) {
         return { tickets: [], sprint: "", connected: false, notice: "GitHub is not configured — set the repository URL and access token in Settings." };
+      }
+      // Only the sprint view is wired for GitHub: issues have no iteration and
+      // no kanban column here, so a backlog or a board would be the same list
+      // under a different name — a claim the user would take at face value.
+      if (scope !== "sprint") {
+        return {
+          tickets: [],
+          sprint: "",
+          connected: true,
+          notice: `The ${scope} view is not wired for GitHub yet — switch back to Sprint.`,
+        };
       }
       const tickets = await getGithubIssues(creds.url, creds.token);
       return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: parseRepoLabel(creds.url), connected: true };

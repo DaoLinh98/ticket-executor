@@ -30,6 +30,7 @@ const CTX: RunContext = {
   rootRepo: "C:/repo",
   cwd: "C:/repo",
   baseSha: "abc123",
+  knowledge: "",
   channels: {},
   visits: {},
 };

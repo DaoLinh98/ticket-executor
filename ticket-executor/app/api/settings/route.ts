@@ -40,6 +40,7 @@ function publicSettings(s: SettingRow, cred: Credential) {
     scope: s.scope,
     personalAccount: s.personalAccount,
     animatedBackground: s.animatedBackground,
+    emehubTheme: s.emehubTheme,
     clickEffects: s.clickEffects,
     autoImplement: s.autoImplement,
     autoResolveCodeReview: s.autoResolveCodeReview,
@@ -79,6 +80,8 @@ export async function POST(req: Request) {
   }
   if (typeof body.animatedBackground === "boolean")
     data.animatedBackground = body.animatedBackground;
+  if (typeof body.emehubTheme === "boolean")
+    data.emehubTheme = body.emehubTheme;
   if (typeof body.clickEffects === "boolean")
     data.clickEffects = body.clickEffects;
   if (typeof body.autoImplement === "boolean")

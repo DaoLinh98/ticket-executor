@@ -75,6 +75,12 @@ export type RunContext = {
   cwd: string;
   /** Commit the worktree branched from; the run's diff is measured against it. */
   baseSha: string;
+  /** What earlier runs against this `rootRepo` learned, already rendered as a
+   *  prompt block (lib/execution/knowledge.ts). Resolved once at run start and
+   *  carried here rather than fetched by the prompt builder — a builder is a
+   *  pure synchronous function of this context, and it stays one. Empty when
+   *  there is nothing learned yet, which is the normal state of a new repo. */
+  knowledge: string;
   /** nodeId → that node's validated output. The only channel between nodes. */
   channels: Record<string, Record<string, unknown>>;
   /** nodeId → how many times it has been entered. Cycle accounting for edges. */

@@ -8,15 +8,17 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 
 declare global {
   interface Window {
-    __reactor?: { setMode: (m: string) => void; setFrozen: (frozen: boolean) => void };
+    __reactor?: { setMode: (m: string) => void };
   }
 }
 
 // Ported from the prototype's initReactor() — the animated WebGL background.
-export default function Reactor({ accent = "#FB7250", frozen = false }: { accent?: string; frozen?: boolean }) {
+//
+// There is no "paused" state: the `animatedBackground` setting unmounts this
+// component (see AppReactor), which disposes the WebGL context and ends the
+// animation loop. A frozen-but-mounted backdrop would keep paying for both.
+export default function Reactor({ accent = "#FB7250" }: { accent?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frozenRef = useRef(frozen);
-  frozenRef.current = frozen;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -512,9 +514,6 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
           stt.flash = 1;
         } else stt.target = 1;
       },
-      setFrozen(f: boolean) {
-        frozenRef.current = f;
-      },
     };
 
     let mx = 0,
@@ -528,10 +527,6 @@ export default function Reactor({ accent = "#FB7250", frozen = false }: { accent
     const timer = new THREE.Timer();
     let raf = 0;
     const tick = () => {
-      if (frozenRef.current) {
-        raf = requestAnimationFrame(tick);
-        return;
-      }
       timer.update();
       const t = timer.getElapsed();
       stt.speed += (stt.target - stt.speed) * 0.045;

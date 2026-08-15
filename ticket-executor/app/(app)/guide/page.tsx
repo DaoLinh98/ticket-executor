@@ -213,7 +213,7 @@ export default function GuidePage() {
                     <span style={{ flex: 1 }} />
                     {s.checkGroup && <StatusBadge status={v.status} detail={v.detail} />}
                     <svg
-                      width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={COLORS.textMuted} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+                      width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
                       style={{ flex: "0 0 auto", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .28s ease" }}
                     >
                       <path d="M6 9l6 6 6-6" />

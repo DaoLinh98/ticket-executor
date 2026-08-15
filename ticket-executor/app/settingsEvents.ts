@@ -8,7 +8,13 @@
 // bundle.
 export const SETTINGS_UPDATED_EVENT = "te:settings-updated";
 
+/** Where the last known theme is mirrored so the document can be painted in the
+ *  right brand before the settings fetch resolves. The database stays the source
+ *  of truth; this is a cache with exactly one job — no flash of the wrong theme. */
+export const THEME_STORAGE_KEY = "te:theme";
+
 export type SettingsUpdatedDetail = {
   animatedBackground?: boolean;
+  emehubTheme?: boolean;
   clickEffects?: boolean;
 };

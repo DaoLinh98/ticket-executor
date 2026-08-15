@@ -9,6 +9,20 @@ export function invokeSkill(c: RunContext, mode: string): string {
   return `/${c.skill} Provider: ${c.provider} - ${target} - Project name: ${c.project}${mode ? ` - Mode: ${mode}` : ""}`;
 }
 
+/**
+ * The opening prompt of a run, with what earlier runs learned about this repo
+ * appended.
+ *
+ * Only the *first* turn gets it. A `resume` node is already carrying the block
+ * in its transcript, and re-stating it would pay for the same lines twice while
+ * inviting the agent to treat a repetition as new emphasis. `publish` is fresh
+ * but is not deciding anything a repo convention bears on — it pushes a branch
+ * that is already final.
+ */
+export function openingPrompt(c: RunContext, mode: string): string {
+  return invokeSkill(c, mode) + c.knowledge;
+}
+
 // Resume prompts stay short: the session already holds the ticket and the
 // codebase reading. Each opens with the same `Mode:` token the first turn used —
 // the skill's mode table treats an absent Mode as a different flow entirely.

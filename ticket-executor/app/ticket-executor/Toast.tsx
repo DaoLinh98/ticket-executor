@@ -10,7 +10,9 @@ import { COLORS, FONT, toastStyle } from "@/lib/ui";
 export type ToastMessage = {
   id: number;
   msg: string;
-  kind: "success" | "error";
+  /** `warning` is for an action that succeeded but left something unusable —
+   *  distinct from `error`, which means it did not happen at all. */
+  kind: "success" | "error" | "warning";
   /** How long it stays up, in ms. Hovering pauses this. */
   durationMs?: number;
 };
@@ -42,9 +44,18 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
       style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, maxWidth: "min(560px, calc(100vw - 48px))", display: "flex", alignItems: "flex-start", gap: "11px", padding: "14px 16px 14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "#14171D", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}
     >
       {toast.kind === "error" ? (
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={tone.accent} strokeWidth="2.6" style={{ flex: "0 0 auto", marginTop: "2px" }}><path d="M6 6l12 12M18 6L6 18" style={{ strokeDasharray: 34, strokeDashoffset: 34, animation: "draw .5s .1s ease forwards" }} /></svg>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}><path d="M6 6l12 12M18 6L6 18" style={{ strokeDasharray: 34, strokeDashoffset: 34, animation: "draw .5s .1s ease forwards" }} /></svg>
+      ) : toast.kind === "warning" ? (
+        // The tone has to be readable without the colour — the icon is what a
+        // glance actually lands on, and a red ✕ next to "Settings saved" reads
+        // as a contradiction.
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}>
+          <path d="M12 3.2L1.9 20.8h20.2z" style={{ strokeDasharray: 62, strokeDashoffset: 62, animation: "draw .5s .1s ease forwards" }} />
+          <path d="M12 9.6v4.4" style={{ strokeDasharray: 5, strokeDashoffset: 5, animation: "draw .3s .5s ease forwards" }} />
+          <path d="M12 17.6v.01" style={{ strokeDasharray: 1, strokeDashoffset: 1, animation: "draw .2s .7s ease forwards" }} />
+        </svg>
       ) : (
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={tone.accent} strokeWidth="2.6" style={{ flex: "0 0 auto", marginTop: "2px" }}><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .5s .1s ease forwards" }} /></svg>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .5s .1s ease forwards" }} /></svg>
       )}
       <span style={{ flex: 1, minWidth: 0, fontSize: FONT.md, fontWeight: 600, color: COLORS.text, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{toast.msg}</span>
       {onClose && (

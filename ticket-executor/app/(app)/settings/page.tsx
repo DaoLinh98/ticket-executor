@@ -16,7 +16,7 @@ import PageHeading from "../PageHeading";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
-  animatedBackground: true, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
+  animatedBackground: true, emehubTheme: false, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
   manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
   evaluateBeforePublish: false, hubEnabled: false, hubConnectionId: "",
@@ -94,7 +94,7 @@ export default function SettingsPage() {
 
   // The Toast owns its own countdown (and pauses it on hover), so all this does
   // is hand it a fresh message.
-  const showToast = (msg: string, kind: "success" | "error" = "success", ms = 7000) =>
+  const showToast = (msg: string, kind: "success" | "error" | "warning" = "success", ms = 7000) =>
     setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
 
   const loadHub = async () => {
@@ -211,8 +211,19 @@ export default function SettingsPage() {
         ? "Choose which EmeHub connection to run against."
         : "";
     }
+    // An *absent* credential does not block the save, and that is the whole of
+    // the fix here. Save posts all four tabs as one object, so requiring the org
+    // URL made an unrelated Appearance change unsaveable — and, worse, made
+    // leaving hub mode impossible: the toggle lives on this tab, and turning it
+    // off with nothing in the local fields (which is the normal state of an
+    // install that has only ever run on the hub) failed validation before the
+    // new value could ever reach the server. Being unconfigured is reported
+    // after the save instead, and refused where it actually costs something —
+    // preflight refuses to start a run, and Test connection says so out loud.
     const url = settings.org.trim();
-    if (!url) return `${pm.urlLabel} is required.`;
+    if (!url) return "";
+    // A value that *is* there and is wrong is still a hard error: saving a
+    // malformed URL only moves the failure to a place with less context.
     try {
       const u = new URL(url);
       if (!/^https?:$/.test(u.protocol)) return "URL must start with http:// or https://";
@@ -222,6 +233,12 @@ export default function SettingsPage() {
     if (!settings.hasPat && !settings.pat.trim()) return `${pm.tokenLabel} is required.`;
     return "";
   };
+
+  /** Hub off and no local credential — legal to save, but nothing can run on it.
+   *  Said out loud on save so the gap is never discovered by a failed run.
+   *  Takes the *saved* settings rather than reading state: the server's echo is
+   *  what is now in effect, and the local copy is one render behind it. */
+  const credentialMissing = (s: SettingsView) => !s.hubEnabled && !s.org.trim();
 
   const save = async (e?: React.MouseEvent) => {
     const v = validate();
@@ -245,11 +262,20 @@ export default function SettingsPage() {
         new CustomEvent(SETTINGS_UPDATED_EVENT, {
           detail: {
             animatedBackground: data.settings.animatedBackground,
+            emehubTheme: data.settings.emehubTheme,
             clickEffects: data.settings.clickEffects,
           },
         })
       );
-      showToast("Settings saved.");
+      if (credentialMissing(data.settings)) {
+        showToast(
+          `Settings saved. ${pm.name} is not configured — add the ${pm.urlLabel} and ${pm.tokenLabel} before running a ticket.`,
+          "warning",
+          10000
+        );
+      } else {
+        showToast("Settings saved.");
+      }
     } catch {
       setError("Failed to save settings");
     }
@@ -510,10 +536,17 @@ export default function SettingsPage() {
   const appearancePane = (
     <div style={pane}>
       <ToggleRow
+        label="EmeHub theme"
+        on={settings.emehubTheme}
+        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, emehubTheme: !s.emehubTheme })); }}
+        desc="On: repaint the whole app in the EmeHub design language — EMESOFT red, glass panels, rounded corners, ambient blooms. Off: the D-Agent look."
+      />
+      <div style={divider} />
+      <ToggleRow
         label="Animated background"
         on={settings.animatedBackground}
         onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, animatedBackground: !s.animatedBackground })); }}
-        desc="Turn off to freeze the 3D reactor backdrop."
+        desc="Turn off to remove the 3D reactor backdrop entirely."
       />
       <div style={divider} />
       <ToggleRow
@@ -557,13 +590,13 @@ export default function SettingsPage() {
 
             {error && (
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={COLORS.danger} strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" style={{ stroke: COLORS.danger, flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
                 <span style={{ fontSize: FONT.base, color: "#FF8F8F", lineHeight: 1.5 }}>{error}</span>
               </div>
             )}
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
-              <button onClick={save} style={{ height: "34px", padding: "0 20px", color: "#0B0C10", fontSize: FONT.base, fontWeight: 700, cursor: "pointer", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3, cornerPx: 7 }) }}>Save changes</button>
+              <button onClick={save} style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 7 }), padding: "0 20px" }}>Save changes</button>
             </div>
           </div>
         )}

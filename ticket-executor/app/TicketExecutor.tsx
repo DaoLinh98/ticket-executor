@@ -154,6 +154,7 @@ export default function TicketExecutor() {
     pat: "",
     hasPat: false,
     animatedBackground: true,
+    emehubTheme: false,
     autoImplement: true,
     autoResolveCodeReview: true,
     scope: "team",
