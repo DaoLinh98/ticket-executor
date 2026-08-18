@@ -93,7 +93,30 @@ export async function writeClaudeCredential(
   source: ClaudeAccountSource,
   raw: string,
 ): Promise<string> {
-  const dir = claudeCredentialDir(source);
+  return writeCredentialInto(claudeCredentialDir(source), raw);
+}
+
+/**
+ * A throwaway copy for the System Check's live verification, deliberately **not**
+ * the directory a run uses.
+ *
+ * Verifying means letting the CLI authenticate for real, and the CLI rewrites
+ * this file: it rotates the token on success and blanks every field on a failed
+ * refresh. Pointing that at the run directory would let a diagnostic wipe the
+ * credential a run in flight is holding — the check would cause the failure it
+ * is meant to detect. A rotation worth keeping is not lost by isolating it: the
+ * verifier posts it back to the hub, which is the authoritative copy every run
+ * re-reads at start.
+ */
+export function claudeProbeDir(): string {
+  return path.join(homedir(), ".ticket-executor", "claude-config", "probe");
+}
+
+export async function writeClaudeProbeCredential(raw: string): Promise<string> {
+  return writeCredentialInto(claudeProbeDir(), raw);
+}
+
+async function writeCredentialInto(dir: string, raw: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   await lockDown(dir, true);
 

@@ -17,6 +17,7 @@ import { encryptSecret, decryptSecret } from "../crypto";
 import { claudeCredentialDir, writeClaudeCredential, type ClaudeAccountSource } from "../claudeConfig";
 import { isHubError } from "../hub";
 import {
+  claudeCredentialHealth,
   mintClaudeGrant,
   resolveClaudeCredentialWithToken,
   type ResolvedClaudeCredential,
@@ -136,7 +137,30 @@ async function hubClaudeCredential(
 > {
   if (!hubEnabled) return { ok: true, credential: null };
   try {
-    return { ok: true, credential: await resolveClaudeCredentialWithToken() };
+    const credential = await resolveClaudeCredentialWithToken();
+    // The hub answering proves a row exists, not that its tokens still work: a
+    // row reading `refreshable` has handed out a blanked file and the run died at
+    // its first turn with "OAuth session expired and could not be refreshed" —
+    // after the Run row existed, so it counted as an agent failure. A credential
+    // the CLI provably cannot use is refused here instead, like every other
+    // admission rule. `refresh-needed` is *not* refused: an expired access token
+    // with a live refresh token is the normal case the CLI handles itself.
+    const health = claudeCredentialHealth(credential.credentials);
+    if (health.state !== "usable" && health.state !== "refresh-needed") {
+      const why =
+        health.state === "blanked"
+          ? "the credential EmeHub holds has every token blanked (the CLI wipes the file in place after a failed refresh)"
+          : health.state === "no-refresh"
+            ? "its access token has expired and it carries no refresh token"
+            : "the credential EmeHub returned could not be read as an OAuth credential";
+      return {
+        ok: false,
+        error:
+          `EmeHub's Claude credential cannot authenticate a run: ${why}. ` +
+          `Re-authenticate the account in EmeHub › Claude Settings — starting anyway would fail at the first turn.`,
+      };
+    }
+    return { ok: true, credential };
   } catch (e) {
     // The four hub failures read differently to a person and must keep doing so
     // (INTEGRATION.md §5): "nobody has configured one" is fixed by an admin,
@@ -172,8 +196,17 @@ async function materialiseHubClaude(
   const source = credential.source as ClaudeAccountSource;
   live.claudeCredentialDir = await writeClaudeCredential(source, credential.credentials);
   live.claudeSource = source;
+  // Two facts, not one: what the hub's row says, and what the token actually
+  // written to disk says. They can disagree — a row reading `refreshable` next to
+  // an expired token is the shape that produced an unexplained auth failure — and
+  // a log that carried only the hub's word left nothing to read that back from.
+  const health = claudeCredentialHealth(credential.credentials);
+  const tokenState =
+    health.state === "usable"
+      ? `token valid until ${health.expiresAt?.toLocaleString()}`
+      : "token expired — the CLI must refresh it on the first turn";
   live.logLines.push({
-    text: `● Claude credential: EmeHub — ${source === "shared" ? "shared workspace account" : "your own account"}${credential.label ? ` (${credential.label})` : ""}, status ${credential.status}.`,
+    text: `● Claude credential: EmeHub — ${source === "shared" ? "shared workspace account" : "your own account"}${credential.label ? ` (${credential.label})` : ""}, hub status ${credential.status}, ${tokenState}.`,
     kind: "step",
   });
 

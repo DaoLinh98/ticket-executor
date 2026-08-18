@@ -4,6 +4,7 @@ import {
   HubNotConfigured, HubRejected, HubSignedOut, HubUnreachable,
   hubSessionState, hubUrl, listHubConnections,
 } from "@/lib/hub";
+import { getClaudeProbe } from "@/lib/preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,22 @@ export async function GET() {
     hubSessionState(),
   ]);
 
+  // Whether the hub's Claude credential has been *proved* to still authenticate,
+  // and how long ago. Read from the deep System Check's cache, never measured
+  // here: verifying costs a real CLI turn, and a Settings page load must not
+  // spend tokens. A miss is reported as "not verified" — which is the state that
+  // needs saying out loud, because the credential can be revoked at the hub (or
+  // superseded by a fresh login elsewhere) without anything on this page moving.
+  const probe = getClaudeProbe();
+  const claudeCredential = {
+    state: !probe ? ("unverified" as const) : probe.ok ? ("ok" as const) : ("failed" as const),
+    at: probe?.at ?? null,
+    message: probe?.message ?? "",
+    fix: probe?.fix ?? "",
+  };
+
   const base = {
+    claudeCredential,
     enabled: setting?.hubEnabled ?? false,
     // Empty means the deployment was never pointed at a hub. The UI must offer
     // to fix that rather than letting every call fail with a fetch error.

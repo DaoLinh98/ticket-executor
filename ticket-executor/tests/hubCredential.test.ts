@@ -18,6 +18,7 @@ process.env.DAGENT_HUB_URL = "https://hub.invalid";
 process.env.DATABASE_URL ||= "postgresql://u:p@127.0.0.1:1/none";
 
 const {
+  claudeCredentialHealth,
   hasUsableAccessToken,
   resolveClaudeCredential,
   postRefreshedCredential,
@@ -84,6 +85,32 @@ test("hasUsableAccessToken rejects a credential the CLI blanked", () => {
   assert.equal(hasUsableAccessToken(BLANKED), false);
   assert.equal(hasUsableAccessToken("not json"), false);
   assert.equal(hasUsableAccessToken(""), false);
+});
+
+// ---- reading the credential rather than the hub's word for it ----
+//
+// The hub's `status` describes its own row; these assert what decides whether the
+// CLI authenticates. A run once died with "OAuth session expired and could not be
+// refreshed" while both the log and System Check reported the account healthy,
+// because only the row was ever read.
+
+test("claudeCredentialHealth reports a live token as usable", () => {
+  const h = claudeCredentialHealth(GOOD);
+  assert.equal(h.state, "usable");
+  assert.equal(h.expiresAt?.getTime(), 4102444800000);
+});
+
+test("claudeCredentialHealth separates refreshable expiry from a dead credential", () => {
+  const expired = (refreshToken: string) =>
+    JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat01-x", refreshToken, expiresAt: 1 } });
+  assert.equal(claudeCredentialHealth(expired("sk-ant-ort01-x")).state, "refresh-needed");
+  assert.equal(claudeCredentialHealth(expired("")).state, "no-refresh");
+});
+
+test("claudeCredentialHealth recognises the file the CLI blanked", () => {
+  assert.equal(claudeCredentialHealth(BLANKED).state, "blanked");
+  assert.equal(claudeCredentialHealth("not json").state, "unreadable");
+  assert.equal(claudeCredentialHealth("").state, "unreadable");
 });
 
 test("postRefreshedCredential never sends a blanked credential to the hub", async () => {

@@ -1,8 +1,12 @@
 # Ticket Executor — Project Documentation
 
+> **NOT MAINTAINED (từ 2026-08-12).** File này là bản chụp lịch sử, có thể đã lệch
+> so với code. Agent **không** đọc và **không** cập nhật file này. Nguồn sự thật:
+> root `CLAUDE.md` (kiến trúc + luật) và chính code.
+
 What the app does and why, at the level a new contributor needs before reading
 code. Setup steps: `ticket-executor/README.md`. Module layout and coding rules:
-`ticket-executor/CLAUDE.md` + `UI-STYLEGUIDE.md`. Neither is repeated here.
+root `CLAUDE.md` + `ticket-executor/UI-STYLEGUIDE.md`. Neither is repeated here.
 
 ---
 
@@ -36,8 +40,32 @@ record of every run's cost, change size and outcome.
 ## 2. Business flows
 
 **Connect → pick work → run.** Settings (provider + **organization** URL + PAT)
-→ Projects (org's project list) → Ticket Execution (project + sprint + ticket) →
+→ Projects (org's project list) → Ticket Execution (project + view + ticket) →
 Overview tab (set **Root repo**, confirm skill) → CTA.
+
+**Three views of one project's work.** The Ticket Execution header switches
+between **Sprint**, **Backlog** and **Board**, and they are not filters over one
+list — each is a different question asked of the provider, bounded differently:
+
+| View | What it asks for | Sprint picker |
+| --- | --- | --- |
+| Sprint | One iteration — the one picked, or the team's current one. Closed items **kept**: a sprint is the record of what it worked on. | shown |
+| Backlog | Open work not scheduled into any iteration yet (in Azure DevOps, the iteration path still at the project root). | hidden |
+| Board | Every open work item, whatever iteration it is in, grouped by its kanban **column** — which is not its state, since a board maps several states onto one column and may add custom ones. | hidden |
+
+A backlog item and most of a board sit outside the iteration the sprint query is
+bounded by, so neither can be derived from a sprint fetch on this side. The view
+travels to EmeHub as `scope` and the hub builds the query
+(`GET /dagent/connections/{id}/tickets?scope=`). The picked sprint travels as
+the provider's **rooted iteration path** (`RIS\Sprint 61`), not the name shown
+on the chip: `System.IterationPath` is rooted, and Azure DevOps rejects a query
+built from a bare leaf name with a 400 instead of returning nothing. The hub
+resolves a bare name against the project's iterations if it gets one anyway. **Backlog and Board therefore
+require hub mode** — with it off the app says so and names the fix, rather than
+serving the sprint under another name. A view whose result hit the provider cap
+comes back with `truncated`, which the sidebar reports: a sprint is bounded by
+its iteration, but a backlog and a board are not, and a silently capped list
+reads as a short one.
 
 **A run walks a graph.** The skill selects which graph
 (`graphForSkill()` in `lib/execution/graph/graphs.ts`); the graph — not a flag —
@@ -180,6 +208,53 @@ that the status stayed where the provider had it.
 back into the Resolve Review tab, and a `fix-code-review-v*` run fixes, replies
 and resolves them. Unresolved counts across loaded tickets feed the header bell.
 
+**The bell is polled, so what it costs is part of its design.** Each answer costs
+the provider a round-trip per ticket asked about, and four bounds keep that from
+scaling with the sprint:
+
+- *Candidates, not everything.* The client sends the tickets whose status is in
+  the review lane (`isReviewable()`, `lib/ui.ts`); the server adds back any
+  ticket this app has recorded a PR for, whatever state the tracker has it in.
+  Both halves are load-bearing — status alone misses a PR whose ticket was never
+  moved or whose process template names the lane something else, and a recorded
+  PR alone misses one a human opened. A request that sends no `reviewable`
+  parameter at all polls everything, because a missing hint must never read as
+  "narrow to nothing".
+- *One database query, and the answer is written down.* `latestPrUrls()` resolves
+  the whole set's known PR URLs at once — from `Run.prUrl` for a PR this app
+  opened, and from **`TicketPullRequest`** for every PR anything has since
+  resolved — and the same map serves both the candidate filter and the fan-out.
+  Every path that resolves a PR writes it back there. Without that, a PR a human
+  opened has no recorded URL, so the provider has to rediscover it from the work
+  item on every single poll, forever: a work-item read with relations expanded,
+  then a repository read to verify the link, before the PR itself. The row is a
+  cache with no expiry and nothing is served *from* it — a URL that goes stale
+  fails its read and the caller falls through to the full resolution, which is
+  the same fallback a stale `Run.prUrl` already relies on.
+- *One hub request.* In hub mode the whole board goes to
+  `POST /dagent/connections/{id}/pull-request/review-summaries`, which answers
+  positionally with a count and the newest open comment instead of whole threads.
+  The direct-provider paths still fan out — neither Azure DevOps nor GitHub has a
+  batch equivalent — but the Azure DevOps read takes a fast path: a recorded PR
+  URL is read directly, the PR read being its own verification, so it spends two
+  calls rather than the detail tab's four. A URL that no longer resolves falls
+  back to the thorough resolution rather than reporting "no PR".
+- *Two minutes, and not at all when hidden.* A hidden tab stops polling and
+  refreshes on return, and a run finishing refreshes immediately rather than
+  waiting for the tick. A **20-second floor** sits under all of it, because an
+  interval owned by a React effect is only as stable as that effect's
+  dependencies: the candidate list is compared as a joined string rather than as
+  the array a ticket reload rebuilds, and the fetch reads its parameters from a
+  ref so its identity never changes. Both were learned the same way — a fresh
+  array with identical contents restarted the timer and fired a request, which
+  turned the two-minute interval into a thirty-second one without changing a
+  single number.
+
+An answer that could not be read is `degraded: true`, and the bell then keeps
+what it last knew and says so. This matters more than it looks: a revoked PAT
+used to resolve as "this ticket has no PR" for every ticket, which rendered as a
+silent, empty, entirely believable bell.
+
 **Admission control lives in the engine, not the route.** `startRun()` is the
 single place that decides whether a run may start and what shape it has:
 
@@ -292,6 +367,22 @@ the layout.
 Execution state, fetching, SSE and derived values; everything under
 `app/ticket-executor/` is presentational.
 
+`/settings` is **four tabs over one form** — Connection (provider, scope,
+org/token, connection test, the EmeHub card) · Execution (MCP, multi-ticket +
+concurrency, the two auto/plan switches, review-before-publishing, run budget) ·
+Dashboard (the two ROI inputs) · Appearance. The tabs only decide what is on
+screen: Save posts the whole settings object, so switching tabs never drops an
+edit, and a validation failure switches back to Connection rather than reporting
+a field the user cannot see.
+
+`app/hubSession.ts` keeps the EmeHub session alive from the browser.
+`ensureHubSession()` runs before any provider read (Projects, every ticket load,
+the Settings page) and re-mints when `GET /api/hub/token` says there is no live
+one — a hub token lasts 15 minutes, so before this the recovery from a normal
+pause was a manual trip to Settings to press Connect. It is deliberately not a
+fetch wrapper: it runs *before* the call, never as a silent retry on a 401, so
+"your session lapsed" and "the hub is down" stay distinguishable.
+
 **Engine.** `lib/executionStore.ts` is a re-export facade (API routes import from
 it only); the implementation is `lib/execution/`, split around the graph runtime:
 
@@ -321,21 +412,37 @@ system prompt, but it has *not* seen the reasoning it is about to act on). The
 rule: a node that produces an artifact resumes; a node that judges one must be
 fresh, or it is marking its own homework.
 
+`publish` is the case where that rule needed a third clause, because it neither
+produces nor judges — it ships. In the **implement** graphs it runs `fresh`: the
+branch (from the committing node's contract), the ticket, `.te/plan.md` and
+`git log` are everything opening a PR needs, and the prompt carries them. It used
+to resume, and that was the single most expensive thing per unit of work the
+harness did — on one 8-file ticket, pushing a branch and opening a PR cost 6
+turns, 602k cache-read and 153k cache-write tokens, roughly a fifth of the run,
+because `--resume` replays the whole transcript and the human gate ahead of it had
+already let the prompt cache expire. In the **review** graphs it still resumes:
+that phase replies to *the threads this run addressed*, which is not a contract
+field and cannot be recovered from the diff, and a fresh session would be guessing
+on someone else's pull request.
+
 **Progress comes from the graph.** The UI's step list is the node list, reported
 by the API as `RunView.nodes` — there is no `STEPS` array to keep in sync, and
 adding a node adds a step. `GET /api/graphs` serves the outline for a skill that
 has not run yet.
 
-**Guards.** Three, and all three are reachable from the default configuration:
+**Guards.** One: a 40-transition hop limit as a backstop against a looping graph
+(`endReason = "hop-limit"`).
 
-- a per-node `--max-budget-usd` (falls back to `CLAUDE_MAX_BUDGET_USD`);
-- a run-level ceiling checked **between** nodes — `Setting.runBudgetUsd`
-  (Settings page, `0` = no run-level ceiling) snapshotted onto `Run.budgetUsd`
-  when the run starts, so raising the limit later cannot retroactively un-fail a
-  run that already stopped on the old one. Ending this way sets
-  `endReason = "budget"`;
-- a 40-transition hop limit as a backstop against a looping graph
-  (`endReason = "hop-limit"`).
+There is **no spend ceiling**. The per-node `--max-budget-usd`, the
+`CLAUDE_MAX_BUDGET_USD` env var, `Setting.runBudgetUsd` and `Run.budgetUsd` were
+removed: neither was reachable in practice (the setting defaulted to `0` = off,
+and no node ever declared a per-node ceiling, so the CLI was never passed the
+flag), and the run-level check fired **between** nodes — the boundary just before
+the `external` `publish` leaf. A run that tripped it had already committed its
+work and would then refuse to push it, spending the full amount and shipping
+nothing. Spend is managed by *measurement* instead: `Step.costUsd`, the per-turn
+token counts, the dashboard's OPERATIONS tier and the EmeHub ledger all still
+record every turn, and a run is stopped by a person via Cancel.
 
 The hop count and the per-node visit count live on the `Run` row, not in the
 driver's local state: `drive()` is re-entered on every gate resolution and every
@@ -399,7 +506,10 @@ recent execution is used instead — ADO falls back to it too.
 
 **Secrets & auth.** PATs are AES-256-GCM encrypted at rest (`enc:v1:`), keyed by
 `SETTINGS_ENC_KEY` → `DATABASE_URL` → a dev constant; `GET /api/settings` returns
-only `hasPat`. Auth is a shared-password POC with no user accounts: the cookie is
+only `hasPat`, and its response is an **explicit whitelist** of the `Setting` row
+rather than the row minus a few fields — the EmeHub session it also carries
+(`hubToken`, `hubSid`, `hubTokenExpiresAt`) is no page's business, and a
+whitelist fails by omitting a new field instead of leaking one. Auth is a shared-password POC with no user accounts: the cookie is
 `HMAC-SHA256(APP_ACCESS_PASSWORD, "authenticated")`, recomputed and
 constant-time-compared in `proxy.ts` — no session store. Empty password ⇒ the
 gate is disabled entirely.
@@ -459,25 +569,46 @@ zero. And **any success rate must exclude the human-ended reasons**.
 
 ## 5. Data model (Postgres via Prisma)
 
-Eight models. Full column comments live in `prisma/schema.prisma`.
+Ten models. Full column comments live in `prisma/schema.prisma`.
 
 - **`Setting`** — single `default` row mirroring the Settings page, plus the
   dashboard ROI inputs (`hourlyRateUsd` 0 ⇒ tile hidden; `hoursPerStoryPoint`).
-  Four fields decide how a run behaves rather than how it looks, and all four are
+  Five fields decide how a run behaves rather than how it looks, and all five are
   read **server-side** when the run starts, never taken from the client:
   `autoImplement` / `autoResolveCodeReview` (one-shot vs plan-gated flow — see
   `resolveSkill()`), `multiTicketMode` (worktree isolation + the one-run-at-a-time
-  rule), `runBudgetUsd` (snapshotted onto `Run.budgetUsd`) and
-  `evaluateBeforePublish` (adds the `evaluate`/`fix` pair, and is baked into
-  `graphId`).
+  rule), `evaluateBeforePublish` (adds the `evaluate`/`fix` pair, and is baked into
+  `graphId`), and `hubEnabled` + `hubConnectionId` (which credential the run
+  authenticates as — see `ProviderCredential` / `HubConnection` below).
   Two presentation switches live here too: `animatedBackground` (freezes the
   reactor backdrop) and `clickEffects` (suppresses every lightning bolt — the
   click strikes *and* the self-strikes each mounted spinner fires, so the buttons
   of a running ticket stop flashing). Both are read once by their consumer
   (`AppReactor`, `BoltsProvider`) and updated live by the `te:settings-updated`
   window event the Settings page dispatches on save.
-- **`ProviderCredential`** — per-provider `org` + encrypted `pat`. For ADO, `org`
-  is the **organization** URL. The PAT never lives in `Setting`.
+- **`ProviderCredential`** — per-provider `org` + encrypted `pat`, edited on the
+  Settings page. For ADO, `org` is the **organization** URL. The PAT never lives
+  in `Setting`.
+- **`HubConnection`** — a provider connection **mirrored from EmeHub**: `hubId`
+  (the hub's own row id), `provider`, `label`, `orgUrl`, `project`,
+  `capabilities`, encrypted `pat`, and `hubUpdatedAt`.
+
+  Its own table rather than a `source` column on `ProviderCredential`, and that
+  is the design rather than a convenience: a row here is written **only** by a
+  sync and is read-only everywhere else, so there is no save path that could let
+  someone edit it locally and re-create the divergence the hub exists to remove.
+  Origin is the table, so it cannot be mislabelled.
+
+  `hubUpdatedAt` is the change-detection key. A sync reads the hub's cheap
+  `GET /connections`, compares, and calls `GET /connections/{id}/secret` **only**
+  for a connection whose value moved. Any write at the hub bumps it — a rotated
+  PAT included — so rotations are picked up, not just edits.
+
+  Which one a run uses is `Setting.hubConnectionId`, and `resolveCredential()`
+  (`lib/providerCredentials.ts`) is the single place that chooses between the two
+  tables. **Hub mode does not fall back to the local row**: with the flag on and
+  nothing selected it reports "not configured", because a silent fallback is how
+  a run ends up executing against an organization nobody chose.
 - **`Run`** — one execution of one graph against one ticket. It owns no agent
   output of its own: what an agent produced belongs to a `Step`, what a human
   reads belongs to an `Artifact`, and every routing decision belongs to a
@@ -489,14 +620,15 @@ Eight models. Full column comments live in `prisma/schema.prisma`.
 
   | Column | Why it exists |
   |---|---|
-  | `endReason` (`""`\|`cancelled`\|`plan-rejected`\|`blocked`\|`budget`\|`hop-limit`\|`needs-review`) | A human's decision must never be scored as an agent failure |
+  | `endReason` (`""`\|`cancelled`\|`plan-rejected`\|`blocked`\|`hop-limit`\|`needs-review`) | A human's decision must never be scored as an agent failure |
   | `parkedAt` / `humanWaitMs` | Keeps "the agent was computing" separable from "a human hadn't answered", across however many gate rounds happen |
   | `resumedAfterRestart` | A session a bare terminal would have lost |
   | `skill` / `prUrl` / `branch` / `resultText` | Promoted out of node output because each has a consumer that must not have to open a `Step` row. `resultText` is taken only from a node whose output carries `committed` — i.e. one that actually delivered — so a run that failed at `implement` no longer displays the *plan's* summary as its result |
   | `baseSha` + `filesTouched`/`linesAdded`/`linesDeleted` | The run's diff is measured by the harness against `baseSha` (free, no tokens); the scalars let aggregates skip the blob |
   | `estimateHours` | The team's sizing, snapshotted at start so a re-estimate can't rewrite history |
-  | `budgetUsd` | Run-level ceiling, snapshotted from `Setting.runBudgetUsd`, checked between nodes |
-  | `hops` / `visits` | Loop guards that belong to the run, not to the process driving it — they survive a gate round and a crash resume |
+  | `hops` / `visits` | The loop guard belongs to the run, not to the process driving it — it survives a gate round and a crash resume. The *only* automatic stop: there is no spend ceiling |
+  | `claudeSource` (`""`\|`own`\|`shared`) | Which Claude account the run executed under. `""` means EmeHub mode was off and the run used this machine's own `claude` login — the original behaviour. Recorded, never decided here: the hub owns the own → shared precedence and the user's `prefer_shared` choice. Surfaced on `RunView` and rendered beside the cost on the Result tab ("EmeHub · shared account" / "· your account"), because the figure it sits next to came out of a real person's quota and the answer used to require a database query. It is also asserted at spawn: with `hubEnabled` on and no materialised credential, `execAgent()` fails the node instead of letting the CLI fall through to `~/.claude` |
+  | `claudeGrant` / `claudeGrantExpiresAt` | The run-scoped credential grant (emehub ADR 0009), encrypted. On the row rather than in memory because minting one needs a live 15-minute access token, which needs the browser — after a server restart there may be no way to mint another, and a recovered run still has to be able to re-read its credential |
 
 - **`Step`** — one *attempt* at one node. A node re-entered by a cycle, or
   resumed after a crash, produces another row with `attempt + 1` rather than
@@ -532,11 +664,20 @@ Eight models. Full column comments live in `prisma/schema.prisma`.
   `tests/graph.test.ts` rather than left to be noticed when the tile reads zero.
 - **`BlockedAttempt`** — a request preflight rejected before spawning
   (`root-repo` / `agent-access` / `duplicate-ticket` / `single-ticket-mode` /
-  `concurrency-cap` / `unknown-skill` / `missing-skill`). Recorded because a 400
-  otherwise leaves nothing to measure; written best-effort so logging can never
-  turn a 400 into a 500.
+  `concurrency-cap` / `unknown-skill` / `missing-skill` / `claude-credential`).
+  Recorded because a 400 otherwise leaves nothing to measure; written
+  best-effort so logging can never turn a 400 into a 500.
+
+  `claude-credential` fires only in EmeHub mode, and its placement is the point:
+  it is decided *before* the `Run` row is created, like every other admission
+  rule. Failing after the row existed would file "nobody has configured a Claude
+  account" as an **agent failure** and count it against the success rate.
 - **`SavedOption`** + **`RootRepoProjectMap`** — combobox memory, and the last
   root repo per project.
+- **`TicketPullRequest`** — which PR a ticket's review lives on, once anything
+  has resolved it. A pure lookup shortcut for the polling described in §2, not a
+  mirror: nothing is served from it, and a stale value costs one failed read and
+  a fall-through, which is why it has no expiry.
 
 **Root repo is deliberately not defaultable.** The connection project (a UI
 choice) is independent of the git repo a run executes in, and one org connection
@@ -553,11 +694,12 @@ All routes are thin wrappers over `lib/*`, all behind the auth gate.
 | Group | Routes |
 |---|---|
 | Auth (public) | `POST /api/auth/login` · `logout` |
-| Work items | `GET /api/projects` · `/api/tickets` (`project`+`sprint`) · `/api/sprints` · `/api/tickets/[id]/{comments,review,commits,commits/[sha],executions}` · `GET\|POST /api/tickets/[id]/status` (GET → `{ options, current }`; POST → `{ status }` = the state the provider actually recorded, or `{ error, current }` when it refused) |
+| Work items | `GET /api/projects` · `/api/tickets` (`project`+`sprint`+`scope`, the last `sprint`\|`backlog`\|`board`; echoes `truncated`) · `/api/sprints` (`provider`+`project` — the project reaches the hub, which otherwise answers for whichever project the *connection* names) · `/api/tickets/[id]/{comments,review,commits,commits/[sha],executions}` · `GET\|POST /api/tickets/[id]/status` (GET → `{ options, current }`; POST → `{ status }` = the state the provider actually recorded, or `{ error, current }` when it refused) |
 | Runs | `POST /api/tickets/[id]/implement` (body: `skillName` = requested family, optional `skillExplicit`, `projectName`, `rootRepo`, `provider`, `ticketUrl`, `model`, `effort`, `estimateHours`/`storyPoints`, optional `prUrl`. Validates Root repo + agent access, then hands admission to `startRun()`, which resolves the actual skill from Settings and enforces one-run-per-ticket + single-ticket mode under an advisory lock; snapshots the estimate, records a `BlockedAttempt` on rejection, returns `{ runId }`, may return `warnings[]`) · `GET /api/executions/[id]` → `{ run }` · `/stream` (**SSE**: emits only on change, closes as soon as `state !== "running"` — a gate is terminal for the stream too) · `POST .../cancel` · `POST .../plan` (approve/revise/cancel) · `GET /api/graphs` (node outline per skill, for the pre-run timeline) |
-| Metrics | `GET /api/dashboard` (`provider`+`project`+`days`) · `/api/dashboard/funnel` · `/api/reviews/summary` |
+| Metrics | `GET /api/dashboard` (`provider`+`project`+`days`) · `/api/dashboard/funnel` · `/api/reviews/summary` (`provider`+`ids`+`reviewable`; → `{ reviews[], degraded, polled }`) |
 | Assets | `GET /api/attachments?url=` (streams a ticket's embedded images with the stored PAT; rejects anything that is not an attachment of the configured org) |
-| Setup | `GET\|POST /api/settings` (PAT never returned) · `POST /api/settings/test` · `GET /api/preflight` · `GET /api/skills` · `GET\|POST /api/skills/install` · `GET\|POST /api/options` · `/api/options/mapping` |
+| Setup | `GET\|POST /api/settings` (both directions return an **explicit whitelist** of the `Setting` row — never the PAT, and never the EmeHub session fields `hubToken`/`hubSid`/`hubTokenExpiresAt`; credentials reduce to `org` + `hasPat`) · `POST /api/settings/test` (org + token from the body, falling back to whichever credential the provider would actually run with — so in hub mode it tests the hub's, not a stale local row) · `GET /api/preflight` · `GET /api/skills` · `GET\|POST /api/skills/install` · `GET\|POST /api/options` · `/api/options/mapping` |
+| EmeHub | `GET /api/hub` → `{ enabled, hubUrl, selectedId, signedIn, expiresAt, connections[] }` — the connection catalogue read **live** from the hub (`hasPat` only, never the credential), plus `error`/`fix`/`reason` when that read failed, since "no hub configured", "hub down" and "signed out" must not render the same screen. · `POST /api/hub/token` `{ hubToken, expiresIn }` stores a session the browser just minted (validated for `aud`/`iss` first) · `GET /api/hub/token` → `{ enabled, hubUrl, signedIn, expiresAt }`, two local reads and **no call to the hub**, which is what makes it usable as a precondition rather than a diagnostic. The token is minted **in the browser** (it needs the hub's shared refresh cookie, which server code cannot read) and everything that touches a credential then runs server-side, so a PAT never passes through a page. |
 
 ---
 
@@ -578,6 +720,63 @@ All routes are thin wrappers over `lib/*`, all behind the auth gate.
 - Changing `DATABASE_URL` without an explicit `SETTINGS_ENC_KEY` makes stored
   PATs unreadable — they come back empty and must be re-entered.
 - A user-configured MCP server can silently serve a different organization.
+- **A rejected credential does not always arrive as an error status.** Azure
+  DevOps answers an unauthenticated request with a redirect to its sign-in page,
+  and following it lands on a 200 carrying HTML — which is how "Test connection"
+  once reported success for a PAT that could not read a single work item, leaving
+  every page empty with nothing pointing at the cause. Both live checks (`POST
+  /api/settings/test` and preflight's `conn-live`) therefore use `redirect:
+  "manual"` and require the body to be the JSON the endpoint promised (ADO: a
+  `value` array; GitHub: a `login`). Any new provider check must do the same —
+  `r.ok` alone is not evidence.
+- With **EmeHub mode on**, the org/token fields on Settings are read-only and the
+  credential comes from the selected `HubConnection`. Turning the toggle on
+  without picking a connection is *not* a fallback to the local row — runs report
+  the provider as unconfigured until one is chosen. Which credential a turn
+  actually ran with is in the run's own log (`● MCP: … Credential: …`); it is not
+  recoverable afterwards, because the run's MCP config file is deleted with it.
+- **An EmeHub session lasts 15 minutes**, and only the browser can mint one (the
+  hub's refresh cookie is HttpOnly on its own domain). Pages renew it themselves
+  via `ensureHubSession()`, so a normal pause is invisible — but a **background**
+  run that finds no live session stops rather than falling back to a local
+  credential, which is exactly the drift hub mode removes. Long batches started
+  and left alone can therefore park on a signed-out hub.
+- **The Claude account is EmeHub's too, when hub mode is on.** A run does not use
+  this machine's `claude` login: `startRun()` resolves a credential from
+  `GET /credentials/claude/resolve`, writes it to
+  `~/.ticket-executor/claude-config/<own|shared>/.credentials.json`
+  (`lib/claudeConfig.ts`) and spawns every turn with
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` pointed there. That variable, and not
+  `CLAUDE_CONFIG_DIR`, because only the narrow one relocates the credential
+  file on its own: the wide one also relocates `skills/`, `settings.json` and
+  `projects/`, which left a hub run with none of the app's own skills installed
+  and failed it at the first node. The hub decides *which* account — own, or the shared one an admin
+  maintains — including a user who has their own but chose to run on the shared
+  one; this side records the answer as `Run.claudeSource` and never re-decides
+  it. **With hub mode off none of that happens**: the CLI is spawned with an
+  untouched environment and reads `~/.claude`, exactly as before.
+
+  Three consequences worth knowing:
+
+  - **No fallback.** Hub on with no credential available refuses the run
+    (`BlockedAttempt('claude-credential')`). Falling back to the machine's login
+    would spend a *personal* account where the workspace chose a shared one.
+  - **The config directory is stable, and rewritten at every run start.** Stable
+    because the CLI keeps its `--resume` transcripts there and crash recovery
+    needs them. Rewritten because the CLI blanks `.credentials.json` in place
+    when a refresh fails — whatever is on disk is not evidence of anything, and
+    the hub holds the authoritative copy.
+  - **Rotation and spend are posted back after every turn**
+    (`PUT /credentials/claude/refreshed`, `POST /credentials/claude/usage`, both
+    with the run's grant). The first is not bookkeeping: the CLI renews its
+    access token locally, and without the write-back the hub's stored refresh
+    token goes stale until the credential dies — under a shared account, for
+    everyone at once. Neither call can fail a run; both report into the run's log
+    when they fail.
+- EmeHub sign-in needs the hub's cookie to reach this origin. On `localhost` every
+  port shares one cookie jar, so it can appear to work in dev for the wrong
+  reason; a real deployment needs `EMEHUB_COOKIE_DOMAIN` covering both hosts over
+  HTTPS.
 - A rejected status write is usually a PAT scope problem: writing
   `System.State` needs **Work Items (Read & Write)**, which a read-only token
   passes every other check with. ADO's failure body is logged in full server-side

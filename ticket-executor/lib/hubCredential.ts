@@ -188,6 +188,52 @@ export function hasUsableAccessToken(raw: string): boolean {
 }
 
 /**
+ * What the credential material itself says about whether a run can authenticate.
+ *
+ * Separate from the hub's `status` field on purpose: that field describes the
+ * row in the hub's database, and a row can read `refreshable` while the tokens
+ * it hands out are dead — which is exactly how a run reached the CLI and died
+ * with `OAuth session expired and could not be refreshed` after System Check had
+ * reported the account fine. The only honest reading is of the tokens that will
+ * actually be written to disk.
+ *
+ * What this cannot prove is that a refresh will *succeed*: only Anthropic can
+ * say whether a refresh token was revoked, and asking costs a real token
+ * exchange that would rotate the shared account's credential from a diagnostics
+ * page. So `refresh-needed` is reported as what it is — unproven — rather than
+ * as a pass.
+ */
+export type ClaudeCredentialHealth = {
+  state: "usable" | "refresh-needed" | "no-refresh" | "blanked" | "unreadable";
+  /** Access-token expiry, when the file carried a readable one. */
+  expiresAt: Date | null;
+};
+
+export function claudeCredentialHealth(raw: string): ClaudeCredentialHealth {
+  let src: Record<string, unknown>;
+  try {
+    const root = JSON.parse(raw) as Record<string, unknown>;
+    if (!root || typeof root !== "object") return { state: "unreadable", expiresAt: null };
+    src = (root.claudeAiOauth ?? root.claude_ai_oauth ?? root) as Record<string, unknown>;
+  } catch {
+    return { state: "unreadable", expiresAt: null };
+  }
+
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const access = str(src?.accessToken) || str(src?.access_token);
+  const refresh = str(src?.refreshToken) || str(src?.refresh_token);
+  const rawExpiry = src?.expiresAt ?? src?.expires_at;
+  const expiryMs = typeof rawExpiry === "number" ? rawExpiry : Number(rawExpiry) || 0;
+  const expiresAt = expiryMs > 0 ? new Date(expiryMs) : null;
+
+  // The CLI blanks every token in place when a refresh fails, so "no access
+  // token" is not a malformed file — it is the recorded corpse of a dead session.
+  if (!access) return { state: "blanked", expiresAt };
+  if (expiresAt && expiresAt.getTime() > Date.now()) return { state: "usable", expiresAt };
+  return { state: refresh ? "refresh-needed" : "no-refresh", expiresAt };
+}
+
+/**
  * Hand back a token the CLI rotated on this machine, so the hub stays
  * authoritative (INTEGRATION.md §4).
  *
