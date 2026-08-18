@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -82,6 +83,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [hub, setHub] = useState<HubStatus>({
     enabled: false, hubUrl: "", selectedId: "", signedIn: false, expiresAt: null, connections: [],
+    claudeCredential: { state: "unverified", at: null, message: "", fix: "" },
   });
   const [connecting, setConnecting] = useState(false);
   const pm = providerMeta(settings.provider);
@@ -292,6 +294,22 @@ export default function SettingsPage() {
       ? { label: "SIGNED IN", color: COLORS.success }
       : { label: "SIGNED OUT", color: COLORS.textDim };
 
+  // The Claude-credential banner, or nothing when the last live check passed
+  // recently enough to still mean something (the server drops a stale verdict, so
+  // "ok" here is always a fresh one).
+  const claudeCred = ((): { tone: "warning" | "danger"; text: string } | null => {
+    const c = hub.claudeCredential;
+    if (!settings.hubEnabled || !hub.hubUrl || c.state === "ok") return null;
+    return c.state === "failed"
+      ? { tone: "danger", text: `EmeHub's Claude credential failed its last check: ${c.message} ${c.fix}`.trim() }
+      : {
+          tone: "warning",
+          text:
+            "Runs authenticate with the Claude credential EmeHub holds, and it has not been verified. " +
+            "It stops working silently when that account is signed in again somewhere else — the deep check is the only thing that proves it still does.",
+        };
+  })();
+
   const hubSection = (
     <div style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "13px", padding: "15px 16px" }}>
@@ -339,6 +357,21 @@ export default function SettingsPage() {
                 {hub.error && (
                   <div style={{ ...tintedCard("danger", { padding: "11px 13px" }), ...hint, color: COLORS.textSoft }}>
                     {hub.error} {hub.fix}
+                  </div>
+                )}
+
+                {/* The credential the hub serves can stop working without anything on
+                    this page moving: logging the account in again elsewhere rotates its
+                    refresh token and leaves the hub holding the old one, and a run is
+                    then the first thing to find out. Nothing is verified here — a live
+                    check costs a real CLI turn — so this says which of the three states
+                    it is in and points at the page that can settle it. */}
+                {claudeCred && (
+                  <div style={{ ...tintedCard(claudeCred.tone, { padding: "11px 13px" }), ...hint, color: COLORS.textSoft, display: "flex", flexDirection: "column", gap: "7px", alignItems: "flex-start" }}>
+                    <span>{claudeCred.text}</span>
+                    <Link href="/system-check" style={{ ...ctaButtonStyle("outline", { height: "28px", cornerPx: 7 }), textDecoration: "none" }}>
+                      Run deep check
+                    </Link>
                   </div>
                 )}
 

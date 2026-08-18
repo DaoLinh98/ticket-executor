@@ -77,10 +77,15 @@ import { REQUIRED_SKILLS, findSkill, skillDirs, skillStates } from "./skillPack"
 
 type Run = { ok: boolean; out: string; err: string };
 
-function run(cmd: string, args: string[], opts?: { cwd?: string; timeout?: number }): Run {
+function run(
+  cmd: string,
+  args: string[],
+  opts?: { cwd?: string; timeout?: number; env?: NodeJS.ProcessEnv }
+): Run {
   try {
     const r = spawnSync(cmd, args, {
       cwd: opts?.cwd,
+      env: opts?.env,
       timeout: opts?.timeout ?? 5000,
       encoding: "utf8",
       windowsHide: true,
@@ -121,6 +126,100 @@ const git = (args: string[], opts?: { cwd?: string; timeout?: number }) => run("
  * leaves the real check to run start, which is where a missing credential is
  * refused anyway.
  */
+// ---------------------------------------------------------------------------
+// live verification of the hub's Claude credential
+// ---------------------------------------------------------------------------
+
+/**
+ * The verdict of the last live verification, for the Settings page.
+ *
+ * In memory and short-lived on purpose: "the credential authenticated once" goes
+ * stale the moment somebody re-logs in on another machine, which is the very
+ * drift this exists to catch. A verdict older than the TTL is reported as *not
+ * verified* rather than as a pass — the whole point is that this page must never
+ * claim more than it measured.
+ */
+export const CLAUDE_PROBE_TTL_MS = 30 * 60 * 1000;
+
+export type ClaudeProbe = { at: number; ok: boolean; message: string; fix?: string };
+
+const cp = globalThis as { __teClaudeProbe?: ClaudeProbe };
+
+export function getClaudeProbe(): ClaudeProbe | null {
+  const p = cp.__teClaudeProbe;
+  if (!p || Date.now() - p.at > CLAUDE_PROBE_TTL_MS) return null;
+  return p;
+}
+
+/** Give the CLI the hub's credential and make it authenticate for real.
+ *
+ * Hub mode only, deep tier only. Reading the token (`claudeCredentialHealth`)
+ * answers "is this file shaped like a live session"; it cannot answer "does
+ * Anthropic still accept it", and that is exactly the gap a user re-logging in
+ * elsewhere opens: the hub keeps serving a credential whose refresh token has
+ * been rotated away, every field still looks right, and the first run dies. The
+ * only thing that settles it is doing what a run does.
+ *
+ * One turn of a few tokens, against a throwaway copy of the credential
+ * (`claudeProbeDir()`), never the directory a run reads. Whatever the CLI rotates
+ * is handed back to the hub before the result is judged — a verification that
+ * quietly kept a new token would *manufacture* the staleness it is checking for.
+ */
+async function verifyClaudeLive(
+  credential: { credentials: string }
+): Promise<{ status: CheckStatus; message: string; fix?: string }> {
+  const { writeClaudeProbeCredential, readClaudeCredential } = await import("./claudeConfig");
+  const { hasUsableAccessToken, mintClaudeGrant, postRefreshedCredential } = await import("./hubCredential");
+
+  const dir = await writeClaudeProbeCredential(credential.credentials);
+  const claudeBin = process.env.CLAUDE_BIN || "claude";
+  // cwd is the probe directory so no repo `CLAUDE.md` is loaded, and
+  // `--strict-mcp-config` with no config loads no MCP server: the cheapest turn
+  // that still proves the session, not a rehearsal of a real run.
+  const r = run(claudeBin, ["--print", "--strict-mcp-config", "Reply with the single word: ok"], {
+    cwd: dir,
+    timeout: 120000,
+    env: { ...process.env, CLAUDE_SECURESTORAGE_CONFIG_DIR: dir },
+  });
+
+  // Before judging: hand back anything the CLI rotated. Done even when the turn
+  // failed, because a partial refresh still supersedes the hub's copy.
+  let rotation = "";
+  const after = await readClaudeCredential(dir);
+  if (after && after !== credential.credentials && hasUsableAccessToken(after)) {
+    try {
+      const grant = await mintClaudeGrant(`system-check-${Date.now()}`);
+      rotation = (await postRefreshedCredential(grant.grant, after))
+        ? " The CLI rotated the token and EmeHub was updated with it."
+        : " The CLI rotated the token but EmeHub kept its own copy as newer.";
+    } catch (e) {
+      rotation =
+        ` ⚠ The CLI rotated the token and EmeHub could not be updated (${e instanceof Error ? e.message : e}) — ` +
+        `that is how the hub's copy goes stale.`;
+    }
+  }
+
+  if (r.ok) return { status: "pass", message: `Verified live — the CLI authenticated with it.${rotation}` };
+
+  const detail = (r.err || r.out || "the CLI exited without output").split(/\r?\n/).filter(Boolean).slice(0, 2).join(" ");
+  // An auth failure and "the CLI could not start" are different answers: only the
+  // first says anything about the credential.
+  const authFailure = /oauth|authenticat|credential|expired|unauthorized|401|invalid.*(token|key)|log ?in/i.test(detail);
+  return authFailure
+    ? {
+        status: "fail",
+        message: `EmeHub's credential was refused: ${detail}${rotation}`,
+        fix:
+          "The stored session is dead — most often because the account was logged in again elsewhere, which rotates the " +
+          "refresh token and leaves EmeHub holding the old one. Re-authenticate in EmeHub › Claude Settings and re-run this check.",
+      }
+    : {
+        status: "warn",
+        message: `Could not verify: ${detail}${rotation}`,
+        fix: "The CLI failed for a reason other than authentication, so this says nothing about the credential. Fix the CLI error and re-run.",
+      };
+}
+
 async function claudeAccountChecks(deep: boolean): Promise<Check[]> {
   const setting = await prisma.setting.findUnique({ where: { id: "default" } }).catch(() => null);
   if (!setting?.hubEnabled) return [];
@@ -133,40 +232,66 @@ async function claudeAccountChecks(deep: boolean): Promise<Check[]> {
   };
 
   if (!deep) {
+    // Deliberately a *warning*, not an unmet blocker: nothing has been measured
+    // here, and "not checked" is not "known broken". Counted as a blocker it put
+    // the page in its "1 blocker — fix everything marked FAIL" state with no FAIL
+    // row anywhere on it, which is the misreading this row must not cause.
     return [
       {
         ...base,
+        level: "warning",
         status: "warn",
-        message: "Resolved from EmeHub when a run starts.",
-        fix: "Run the deep check to confirm a credential is available before starting a run.",
+        message: "Not checked — the account is resolved from EmeHub when a run starts.",
+        fix: "Run the deep check. This row is not evidence the credential works; only the deep check reads it.",
       },
     ];
   }
 
   try {
-    const { resolveClaudeCredentialWithToken } = await import("./hubCredential");
+    const { resolveClaudeCredentialWithToken, claudeCredentialHealth } = await import("./hubCredential");
     const credential = await resolveClaudeCredentialWithToken();
     const account =
       credential.source === "shared" ? "the shared workspace account" : "your own account";
-    return [
-      {
+    const under = `${account}${credential.label ? ` (${credential.label})` : ""}`;
+
+    // The hub answering at all only proves a row exists. What decides whether the
+    // CLI authenticates is the token inside it, so that is what is reported.
+    const health = claudeCredentialHealth(credential.credentials);
+    const expiry = health.expiresAt ? health.expiresAt.toLocaleString() : "unknown";
+
+    // A readable, unexpired token is still only a *shape*. What settles it is
+    // letting the CLI authenticate — including the refresh, when the token has
+    // expired, since a refresh the hub's copy can no longer perform is precisely
+    // the failure this check exists for.
+    if (health.state === "usable" || health.state === "refresh-needed") {
+      const live = await verifyClaudeLive(credential);
+      cp.__teClaudeProbe = { at: Date.now(), ok: live.status === "pass", message: live.message, fix: live.fix };
+      return [{
         ...base,
-        status: "pass",
-        message:
-          `Runs execute under ${account}${credential.label ? ` (${credential.label})` : ""} — status ${credential.status}.`,
-      },
-    ];
+        // "The CLI itself broke" is not a credential verdict, so it must not
+        // stand in for one — warn, and say so.
+        level: live.status === "warn" ? "warning" : base.level,
+        status: live.status,
+        message: `Runs execute under ${under}${health.state === "usable" ? `, token valid until ${expiry}` : `, token expired ${expiry}`}. ${live.message}`,
+        fix: live.fix,
+      }];
+    }
+    const dead =
+      health.state === "blanked"
+        ? `${under}: EmeHub is holding a credential with every token blanked — the CLI wipes the file in place after a failed refresh.`
+        : health.state === "no-refresh"
+          ? `${under}: the access token expired (${expiry}) and there is no refresh token, so no run can authenticate.`
+          : `${under}: the credential EmeHub returned could not be read as an OAuth credential.`;
+    const deadFix = "Re-authenticate the account in EmeHub › Claude Settings — a run would fail at its first turn.";
+    cp.__teClaudeProbe = { at: Date.now(), ok: false, message: dead, fix: deadFix };
+    return [{ ...base, status: "fail", message: dead, fix: deadFix }];
   } catch (e) {
-    return [
-      {
-        ...base,
-        status: "fail",
-        message: e instanceof Error ? e.message : String(e),
-        fix:
-          "Attach your own credential in EmeHub › Claude Settings, or ask an admin to configure " +
-          "the shared account. With EmeHub on, runs do not fall back to this machine's own Claude login.",
-      },
-    ];
+    const message = e instanceof Error ? e.message : String(e);
+    const fix =
+      "Attach your own credential in EmeHub › Claude Settings, or ask an admin to configure " +
+      "the shared account. With EmeHub on, runs do not fall back to this machine's own Claude login.";
+    cp.__teClaudeProbe = { at: Date.now(), ok: false, message, fix };
+    return [{ ...base, status: "fail", message, fix }];
   }
 }
 

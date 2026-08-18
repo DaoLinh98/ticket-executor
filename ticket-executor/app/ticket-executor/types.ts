@@ -132,6 +132,17 @@ export type HubStatus = {
   /** When that token stops being accepted. Null when there is none. */
   expiresAt: string | null;
   connections: HubConnectionView[];
+  /** Whether the hub's Claude credential was ever *proved* to still authenticate.
+   *  `unverified` is the honest default and the common case: nothing on this page
+   *  changes when the account is re-logged-in elsewhere and the hub's copy is
+   *  quietly superseded, so only the deep System Check can say. */
+  claudeCredential: {
+    state: "unverified" | "ok" | "failed";
+    /** Epoch ms of that verification, or null when there is none. */
+    at: number | null;
+    message: string;
+    fix: string;
+  };
   error?: string;
   fix?: string;
   reason?: "not-configured" | "unreachable" | "signed-out" | "rejected";
