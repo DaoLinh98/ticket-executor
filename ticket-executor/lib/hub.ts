@@ -26,9 +26,33 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 import type { ProviderId } from "@/lib/providers";
 
-/** Where the hub lives. Deployment configuration, so env rather than a setting. */
+/**
+ * Where the hub lives **as a browser reaches it**. Deployment configuration, so
+ * env rather than a setting.
+ *
+ * This value is handed to the page, which mints the hub token against it with
+ * the hub's cookie attached, so it has to be an origin the user's browser can
+ * resolve and that the hub's cookie is scoped to. Include the hub's `/api`
+ * prefix.
+ */
 export function hubUrl(): string {
   return (process.env.DAGENT_HUB_URL ?? "").trim().replace(/\/+$/, "");
+}
+
+/**
+ * Where the hub lives **as this process reaches it**. Every server-side call
+ * goes here; nothing about it is ever sent to a page.
+ *
+ * These two used to be one variable, which is fine in a public deployment where
+ * the hub answers on the same URL from both sides, and wrong in a container:
+ * `http://localhost:5180/api` is the host's loopback to a browser and *this
+ * container's own* loopback to us. So the two are split, and the internal one
+ * falls back to the public one — a deployment that never needed the distinction
+ * keeps working unchanged.
+ */
+export function internalHubUrl(): string {
+  const internal = (process.env.DAGENT_HUB_URL_INTERNAL ?? "").trim().replace(/\/+$/, "");
+  return internal || hubUrl();
 }
 
 /** Our audience at the hub. A token minted for anything else must be refused. */
@@ -189,7 +213,7 @@ type HubRequest = {
  * same way while the UI still claims to be signed in.
  */
 export async function hubFetch<T>(req: HubRequest): Promise<T> {
-  const base = hubUrl();
+  const base = internalHubUrl();
   if (!base) throw new HubNotConfigured();
   const token = await currentToken();
 

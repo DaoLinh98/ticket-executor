@@ -27,7 +27,7 @@
 //                       down" nor "you are signed out": the fix is to mint a new
 //                       grant, not to sign in and not to wait.
 
-import { hubFetch, hubUrl, HubNotConfigured, HubUnreachable, HubRejected } from "@/lib/hub";
+import { hubFetch, internalHubUrl, HubNotConfigured, HubUnreachable, HubRejected } from "@/lib/hub";
 
 /** This run's authorisation to resolve a credential ran out. Distinct from
  *  `HubSignedOut` (the whole session died) and `HubUnreachable` (the hub is
@@ -79,7 +79,7 @@ type GrantRequest = {
  *  access token and clears it on a 401, and a spent grant must not log the app
  *  out of the hub. */
 async function grantFetch<T>(grant: string, req: GrantRequest): Promise<T> {
-  const base = hubUrl();
+  const base = internalHubUrl();
   if (!base) throw new HubNotConfigured();
   if (!grant) throw new HubGrantExpired("This run has no credential grant.");
 
