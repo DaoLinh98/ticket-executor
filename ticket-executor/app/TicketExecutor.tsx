@@ -1102,16 +1102,12 @@ export default function TicketExecutor() {
       const rootRepo = getRootRepo(t);
       const model = getModel(t);
       const effort = getEffort(t);
-      // Remember these values as saved options + the project→rootRepo mapping
-      // so the next ticket opened with the same project defaults sensibly.
+      // Remember these values as saved options so the next ticket opened with the
+      // same project defaults sensibly. The project→rootRepo mapping is written
+      // by startRun() instead, so a run started outside this screen records it too.
       rememberOption("rootRepo", rootRepo);
       rememberOption("project", projectName);
       rememberOption("skill", skillName);
-      fetch("/api/options/mapping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project: projectName, rootRepo }),
-      }).catch(() => { });
       if (isActive) setTab("execution");
       setExecs((s) => ({
         ...s,

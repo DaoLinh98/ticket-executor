@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Reactor from "../Reactor";
 import { COLORS, FONT, ctaButtonStyle, logoText, modalShellStyle, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
+import { mintHubToken } from "../hubSession";
 
 const fieldInputStyle: CSSProperties = {
   height: "42px", padding: "0 40px 0 13px", border: `1px solid ${COLORS.border}`, borderRadius: "9px",
@@ -24,6 +25,53 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [sso, setSso] = useState(true);
+
+  // EmeHub single sign-on (emehub `docs/DAGENT-HANDOFF.md` § 4).
+  //
+  // Pressing Launch at the hub used to land here, at a password form, because
+  // nothing exchanged the hub session for a local one. This is that exchange:
+  // mint a token in the browser — the only place it can be minted, since it
+  // authenticates with the hub's HttpOnly cookie (emehub ADR 0008) — and hand it
+  // to our own API, which verifies it with the hub and sets the session cookie.
+  //
+  // Every failure is silent and falls through to the password form on purpose.
+  // Not signed in at the hub, no hub configured, hub down: none of those are
+  // this page's problem to report, and all of them leave the user with the one
+  // thing that still works. The form is what they see if this does not finish.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/hub/token", { cache: "no-store" });
+        if (!r.ok) return;
+        const state = (await r.json()) as { hubUrl?: string };
+        if (!state.hubUrl) return;
+
+        const minted = await mintHubToken(state.hubUrl);
+        if ("error" in minted) return;
+
+        const handed = await fetch("/api/hub/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hubToken: minted.token, expiresIn: minted.expiresIn }),
+        });
+        if (!handed.ok) return;
+        const body = (await handed.json().catch(() => ({}))) as { sessionGranted?: boolean };
+        if (!body.sessionGranted || cancelled) return;
+
+        router.replace("/");
+        router.refresh();
+      } catch {
+        /* fall through to the password form */
+      } finally {
+        if (!cancelled) setSso(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,6 +132,12 @@ export default function LoginPage() {
             <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "5px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SIGN IN TO CONTINUE</span>
           </div>
         </div>
+
+        {sso && (
+          <div style={{ ...labelStyle, color: COLORS.textDim, animation: "fadeUp .3s both" }}>
+            CHECKING EMEHUB SIGN-IN…
+          </div>
+        )}
 
         <label style={{ display: "flex", flexDirection: "column", gap: "8px", animation: "fadeUp .45s both", animationDelay: "60ms" }}>
           <span style={labelStyle}>ACCESS PASSWORD</span>

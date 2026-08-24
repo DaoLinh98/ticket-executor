@@ -20,13 +20,19 @@ export function BoltsProvider({ children }: { children: ReactNode }) {
   // rather than at each call site means one switch covers both, and no component
   // has to know the setting exists. Read once on mount and kept live via the
   // same event the Settings page uses for the animated backdrop.
-  const [enabled, setEnabled] = useState(true);
+  //
+  // Starts off, not on: a LoadingRing mounts and self-strikes immediately, well
+  // before the read below resolves, so defaulting to on made bolts flash on
+  // every page load with the setting off. The pending window is the only state
+  // treated as off — a read that returns no setting at all (the login page, 401)
+  // still turns them on, as it always did.
+  const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((d) => { if (d.settings && typeof d.settings.clickEffects === "boolean") setEnabled(d.settings.clickEffects); })
-      .catch(() => { /* unauthenticated (login page) or offline — keep the effect on */ });
+      .then((d) => setEnabled(typeof d?.settings?.clickEffects === "boolean" ? d.settings.clickEffects : true))
+      .catch(() => { /* unauthenticated (login page) or offline — keep the effect on */ setEnabled(true); });
   }, []);
 
   useEffect(() => {

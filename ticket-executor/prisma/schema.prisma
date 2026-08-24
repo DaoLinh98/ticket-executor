@@ -64,9 +64,22 @@ model Setting {
   // gateway**: every provider read and write goes out as an HTTP call to the hub
   // (lib/hubGateway.ts), and this app holds no provider credential of its own.
   //
-  // Off by default and off is not a degraded mode: an install with no hub is the
-  // normal case, and nothing below matters while this is false.
+  // Off by default *in the schema* and off is not a degraded mode: an install
+  // with no hub is the normal case, and nothing below matters while this is
+  // false. A deployment that **is** pointed at a hub (`DAGENT_HUB_URL` set)
+  // starts it on instead — see `lib/settings.ts`, which owns that decision,
+  // because the schema cannot read the environment.
   hubEnabled     Boolean  @default(false)
+  // Has anyone actually decided about `hubEnabled`, or is it still whatever the
+  // install defaulted to? Saving the Settings page sets this, and it is the only
+  // thing that does.
+  //
+  // It exists so the "point it at a hub and it works" default can be applied to
+  // an install that predates the hub *without* it ever re-applying: the default
+  // is for a row nobody has ruled on, and a user who switches hub mode off has
+  // ruled on it. Without this the adoption in `lib/settings.ts` could not tell
+  // "never chosen" from "chosen: no", and would turn the hub back on under them.
+  hubModeChosen  Boolean  @default(false)
   // Which of the hub's connections every provider call is routed through — the
   // hub's own `provider_connections.id`, as a string. The hub can hold several
   // connections of the same kind, so "use the hub" is not by itself an answer;

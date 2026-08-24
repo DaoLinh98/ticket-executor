@@ -3,6 +3,7 @@ import Sidebar from "./Sidebar";
 import AppReactor from "./AppReactor";
 import AppTheme, { AppBlooms } from "./AppTheme";
 import { COLORS } from "@/lib/ui";
+import { authDisabled } from "@/lib/auth";
 
 // Shared authenticated shell: one persistent reactor backdrop + sidebar
 // alongside the active page. Auth is enforced upstream in proxy.ts, so no gate
@@ -13,7 +14,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <AppTheme />
       <AppBlooms />
       <AppReactor />
-      <Sidebar />
+      <Sidebar authEnabled={!authDisabled()} />
       <div style={{ position: "relative", zIndex: 1, flex: 1, minWidth: 0, height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {children}
       </div>

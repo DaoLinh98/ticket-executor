@@ -199,6 +199,41 @@ npm run start    # serve the production build
 Log in with `APP_ACCESS_PASSWORD` (if you left it empty, the auth gate is off
 and you go straight in).
 
+### Host or container — never both at once
+
+The app also ships as a container (`dagent-web` in the EmeHub suite). Both copies
+can point at the same Postgres, and that is the supported setup: one database, one
+set of settings, one run history. What is **not** supported is running both at the
+same time.
+
+`recoverInterruptedRuns()` (`lib/execution/runner.ts`) treats every row with
+`state: "running"` that the *current* process is not holding in memory as an
+orphan and resumes it. That check is an in-memory map, not a database lock — so
+whichever copy starts second adopts the other's live run and spawns a second
+`claude` on the same worktree. Two processes then commit and push the same branch.
+
+Pick one side per session:
+
+| Doing | Command |
+|---|---|
+| Implementing — you want your own skills, `~/.claude.json` MCP config, and sibling clones | `docker stop emesoft-dagent-web-1` then `npm run dev` |
+| Demoing the suite | stop `npm run dev`, then `docker start emesoft-dagent-web-1` |
+
+Before switching sides, make sure no run is mid-flight — a `running` row left
+behind is exactly what the other side picks up:
+
+```bash
+# nothing should be running
+docker exec emesoft-dagent-db-1 psql -U dagent -d dagent -c "select id, state from \"Run\" where state = 'running';"
+
+# and when you are on the host, this should print nothing
+docker ps --format "{{.Names}}" | grep dagent-web
+```
+
+Sharing one database also means sharing the single `Setting` row, `hubToken`
+included: signing in on one side invalidates the other side's hub session. Nothing
+is lost — you just log in again.
+
 ## 8. Verify the setup — System Check
 
 Go to **System Check** in the sidebar (`/system-check`) *before* your first
@@ -282,6 +317,7 @@ What happens when you press the CTA, in order — the cheap guards come first:
 | Symptom | Cause | Fix |
 |---|---|---|
 | Run fails immediately, log shows `spawn claude ENOENT` | CLI not on `PATH` | Set `CLAUDE_BIN` to the full path — System Check (§8) flags this |
+| `Failed to set up isolated git worktree` before any token is spent, git says `Filename too long` (Windows) | The worktree lives at `<root repo>\.te-worktrees\<project>-<runId>`, which is deeper than the original clone — deep repos cross the 260-char limit | `git config --global core.longpaths true` (the Windows `LongPathsEnabled` policy alone is not enough; git opts in separately) |
 | Run starts, then fails partway with nothing useful done | Selected skill is not installed locally | §4 / System Check |
 | Log stalls at branch/push | git credentials not cached for the clone | `git push --dry-run` in the repo, fix the credential |
 | `Root repo is required` / `Root repo not found` (400, nothing ran) | Root repo empty or wrong on the Overview tab | Set it to the clone path; it is then remembered for that project |
