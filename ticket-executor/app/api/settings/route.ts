@@ -3,20 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { clearMcpProbe } from "@/lib/mcp";
 import { normalizeProvider } from "@/lib/tickets";
+import { getOrCreateSetting } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 const clean = (s: string) => s.replace(/[\r\n]+/g, "").trim();
 
-async function getOrCreate() {
-  const existing = await prisma.setting.findUnique({
-    where: { id: "default" },
-  });
-  if (existing) return existing;
-  return prisma.setting.create({ data: { id: "default" } });
-}
 
-type SettingRow = Awaited<ReturnType<typeof getOrCreate>>;
+type SettingRow = Awaited<ReturnType<typeof getOrCreateSetting>>;
 type Credential = { org: string; pat: string } | null;
 
 /**
@@ -65,7 +59,7 @@ function publicSettings(s: SettingRow, cred: Credential) {
 // (org/hasPat) for the requested provider instead — used when the UI switches the
 // provider dropdown without having saved yet.
 export async function GET(req: Request) {
-  const s = await getOrCreate();
+  const s = await getOrCreateSetting();
   const { searchParams } = new URL(req.url);
   const provider = normalizeProvider(searchParams.get("provider") ?? s.provider);
   const cred = await prisma.providerCredential.findUnique({ where: { provider } });
@@ -91,7 +85,12 @@ export async function POST(req: Request) {
   if (typeof body.multiTicketMode === "boolean")
     data.multiTicketMode = body.multiTicketMode;
   if (typeof body.manageMcp === "boolean") data.manageMcp = body.manageMcp;
-  if (typeof body.hubEnabled === "boolean") data.hubEnabled = body.hubEnabled;
+  // A save is the one place hub mode is *decided*. Recording that is what stops
+  // the deployment default in lib/settings.ts from switching it back on.
+  if (typeof body.hubEnabled === "boolean") {
+    data.hubEnabled = body.hubEnabled;
+    data.hubModeChosen = true;
+  }
   if (typeof body.hubConnectionId === "string")
     data.hubConnectionId = clean(body.hubConnectionId);
   if (typeof body.evaluateBeforePublish === "boolean")

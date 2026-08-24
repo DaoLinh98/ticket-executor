@@ -99,12 +99,16 @@ export default function SettingsPage() {
   const showToast = (msg: string, kind: "success" | "error" | "warning" = "success", ms = 7000) =>
     setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
 
-  const loadHub = async () => {
+  const loadHub = async (): Promise<HubStatus | null> => {
     try {
       const r = await fetch("/api/hub");
-      if (r.ok) setHub(await r.json());
+      if (!r.ok) return null;
+      const state: HubStatus = await r.json();
+      setHub(state);
+      return state;
     } catch {
       /* the section stays as it was; a failed read is not a state change */
+      return null;
     }
   };
 
@@ -115,9 +119,18 @@ export default function SettingsPage() {
         // out and the connection list came back empty until Connect was pressed.
         // Re-mint first; off hub mode this is one cheap local request.
         await ensureHubSession();
-        const [r] = await Promise.all([fetch("/api/settings"), loadHub()]);
+        const [r, hubState] = await Promise.all([fetch("/api/settings"), loadHub()]);
         const data = await r.json();
-        if (data.settings) setSettings(data.settings);
+        if (data.settings)
+          setSettings({
+            ...data.settings,
+            // These two reads race, and only one of them can pick a connection:
+            // `GET /api/hub` adopts the hub's sole usable connection and writes
+            // it, which can land after the settings read has already returned the
+            // empty value it replaced. So the hub's answer fills a blank — it
+            // never overrides a selection the settings row already had.
+            hubConnectionId: data.settings.hubConnectionId || hubState?.selectedId || "",
+          });
       } catch {
         /* keep defaults */
       } finally {

@@ -360,6 +360,22 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     throw e;
   }
 
+  // Remember which Root Repo this project last ran with, so the next ticket
+  // opened under the same project prefills it (see RootRepoProjectMap). Written
+  // here rather than from the Overview tab: a run started by POSTing this route
+  // directly never touches the client, and a mapping the UI alone maintains goes
+  // stale the moment it is bypassed. Best-effort — a prefill hint is not worth
+  // failing an admitted run over.
+  try {
+    await prisma.rootRepoProjectMap.upsert({
+      where: { project },
+      create: { project, rootRepo },
+      update: { rootRepo },
+    });
+  } catch {
+    /* the next run gets another chance to record it */
+  }
+
   const live: LiveRun = {
     id: row.id,
     graphId: graph.id,

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
   HubNotConfigured, HubRejected, HubSignedOut, HubUnreachable,
   hubSessionState, hubUrl, listHubConnections,
 } from "@/lib/hub";
 import { getClaudeProbe } from "@/lib/preflight";
+import { getOrCreateSetting, selectSoleHubConnection } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 // whether to show a Connect button, a retry, or a link to sign in at the hub.
 export async function GET() {
   const [setting, session] = await Promise.all([
-    prisma.setting.findUnique({ where: { id: "default" } }),
+    getOrCreateSetting(),
     hubSessionState(),
   ]);
 
@@ -42,11 +42,11 @@ export async function GET() {
 
   const base = {
     claudeCredential,
-    enabled: setting?.hubEnabled ?? false,
+    enabled: setting.hubEnabled,
     // Empty means the deployment was never pointed at a hub. The UI must offer
     // to fix that rather than letting every call fail with a fetch error.
     hubUrl: hubUrl(),
-    selectedId: setting?.hubConnectionId ?? "",
+    selectedId: setting.hubConnectionId,
     signedIn: session.signedIn,
     expiresAt: session.expiresAt,
   };
@@ -59,7 +59,12 @@ export async function GET() {
 
   try {
     const connections = await listHubConnections();
-    return NextResponse.json({ ...base, connections });
+    // A hub holding exactly one usable connection for this provider leaves the
+    // user a picker with one card and no decision in it — so it is picked here,
+    // and persisted, rather than left as the last manual step between arriving
+    // from the hub and the app working. Anything ambiguous is left alone.
+    const selectedId = await selectSoleHubConnection(setting, connections);
+    return NextResponse.json({ ...base, selectedId, connections });
   } catch (e) {
     return NextResponse.json({ ...base, connections: [], ...describe(e) });
   }

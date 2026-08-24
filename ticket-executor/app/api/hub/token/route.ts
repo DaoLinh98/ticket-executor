@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { AUTH_COOKIE, authDisabled, sessionToken } from "@/lib/auth";
 import { clearMcpProbe } from "@/lib/mcp";
-import { hubUrl, hubSessionState, saveHubToken, HUB_AUDIENCE } from "@/lib/hub";
+import { hubUrl, hubSessionState, saveHubToken, verifyHubToken, HUB_AUDIENCE } from "@/lib/hub";
+import { getOrCreateSetting } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +22,11 @@ export const dynamic = "force-dynamic";
 // cookie (emehub ADR 0008).
 export async function GET() {
   const [setting, session] = await Promise.all([
-    prisma.setting.findUnique({ where: { id: "default" } }),
+    getOrCreateSetting(),
     hubSessionState(),
   ]);
   return NextResponse.json({
-    enabled: setting?.hubEnabled ?? false,
+    enabled: setting.hubEnabled,
     hubUrl: hubUrl(),
     signedIn: session.signedIn,
     expiresAt: session.expiresAt,
@@ -83,6 +84,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "That token was not issued by EmeHub." }, { status: 400 });
   }
 
+  // The claims above are shape, not proof — `readClaims` never verified a
+  // signature and still does not. That was harmless while a token was only ever
+  // relayed to the hub; it stops being harmless below, where a token becomes a
+  // session for this app. So the hub is asked whether the token is real, and
+  // nothing past this point runs on an unverified one.
+  let genuine: boolean;
+  try {
+    genuine = await verifyHubToken(token);
+  } catch {
+    // Unreachable, or the hub erroring on its own account. Deliberately *not*
+    // reported as a rejected token: telling someone their session is invalid
+    // when the truth is an outage sends them to fix the one thing that is fine.
+    return NextResponse.json(
+      {
+        error: "EmeHub could not be reached to check that session.",
+        fix: "Try again once the hub is back up.",
+      },
+      { status: 503 },
+    );
+  }
+  if (!genuine) {
+    return NextResponse.json(
+      { error: "EmeHub did not accept that token.", fix: "Sign in at EmeHub, then try again." },
+      { status: 401 },
+    );
+  }
+
   // The hub's own `expiresIn` is preferred over the `exp` claim: it is relative,
   // so a clock skew between this machine and the hub shortens the window rather
   // than letting us believe a dead token is still live.
@@ -97,7 +125,29 @@ export async function POST(req: Request) {
   // old one; the MCP verdict is the only such cache here.
   if (sessionChanged) clearMcpProbe();
 
-  return NextResponse.json({ ok: true, expiresIn, sessionChanged });
+  // The hub session *is* the session (DAGENT-HANDOFF § 4). Whoever proved they
+  // hold a live EmeHub identity has proved everything this app's shared password
+  // ever asked for, so arriving from the hub's Launch button lands in the app
+  // instead of at a password form — and the gate stays on for anyone who did not
+  // come through the hub, which is what § 3 asks for and what turning
+  // `APP_ACCESS_PASSWORD` off would have thrown away.
+  //
+  // A session cookie, not the 30-day one the password form issues: the bootstrap
+  // is automatic, so re-proving hub identity next time costs the user nothing
+  // and keeps this app's session from outliving their hub session by a month.
+  const granted = !authDisabled();
+  const res = NextResponse.json({ ok: true, expiresIn, sessionChanged, sessionGranted: granted });
+  if (granted) {
+    res.cookies.set({
+      name: AUTH_COOKIE,
+      value: await sessionToken(),
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  }
+  return res;
 }
 
 type Claims = { aud: string; iss: string; sid: string; exp: number };

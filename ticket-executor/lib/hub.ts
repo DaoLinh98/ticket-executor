@@ -258,6 +258,50 @@ export async function hubFetch<T>(req: HubRequest): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Does the hub accept this token? Asked with the token **supplied**, before
+ * anything is stored and before anything is trusted.
+ *
+ * `app/api/hub/token` used to read a token's claims without verifying them, and
+ * was right to: nothing trusted the token, the hub verified it on the very next
+ * call, and a forgery bought nothing. Accepting a hub token as *this app's
+ * session* (emehub `docs/DAGENT-HANDOFF.md` § 4) retires that reasoning — the
+ * token is now trusted here, so it has to be checked here. Without this, a
+ * hand-written `{ aud: "dagent", iss: "emehub" }` would be a login.
+ *
+ * Checked by asking the hub rather than verifying HS256 locally. The local route
+ * needs `EMEHUB_JWT_SECRET` in this app, and that key does not merely verify
+ * tokens — it mints them, for any audience. Holding it would be a larger secret
+ * than the session it protects. This costs one round trip, at sign-in only.
+ *
+ * `false` means the hub rejected it. A hub that cannot be reached throws
+ * instead: "invalid" and "we could not check" must not collapse into one answer,
+ * or an outage locks everyone out under a message about their session.
+ */
+export async function verifyHubToken(token: string): Promise<boolean> {
+  const base = internalHubUrl();
+  if (!base) throw new HubNotConfigured();
+
+  let res: Response;
+  try {
+    // `/dagent/connections` because it is the cheapest endpoint an `aud: "dagent"`
+    // token is entitled to (emehub INTEGRATION.md § 3) — the answer is discarded,
+    // only the hub's willingness to answer at all is the verdict.
+    res = await fetch(`${base}/dagent/connections`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new HubUnreachable(e instanceof Error ? e.message : String(e));
+  }
+
+  if (res.status === 401 || res.status === 403) return false;
+  // Anything else non-2xx is the hub having a bad day, not a verdict on the
+  // token, and must not be reported to the user as a rejected sign-in.
+  if (!res.ok) throw new HubRejected(res.status, res.statusText);
+  return true;
+}
+
 // ---------------------------------------------------------------- connections
 
 export type HubConnectionView = {

@@ -62,7 +62,11 @@ const NAV: NavItem[] = [
   },
 ];
 
-export default function Sidebar() {
+// `authEnabled` comes from the layout, which reads the gate on the server. When
+// the shared password is unset there is no session to end, so the Log out
+// control is hidden rather than left to bounce off a login page that redirects
+// straight back.
+export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean }) {
   const pathname = usePathname();
   const { fireBoltFromEvent } = useBoltsContext();
   // Collapsed rail: icons only. Remembered so it survives navigation/reload.
@@ -196,7 +200,7 @@ export default function Sidebar() {
       <div style={{ flex: 1 }} />
 
       {/* Logout */}
-      <button
+      {authEnabled && <button
         onClick={async (e) => {
           fireBoltFromEvent(e);
           await fetch("/api/auth/logout", { method: "POST" }).catch(() => { });
@@ -224,7 +228,7 @@ export default function Sidebar() {
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
         </svg>
         {!collapsed && "Log out"}
-      </button>
+      </button>}
     </aside>
   );
 }

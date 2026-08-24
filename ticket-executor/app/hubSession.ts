@@ -92,7 +92,12 @@ async function handOver(token: string, expiresIn: number): Promise<MintFailure |
 }
 
 export type EnsureResult =
-  /** Hub mode is off, or the deployment is not pointed at a hub — nothing to do. */
+  /**
+   * Nothing for the caller to act on: the deployment is not pointed at a hub,
+   * or hub mode is off. With hub mode off a session may still have been minted
+   * — see `ensureHubSession` — but that is this module's business, not the
+   * page's, so it is reported the same either way.
+   */
   | { status: "not-applicable" }
   /** A live session exists (it may have just been minted). */
   | { status: "signed-in"; minted: boolean }
@@ -104,11 +109,28 @@ export type EnsureResult =
 // wasteful, and the hub sees three sign-ins for one page view.
 let inFlight: Promise<EnsureResult> | null = null;
 
+// An opportunistic mint (hub mode off) that failed is not tried again. Nobody
+// asked for it, so retrying it on every navigation would be a burst of doomed
+// requests at a hub the user may not even be signed in to. Hub mode *on* is
+// unaffected: there the mint was asked for, and it retries as it always did.
+let opportunisticFailed = false;
+
 /**
  * Make sure this app holds a live EmeHub session, minting one if it does not.
  *
- * Call it before reading provider data. It is a no-op (one cheap local request)
- * when hub mode is off, which is the default and the common case.
+ * Call it before reading provider data.
+ *
+ * **It also mints with hub mode off**, which reads as odd until you follow a
+ * first run: the user presses Launch at the hub, lands here, and Settings says
+ * SIGNED OUT — so before they can switch hub mode on they have to find and press
+ * Connect, a step that exists only because nothing had minted yet. A hub token
+ * is a 15-minute session and nothing more; holding one changes no behaviour on
+ * its own, since every credential path still gates on `Setting.hubEnabled`.
+ *
+ * What it must not do is *report* that mint. Two call sites render `failed` to
+ * the user, and a deployment that is pointed at a hub nobody is signed in to is
+ * a normal state, not an error — so with hub mode off the answer stays
+ * `not-applicable` whatever the mint did.
  */
 export function ensureHubSession(): Promise<EnsureResult> {
   if (inFlight) return inFlight;
@@ -129,12 +151,28 @@ async function run(): Promise<EnsureResult> {
     return { status: "not-applicable" };
   }
 
-  if (!state.enabled || !state.hubUrl) return { status: "not-applicable" };
-  if (state.signedIn) return { status: "signed-in", minted: false };
+  // Not pointed at a hub — there is no such thing as a session to ensure.
+  if (!state.hubUrl) return { status: "not-applicable" };
+
+  // Everything below is silent when hub mode is off: the mint still happens, so
+  // Settings opens SIGNED IN and the toggle is the only thing left to do, but
+  // nothing about it reaches the user.
+  const quiet = !state.enabled;
+  const answer = (result: EnsureResult): EnsureResult =>
+    quiet ? { status: "not-applicable" } : result;
+
+  if (state.signedIn) return answer({ status: "signed-in", minted: false });
+  if (quiet && opportunisticFailed) return { status: "not-applicable" };
 
   const minted = await mintHubToken(state.hubUrl);
-  if ("error" in minted) return { status: "failed", ...minted };
+  if ("error" in minted) {
+    if (quiet) opportunisticFailed = true;
+    return answer({ status: "failed", ...minted });
+  }
   const stored = await handOver(minted.token, minted.expiresIn);
-  if (stored) return { status: "failed", ...stored };
-  return { status: "signed-in", minted: true };
+  if (stored) {
+    if (quiet) opportunisticFailed = true;
+    return answer({ status: "failed", ...stored });
+  }
+  return answer({ status: "signed-in", minted: true });
 }

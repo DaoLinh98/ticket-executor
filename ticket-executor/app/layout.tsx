@@ -34,7 +34,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    // The inline bootstrap below sets `data-theme` on this element before
+    // hydration, and browser extensions add their own classes to it; both are
+    // html-attribute-only mismatches React cannot see coming.
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
