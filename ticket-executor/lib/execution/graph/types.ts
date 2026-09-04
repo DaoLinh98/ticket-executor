@@ -167,21 +167,6 @@ export type LiveRun = {
   /** The whole run's log, in order. A step persists the slice it produced. */
   logLines: LogLine[];
   mcpConfigPath: string;
-  // ---- EmeHub Claude credential (hub mode only) ----
-  // All three are empty when `Setting.hubEnabled` is off, and every site that
-  // reads them is guarded on that emptiness. An empty `claudeCredentialDir`
-  // means the CLI is spawned with the environment it has always been spawned
-  // with and authenticates against the machine's own login — the original flow,
-  // reached by doing nothing rather than by falling back.
-  /** `CLAUDE_SECURESTORAGE_CONFIG_DIR` for this run's turns — the credential
-   *  file only, never the config root (see lib/claudeConfig.ts). */
-  claudeCredentialDir: string;
-  /** The run-scoped credential grant (emehub ADR 0009), decrypted. Used only to
-   *  hand rotated tokens and spend back to the hub, and to re-resolve mid-run. */
-  claudeGrant: string;
-  /** Which account the hub resolved: "" | own | shared. Recorded for the log and
-   *  the run row; never used to *decide* anything, because the hub decides. */
-  claudeSource: string;
   parkedAt: number | null;
   humanWaitMs: number;
   startedAt: number;

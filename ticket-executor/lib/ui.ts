@@ -147,10 +147,8 @@ export const RUN_LABEL: Record<UiRunState, string> = {
 // See UI-STYLEGUIDE.md — any new element should compose these instead of
 // re-typing raw gradient/clip-path/color literals.
 /**
- * Every token is a `var()`, not a literal, and that is what makes the EmeHub
- * theme possible: the values live in `app/globals.css` under `:root` and
- * `:root[data-theme="emehub"]`, so flipping one attribute on <html> repaints the
- * app without a single component re-rendering.
+ * Every token is a `var()`, not a literal: the values live in `app/globals.css`
+ * under `:root`, so the palette is edited in one place.
  *
  * Two consequences to respect when using these:
  *
@@ -194,9 +192,8 @@ export const SURFACE = {
   modal: "var(--te-modal-bg)",
 } as const;
 
-/** Shape tokens. The two design languages differ in more than hue — D-Agent
- *  chips are corner-cut hexagons, EmeHub's are rounded rectangles — so the
- *  clip-path and the radius are both themed and always applied together. */
+/** Shape tokens. D-Agent chips are corner-cut hexagons, so the clip-path and
+ *  the radius are always applied together. */
 export const SHAPE = {
   radiusChip: "var(--te-radius-chip)",
   radiusCard: "var(--te-radius-card)",
@@ -312,11 +309,8 @@ export function ringBorder(opts: RingOpts): CSSProperties {
       : `conic-gradient(from var(--angle), transparent, ${ring}, ${highlight}, ${ring}, transparent 70%)`;
   const style: CSSProperties = {
     border: "2.25px solid transparent",
-    // The border-box layer is themeable as a whole. D-Agent leaves
-    // `--te-ring-image` unset and gets the spinning conic; EmeHub sets it to a
-    // flat hairline, because a rotating energy ring is not in that design
-    // language. The spinAngle animation then drives a `--angle` nobody reads,
-    // which costs nothing and keeps this branch-free.
+    // The border-box layer is overridable as a whole: `--te-ring-image` is
+    // unset by default, so the spinning conic below is what paints.
     background: `linear-gradient(${fill},${fill}) padding-box, var(--te-ring-image, ${conic}) border-box`,
     animation: extraAnimation
       ? `spinAngle ${duration}s linear infinite, ${extraAnimation}`
@@ -562,7 +556,6 @@ export function ctaButtonStyle(
       // Opaque fill (not the translucent rgba used for static success tints) — ringBorder's
       // mask only hides the spinning conic-gradient inside the padding-box when that layer
       // is fully opaque; a translucent fill lets the sweep bleed through the whole button.
-      // (EmeHub overrides the ring with a flat hairline, so a tint is safe there.)
       ...ringBorder({
         fill: "var(--te-btn-success-fill)",
         ring: COLORS.success,

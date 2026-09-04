@@ -296,7 +296,7 @@ const TICKET_FIELDS = [
 const BATCH_SIZE = 200;
 
 /**
- * Cap on one fetch, matching the hub's `MAX_TICKETS`. A sprint is bounded by its
+ * Cap on one fetch. A sprint is bounded by its
  * iteration, but a backlog or a board is not — a 2000-item project would
  * otherwise hang the page load.
  */
@@ -319,8 +319,7 @@ function wiqlQuoted(value: string): string {
 }
 
 /**
- * The work items one view asks for. Mirrors the hub's `dagent_provider._wiql`
- * so the same three views mean the same thing on both sides of the hub switch.
+ * The work items one view asks for.
  *
  * - `backlog` — open work not scheduled into any iteration yet. In ADO that is
  *   the iteration path still sitting at the project root, which is what an
@@ -386,7 +385,7 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
  *   the list the user sees at `_sprints/backlog/<team>/…`, and reading the
  *   project's classification tree instead returns every team's sub-tree at once.
  * - `backlog` and `board` have no team-scoped endpoint, so they are WIQL, using
- *   the same clauses the hub builds (`wiqlFor`).
+ *   the same clauses `wiqlFor` builds.
  *
  * `truncated` is the honest half of `MAX_TICKETS`: neither a backlog nor a board
  * is bounded by an iteration, so a big project silently losing its tail would

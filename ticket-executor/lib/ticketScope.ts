@@ -16,8 +16,8 @@
  *               the kanban column it is in.
  *
  * A backlog item and most of a board live outside the iteration the sprint
- * query is bounded by, so none of them can be derived from a sprint fetch on
- * this side. The scope travels to the hub, and the hub builds the query.
+ * query is bounded by, so none of them can be derived from a sprint fetch —
+ * each scope is its own provider query.
  */
 export type TicketScope = "sprint" | "backlog" | "board";
 

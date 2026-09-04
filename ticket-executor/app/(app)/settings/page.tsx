@@ -7,20 +7,20 @@ import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
 import { SETTINGS_UPDATED_EVENT } from "../../settingsEvents";
-import { ensureHubSession, mintHubToken } from "../../hubSession";
 import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
-import type { ConnTest, HubStatus, SettingsView } from "../../ticket-executor/types";
+import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
-  animatedBackground: true, emehubTheme: false, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
+  animatedBackground: true, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
   manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
-  evaluateBeforePublish: false, hubEnabled: false, hubConnectionId: "",
+  evaluateBeforePublish: false,
+  gitUserName: "", gitUserEmail: "",
 };
 
 // The page is four panes, not one scroll.
@@ -81,56 +81,18 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
   const [loading, setLoading] = useState(true);
-  const [hub, setHub] = useState<HubStatus>({
-    enabled: false, hubUrl: "", selectedId: "", signedIn: false, expiresAt: null, connections: [],
-    claudeCredential: { state: "unverified", at: null, message: "", fix: "" },
-  });
-  const [connecting, setConnecting] = useState(false);
   const pm = providerMeta(settings.provider);
-  // With hub mode on this app makes no provider call of its own, so the local
-  // org/PAT fields are not merely ignored — there is nothing for them to
-  // configure. Read-only rather than hidden: the values are still what the app
-  // reverts to the moment hub mode goes back off.
-  const credentialsFromHub = settings.hubEnabled;
-  const activeHubConn = hub.connections.find((c) => String(c.hubId) === settings.hubConnectionId);
-
   // The Toast owns its own countdown (and pauses it on hover), so all this does
   // is hand it a fresh message.
   const showToast = (msg: string, kind: "success" | "error" | "warning" = "success", ms = 7000) =>
     setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
 
-  const loadHub = async (): Promise<HubStatus | null> => {
-    try {
-      const r = await fetch("/api/hub");
-      if (!r.ok) return null;
-      const state: HubStatus = await r.json();
-      setHub(state);
-      return state;
-    } catch {
-      /* the section stays as it was; a failed read is not a state change */
-      return null;
-    }
-  };
-
   useEffect(() => {
     (async () => {
       try {
-        // A hub token lasts 15 minutes, so this page was usually opened signed
-        // out and the connection list came back empty until Connect was pressed.
-        // Re-mint first; off hub mode this is one cheap local request.
-        await ensureHubSession();
-        const [r, hubState] = await Promise.all([fetch("/api/settings"), loadHub()]);
+        const r = await fetch("/api/settings");
         const data = await r.json();
-        if (data.settings)
-          setSettings({
-            ...data.settings,
-            // These two reads race, and only one of them can pick a connection:
-            // `GET /api/hub` adopts the hub's sole usable connection and writes
-            // it, which can land after the settings read has already returned the
-            // empty value it replaced. So the hub's answer fills a blank — it
-            // never overrides a selection the settings row already had.
-            hubConnectionId: data.settings.hubConnectionId || hubState?.selectedId || "",
-          });
+        if (data.settings) setSettings(data.settings);
       } catch {
         /* keep defaults */
       } finally {
@@ -138,45 +100,6 @@ export default function SettingsPage() {
       }
     })();
   }, []);
-
-  // Sign this app in to EmeHub.
-  //
-  // This is what the old "Sync from EmeHub" button became, and it does strictly
-  // less: it mints a token at the hub (in the browser, because only the browser
-  // holds the hub's refresh cookie) and hands it to our own API. Nothing is
-  // copied — no connection list, and above all no PAT. From that point the
-  // server calls the hub directly for everything.
-  //
-  // It goes through `mintHubToken` rather than `ensureHubSession` on purpose:
-  // this button must re-mint even when a session is already live, which is what
-  // "Reconnect" means.
-  const connectHub = async () => {
-    setConnecting(true);
-    setError("");
-    try {
-      const minted = await mintHubToken(hub.hubUrl);
-      if ("error" in minted) {
-        showToast(minted.error, "error", 10000);
-        return;
-      }
-      const r = await fetch("/api/hub/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hubToken: minted.token, expiresIn: minted.expiresIn }),
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        showToast([data.error, data.fix].filter(Boolean).join(" "), "error", 10000);
-        return;
-      }
-      // The connection list is a live read through the new session, so it can
-      // only be fetched after the token has landed.
-      await loadHub();
-      showToast("Connected to EmeHub.");
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
@@ -196,18 +119,10 @@ export default function SettingsPage() {
   const testConnection = async () => {
     setConnTest({ status: "testing", message: "" });
     try {
-      // In hub mode neither field is editable here, and `settings.org` still
-      // holds the *local* org — sending it would test a connection no run uses.
-      // Sending neither makes the route resolve both from whichever credential
-      // this provider actually runs with.
       const r = await fetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          credentialsFromHub
-            ? { provider: settings.provider }
-            : { provider: settings.provider, org: settings.org, pat: settings.pat },
-        ),
+        body: JSON.stringify({ provider: settings.provider, org: settings.org, pat: settings.pat }),
       });
       const data = await r.json();
       setConnTest({ status: data.ok ? "ok" : "fail", message: data.message || (data.ok ? "Connected." : "Failed.") });
@@ -217,24 +132,11 @@ export default function SettingsPage() {
   };
 
   const validate = (): string => {
-    if (credentialsFromHub) {
-      // Nothing here is editable in hub mode, so validating the local fields
-      // would block a save on values this app no longer owns. The one thing that
-      // *can* be wrong is having no connection chosen — and that has to be an
-      // error, not a silent fallback to the local row.
-      return hub.connections.length && !settings.hubConnectionId
-        ? "Choose which EmeHub connection to run against."
-        : "";
-    }
-    // An *absent* credential does not block the save, and that is the whole of
-    // the fix here. Save posts all four tabs as one object, so requiring the org
-    // URL made an unrelated Appearance change unsaveable — and, worse, made
-    // leaving hub mode impossible: the toggle lives on this tab, and turning it
-    // off with nothing in the local fields (which is the normal state of an
-    // install that has only ever run on the hub) failed validation before the
-    // new value could ever reach the server. Being unconfigured is reported
-    // after the save instead, and refused where it actually costs something —
-    // preflight refuses to start a run, and Test connection says so out loud.
+    // An *absent* credential does not block the save. Save posts all four tabs
+    // as one object, so requiring the org URL made an unrelated Appearance
+    // change unsaveable. Being unconfigured is reported after the save instead,
+    // and refused where it actually costs something — preflight refuses to start
+    // a run, and Test connection says so out loud.
     const url = settings.org.trim();
     if (!url) return "";
     // A value that *is* there and is wrong is still a hard error: saving a
@@ -249,11 +151,11 @@ export default function SettingsPage() {
     return "";
   };
 
-  /** Hub off and no local credential — legal to save, but nothing can run on it.
+  /** No credential — legal to save, but nothing can run on it.
    *  Said out loud on save so the gap is never discovered by a failed run.
    *  Takes the *saved* settings rather than reading state: the server's echo is
    *  what is now in effect, and the local copy is one render behind it. */
-  const credentialMissing = (s: SettingsView) => !s.hubEnabled && !s.org.trim();
+  const credentialMissing = (s: SettingsView) => !s.org.trim();
 
   const save = async (e?: React.MouseEvent) => {
     const v = validate();
@@ -277,7 +179,6 @@ export default function SettingsPage() {
         new CustomEvent(SETTINGS_UPDATED_EVENT, {
           detail: {
             animatedBackground: data.settings.animatedBackground,
-            emehubTheme: data.settings.emehubTheme,
             clickEffects: data.settings.clickEffects,
           },
         })
@@ -299,144 +200,6 @@ export default function SettingsPage() {
   const divider: CSSProperties = { height: "1px", background: COLORS.borderSubtle };
   const pane: CSSProperties = { display: "flex", flexDirection: "column", gap: "20px" };
   const hint: CSSProperties = { fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.55 };
-
-  // ---- the EmeHub card ----
-  const hubBadge = !hub.hubUrl
-    ? { label: "NOT CONFIGURED", color: COLORS.warning }
-    : hub.signedIn
-      ? { label: "SIGNED IN", color: COLORS.success }
-      : { label: "SIGNED OUT", color: COLORS.textDim };
-
-  // The Claude-credential banner, or nothing when the last live check passed
-  // recently enough to still mean something (the server drops a stale verdict, so
-  // "ok" here is always a fresh one).
-  const claudeCred = ((): { tone: "warning" | "danger"; text: string } | null => {
-    const c = hub.claudeCredential;
-    if (!settings.hubEnabled || !hub.hubUrl || c.state === "ok") return null;
-    return c.state === "failed"
-      ? { tone: "danger", text: `EmeHub's Claude credential failed its last check: ${c.message} ${c.fix}`.trim() }
-      : {
-          tone: "warning",
-          text:
-            "Runs authenticate with the Claude credential EmeHub holds, and it has not been verified. " +
-            "It stops working silently when that account is signed in again somewhere else — the deep check is the only thing that proves it still does.",
-        };
-  })();
-
-  const hubSection = (
-    <div style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "13px", padding: "15px 16px" }}>
-        <div style={{ width: "34px", height: "34px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", ...ringBorder({ fill: "#1A1E25", duration: 4.5, cornerPx: 8 }) }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19" /></svg>
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "9px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>Part of EmeHub</span>
-            {settings.hubEnabled && <span style={pill({ size: "xs", color: hubBadge.color })}>{hubBadge.label}</span>}
-          </div>
-          <div style={{ fontSize: FONT.sm, color: COLORS.textDim, marginTop: "3px", lineHeight: 1.5 }}>
-            Route every provider read and write through the hub, which holds the credential — this app then stores
-            none, and the connection fields above go read-only. Off: talk to {pm.name} directly.
-          </div>
-        </div>
-        <Toggle on={settings.hubEnabled} title="Toggle the EmeHub integration" onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, hubEnabled: !s.hubEnabled })); }} />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateRows: settings.hubEnabled ? "1fr" : "0fr", transition: "grid-template-rows .28s ease" }}>
-        <div style={{ overflow: "hidden" }}>
-          <div style={{ borderTop: `1px solid ${COLORS.borderSubtle}`, padding: "14px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-            {!hub.hubUrl ? (
-              <div style={{ ...tintedCard("warning", { padding: "11px 13px" }), ...hint, color: COLORS.textSoft }}>
-                Set <code style={mono}>DAGENT_HUB_URL</code> in <code style={mono}>.env.local</code> and restart, then connect.
-              </div>
-            ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: "11px", flexWrap: "wrap" }}>
-                  <button
-                    onClick={(e) => { fireBoltFromEvent(e); connectHub(); }}
-                    disabled={connecting}
-                    style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), cursor: connecting ? "default" : "pointer" }}
-                  >
-                    {connecting ? <LoadingRing size={13} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg>}
-                    {hub.signedIn ? "Reconnect" : "Connect to EmeHub"}
-                  </button>
-                  <span style={{ ...hint, ...mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hub.hubUrl}</span>
-                </div>
-
-                {/* A failed read never renders as an empty list: "the hub is down", "you are
-                    signed out" and "the hub refused us" each need a different action, and
-                    showing "no connections" for any of them sends the user to fix the wrong
-                    thing (EmeHub INTEGRATION.md §5). */}
-                {hub.error && (
-                  <div style={{ ...tintedCard("danger", { padding: "11px 13px" }), ...hint, color: COLORS.textSoft }}>
-                    {hub.error} {hub.fix}
-                  </div>
-                )}
-
-                {/* The credential the hub serves can stop working without anything on
-                    this page moving: logging the account in again elsewhere rotates its
-                    refresh token and leaves the hub holding the old one, and a run is
-                    then the first thing to find out. Nothing is verified here — a live
-                    check costs a real CLI turn — so this says which of the three states
-                    it is in and points at the page that can settle it. */}
-                {claudeCred && (
-                  <div style={{ ...tintedCard(claudeCred.tone, { padding: "11px 13px" }), ...hint, color: COLORS.textSoft, display: "flex", flexDirection: "column", gap: "7px", alignItems: "flex-start" }}>
-                    <span>{claudeCred.text}</span>
-                    <Link href="/system-check" style={{ ...ctaButtonStyle("outline", { height: "28px", cornerPx: 7 }), textDecoration: "none" }}>
-                      Run deep check
-                    </Link>
-                  </div>
-                )}
-
-                {!hub.signedIn ? (
-                  <span style={hint}>
-                    Sign in at EmeHub in another tab, then press Connect. Sessions last 15 minutes and are renewed
-                    automatically whenever a page loads.
-                  </span>
-                ) : hub.connections.length === 0 ? (
-                  <span style={hint}>EmeHub has no provider connections. Add one on its Integrations page, then reload.</span>
-                ) : (
-                  <>
-                    <span style={fieldLabel()}>RUN AGAINST</span>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: "8px" }}>
-                      {hub.connections.map((c) => {
-                        const active = String(c.hubId) === settings.hubConnectionId;
-                        const wrongProvider = c.provider !== settings.provider;
-                        return (
-                          <button
-                            key={c.hubId}
-                            onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, hubConnectionId: String(c.hubId) })); }}
-                            style={{ ...(active ? { ...ringBorder({ fill: "#171A21", duration: 3.4, cornerPx: 7 }), padding: "10px 12px" } : { ...card({ padding: "10px 12px", background: "#0E1015" }), clipPath: clipCorner(7) }), textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}
-                          >
-                            <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
-                              <span style={{ flex: 1, minWidth: 0, fontSize: FONT.base, fontWeight: 700, color: active ? COLORS.text : COLORS.textSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {c.label || `Connection #${c.hubId}`}
-                              </span>
-                              {/* A connection for another provider is shown rather than hidden: it explains why
-                                  the list looks short after switching the dropdown above. */}
-                              {wrongProvider && <span style={pill({ size: "xs", color: COLORS.warning })}>{providerMeta(c.provider).name}</span>}
-                              {active && <span style={pill({ size: "xs", color: COLORS.accent })}>IN USE</span>}
-                            </span>
-                            <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {c.orgUrl}{c.project ? ` · ${c.project}` : ""}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <span style={hint}>
-                      Read from EmeHub on every page load; nothing here is stored, credential included. A token rotated
-                      at the hub takes effect on the next call.
-                    </span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
   // ---- the panes ----
   const connectionPane = (
@@ -478,11 +241,11 @@ export default function SettingsPage() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={fieldLabel()}>{pm.urlLabel}</span>
-          <input value={credentialsFromHub ? (activeHubConn?.orgUrl ?? "") : settings.org} onChange={setField("org")} readOnly={credentialsFromHub} placeholder={pm.urlPlaceholder} style={{ ...fieldInput(), opacity: credentialsFromHub ? 0.6 : 1, cursor: credentialsFromHub ? "not-allowed" : "text" }} />
+          <input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInput()} />
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={fieldLabel()}>{pm.tokenLabel}</span>
-          <input type="password" value={credentialsFromHub ? "" : settings.pat} onChange={setField("pat")} readOnly={credentialsFromHub} placeholder={credentialsFromHub ? (activeHubConn?.hasPat ? "•••••••••••••• (from EmeHub)" : "not supplied by EmeHub") : settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={{ ...fieldInput(), opacity: credentialsFromHub ? 0.6 : 1, cursor: credentialsFromHub ? "not-allowed" : "text" }} />
+          <input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInput()} />
         </label>
       </div>
 
@@ -499,18 +262,41 @@ export default function SettingsPage() {
         )}
       </div>
       <span style={hint}>
-        {credentialsFromHub
-          ? "The connection comes from EmeHub and is read-only here — edit it at the hub. Two independently-editable copies of one credential is the drift the hub exists to remove."
-          : "Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project."}
+        Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project.
       </span>
 
-      <div style={divider} />
-      {hubSection}
     </div>
   );
 
   const executionPane = (
     <div style={pane}>
+      {/* The git author every run commits as.
+          Asked for here because the app runs in a container: there is no
+          developer's ~/.gitconfig in there to inherit, and without an author
+          `git commit` fails at the first implementing node — after the run has
+          already been paid for. Left blank, nothing is written and the
+          machine's own git identity is used, which is the right answer when this
+          app runs on a developer's own machine. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <span style={fieldLabel()}>GIT AUTHOR</span>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 200px" }}>
+            <span style={hint}>Name</span>
+            <input value={settings.gitUserName} onChange={setField("gitUserName")} placeholder="Linh Dao" style={fieldInput()} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 240px" }}>
+            <span style={hint}>Email</span>
+            <input value={settings.gitUserEmail} onChange={setField("gitUserEmail")} placeholder="you@company.com" style={fieldInput()} />
+          </label>
+        </div>
+        <span style={hint}>
+          Stamped on every commit a run makes. Use the address your git host knows you by — on Azure DevOps a
+          different one shows up as an unattributed commit. Leave both blank to use whatever git identity the
+          machine already has.
+        </span>
+      </div>
+
+      <div style={divider} />
       <ToggleRow
         label="Manage MCP for me"
         on={settings.manageMcp}
@@ -581,13 +367,6 @@ export default function SettingsPage() {
 
   const appearancePane = (
     <div style={pane}>
-      <ToggleRow
-        label="EmeHub theme"
-        on={settings.emehubTheme}
-        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, emehubTheme: !s.emehubTheme })); }}
-        desc="On: repaint the whole app in the EmeHub design language — EMESOFT red, glass panels, rounded corners, ambient blooms. Off: the D-Agent look."
-      />
-      <div style={divider} />
       <ToggleRow
         label="Animated background"
         on={settings.animatedBackground}
