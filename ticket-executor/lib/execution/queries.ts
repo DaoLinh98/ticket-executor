@@ -65,12 +65,6 @@ export type RunView = {
   errorMessage: string;
   prUrl: string;
   branch: string;
-  /** Which Claude account paid for this run: `own` | `shared` (both EmeHub), or
-   *  `""` when the hub was off and the machine's own login was used. Surfaced
-   *  because a run's bill lands on a real person's quota, and until this reached
-   *  the UI the only way to answer "was that the shared account or mine" was a
-   *  database query. Recorded, never decided here — the hub owns the choice. */
-  claudeSource: string;
   /** The latest plan Artifact, when the graph has a gate and one has been written. */
   planMarkdown: string;
   filesChanged: FileChange[];
@@ -127,7 +121,6 @@ export async function getRun(id: string): Promise<RunView | null> {
     errorMessage: live.errorMessage,
     prUrl: live.prUrl,
     branch: live.branch,
-    claudeSource: live.claudeSource,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
     channels: live.ctx.channels,
@@ -167,7 +160,6 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     errorMessage: row.errorMessage,
     prUrl: row.prUrl,
     branch: row.branch,
-    claudeSource: row.claudeSource,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
     channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},

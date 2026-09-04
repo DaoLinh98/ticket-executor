@@ -1,68 +1,78 @@
-# UI Style Guide — Ticket Executor
+# UI Style Guide
 
-This app has ONE design system, centralized in `lib/ui.ts`. Every visual element —
-buttons, pills, cards, dropdown panels, the spinning conic-gradient "energy
-ring" — must be composed from the helpers below. **Never re-type a raw hex
-color, gradient string, or clip-path polygon inline** if an equivalent helper
-already exists. This is what keeps `TicketExecutor.tsx`, `SprintPicker.tsx` and
-`Combobox.tsx` visually consistent instead of drifting apart one inline style
-at a time.
+ONE design system, centralized in `lib/ui.ts`. Read that file (it is short)
+before writing style code. Update this doc **only** when a helper is added or its
+signature changes — not after every UI edit.
 
-## Before touching any UI code
+## One token layer
 
-1. Read `lib/ui.ts` in full — it's short. Know what already exists.
-2. If the element you're building looks like an existing pattern (a button, a
-   pill, a bordered card, a dropdown menu), use the matching helper below.
-   Do NOT hand-roll a similar-but-not-identical inline style object.
-3. If no helper fits, ask: is this a genuinely new visual pattern, or a
-   one-off variation of an existing one? Prefer adding an `opts` parameter to
-   the existing helper (e.g. a new color/size) over writing new inline CSS.
-   Only create a new exported helper in `lib/ui.ts` if the shape itself is new.
-4. Never invent a new color. Pull from `COLORS` (`lib/ui.ts`). If you need a
-   shade that isn't in `COLORS`, add it there — don't drop a new hex literal
-   into a component file.
-5. Never invent a new corner-cut radius, ring duration, or gradient stop
-   layout ad hoc. Reuse the values below; they were deliberately unified
-   across the app (see git history — this used to be 20+ near-duplicate
-   variants before consolidation).
+`lib/ui.ts` holds **no colour literals**. Every token is a `var(--te-…)` whose
+values live in `app/globals.css` under `:root`. Three consequences, all of which
+have bitten already:
 
-## The helpers (`lib/ui.ts`)
+- **Tokens are CSS values, not colours.** `new THREE.Color(COLORS.accent)`
+  throws. Anything wanting a real hex (WebGL, canvas) calls `resolveColor(token)`
+  and re-reads it when the theme changes.
+- **Tokens cannot be string-manipulated.** `COLORS.warning + "55"` is dead —
+  `var(--te-warning)55` parses as nothing. Use
+  `color-mix(in srgb, ${token} 33%, transparent)`.
+- **SVG presentation attributes do not resolve `var()`.** `fill="…"` /
+  `stroke="…"` must become `style={{ fill: … }}` / `style={{ stroke: … }}`.
+
+Adding a colour means adding a token to `globals.css`, never a raw hex in a
+component.
+
+## The four rules
+
+1. **Reuse before you write.** If the element looks like an existing pattern
+   (button, pill, card, dropdown, tab, modal), use the helper. Don't hand-roll a
+   similar-but-not-identical inline style.
+2. **Extend, don't fork.** Need a new color/size/variant? Add it to the helper's
+   `opts`/union in `lib/ui.ts`. Only export a new helper if the *shape* is new.
+3. **No raw values.** Every color from `COLORS`, every `fontSize` from `FONT`,
+   every corner cut from `clipCorner(6|7|8)`. Ring durations stay in the existing
+   ~1.6s–5.5s range.
+4. **Type check + look at it.** `npx tsc --noEmit`, then view the changed screen
+   in the browser where practical.
+
+## Helpers (`lib/ui.ts`)
 
 | Helper | Use for |
 |---|---|
-| `COLORS` | Every color reference. `accent`, `success`, `danger`, `warning`, `info`, `indigo`, `text`, `textDim`, `textMuted`, `faint`, `border`, `borderSubtle`, `panelBg`, `panelBgDark`. |
-| `clipCorner(px: 6\|7\|8)` | The corner-cut hexagon clip-path for any "chip" shaped element (buttons, tabs, search bar, settings/close buttons). Only 6, 7, or 8px — don't add a 4th size. |
-| `ringBorder(opts)` | The spinning conic-gradient "energy ring" border/background/animation. `variant: "outline"` (4-stop, for dark-filled elements with an accent ring) vs `"filled"` (3-stop sheen, for CTA buttons whose fill IS the accent color). `shape: "pill" \| "clip" \| "none"`. Default duration 3.2s — keep new elements in the ~1.6s–5.5s range that's already in use, don't invent a new pace. |
-| `card(opts?)` | Neutral bordered container — meta tiles, comment bubbles, acceptance-criteria rows, past-run rows. |
-| `tintedCard(tone, opts?)` | Color-tinted banner card. `tone: "success" \| "danger" \| "warning" \| "accent"` — result banners, error/notice boxes, the "ready to implement" CTA strip. |
-| `dropdownPanelStyle(opts?)` | Dropdown/menu panel chrome — used by `SprintPicker`, `Combobox`, and the inline status menu. |
-| `pill(opts)` | Generic pill/badge shape — status pills, exec pills, branch pill, log status badge, filter-count badge, "CURRENT" badge. `size: "xs" \| "sm" \| "md"`. |
-| `ctaButtonStyle(variant, opts?)` | Full action-button style. `variant: "primary"` (accent-filled CTA) \| `"success"` (green ring — Show Result / Open PR) \| `"warning"` (amber ring — Running/cancel) \| `"outline"` (plain bordered secondary — Test connection / Cancel) \| `"ghost"` (dark-fill + accent-ring secondary — the "next action" button). |
-| `typeBadge`, `statusPill`, `statusPillActive`, `execDot`, `avatar` | Domain-specific badges already composed from the primitives above — use these directly for ticket type/status/exec-state/assignee, don't rebuild them. |
-
-## Two ring "families" — don't blur them
-
-- **Outline family** (`ringBorder({ variant: "outline" })`): dark fill +
-  4-stop accent ring. Used for anything that isn't a primary CTA — tabs,
-  search bar, filter toggle, settings button, secondary "ghost" buttons,
-  status pills, dropdown triggers.
-- **Filled family** (`ringBorder({ variant: "filled" })`): the fill itself is
-  already `COLORS.accent` (or a state color like success/warning), and the
-  ring is just a single sheen stop. Used only for primary/state CTA buttons
-  (`ctaButtonStyle("primary" | "success" | "warning")`).
-
-Don't mix them — a dark-filled secondary button should never use the
-"filled" 3-stop variant, and a solid-accent CTA should never use the 4-stop
-"outline" variant (it would double the ring color against the fill).
+| `COLORS` | Every color. `accent`, `success`, `danger`, `warning`, `info`, `indigo`, `text`, `textSoft`, `textDim`, `textMuted`, `faint`, `border`, `borderSubtle`, `panelBg`, `panelBgDark`. Paragraphs use `textMuted`/`textDim` — `faint` is for placeholders and disabled chrome only. |
+| `FONT` | Every font size. `xs` 11.5 (pills/badges) · `sm` 12.5 (captions/meta) · `base` 14 (controls, rows, log lines) · `md` 15 (body copy) · `lg` 15 (card titles) · `xl` 20 (page titles, `logoText`). Never a size *between* two steps. |
+| `SURFACE` | The three themed surfaces that used to be inline hex: `app`, `inset` (inputs/code/dropdowns), `modal`. |
+| `SHAPE` | `radiusChip`, `radiusCard`, `radiusPanel`, `panelBlur` — the shape half of a theme. |
+| `resolveColor(token, fallback?)` | A real hex for WebGL/canvas. Browser-only; returns the fallback during SSR. |
+| `chipShape(6\|7\|8)` | The chip shape, **both** halves — clip-path *and* radius. Use this over bare `clipCorner`: a theme without corner cuts needs the radius back or the chip is a bare rectangle. |
+| `clipCorner(6\|7\|8)` | Just the corner-cut clip-path token (`var(--te-clip-N)`). No 4th size. |
+| `ringBorder(opts)` | The spinning conic-gradient "energy ring". `variant: "outline"` (4-stop, dark fill) vs `"filled"` (3-stop sheen, accent fill). `shape: "pill" \| "clip" \| "none"`. |
+| `card(opts?)` / `tintedCard(tone, opts?)` | Neutral bordered container / color-tinted banner (`success \| danger \| warning \| accent`). |
+| `modalShellStyle(opts?)` | Full-screen modal panel shell (`DiffModal`, `CommitFilesModal`). |
+| `logoText(fontSize)` | The animated fire-gradient wordmark — pass only the size. |
+| `fieldLabel()` / `fieldInput(opts?)` | Form input caption / dark inset input chrome. |
+| `sectionCaption()` | Uppercase caption over read-only content in a detail pane. One step smaller than `fieldLabel()`. |
+| `codeBlock(opts?)` | Read-only mono code / command block. |
+| `dropdownPanelStyle(opts?)` | Dropdown/menu chrome. `opts.maxHeight` also sets `overflowY: auto`. |
+| `pill(opts)` | Generic pill/badge. `size: "xs" \| "sm" \| "md"`. |
+| `tabStyle({ active, enabled? })` | THE tab-bar button (detail tabs + Settings tabs). |
+| `ctaButtonStyle(variant, opts?)` | Action buttons: `primary` \| `success` \| `warning` \| `danger` \| `outline` \| `ghost`. |
+| `typeBadge`, `statusPill`, `statusPillActive`, `execDot`, `avatar` | Domain badges already composed from the above — use directly. |
+| `LoadingRing` | THE only spinner. Every loading state renders it via `size`; always accent orange. Not over a `primary` fill (orange-on-orange) — use `warning`/`ghost`/`outline` or text-only there. |
+| `RichText` + `.te-rich` (globals.css) | THE way to render provider rich text; styled **by selector**, never inline. HTML must already have passed `sanitizeHtml()` (`lib/richText.ts`) at the producer — `RichText` does not sanitize again. |
+| `useBoltsContext()` | THE only click effect. `BoltsProvider` is mounted once in `app/layout.tsx`. Always accent orange; `{ big: true }` only for a run's primary "go" action. |
 
 ## Hard rules
 
-- No inline `background: "linear-gradient(...) padding-box, conic-gradient(...) border-box"` — always `ringBorder(...)`.
-- No inline `clipPath: "polygon(...)"` — always `clipCorner(px)`.
-- No inline `border: "1px solid #262B36"` / `#1E232C` / `#23272F` style triples for containers — always `card(...)` or `tintedCard(...)`.
-- No raw hex for accent/success/danger/warning/info — always `COLORS.*`.
-- When adding a new button/pill/card variant, extend the relevant factory's
-  `opts`/variant union in `lib/ui.ts` rather than writing a new inline style
-  block in a component file.
-- Keep this file's helper table in sync with `lib/ui.ts` whenever a helper's
-  signature changes.
+- No inline `linear-gradient(...) padding-box, conic-gradient(...) border-box` — `ringBorder(...)`.
+- No inline `clipPath: "polygon(...)"` — `clipCorner(px)`.
+- No inline container border/background triples — `card(...)` / `tintedCard(...)`.
+- No inline modal shell — `modalShellStyle(...)`. No inline wordmark — `logoText(...)`.
+- No raw hex for accent/success/danger/warning/info — `COLORS.*`.
+- No bespoke CSS spinner or text-only "Loading…" — `LoadingRing`.
+- No bespoke click/ripple effect and no other color for it — `useBoltsContext()`.
+- **Never spread a second `{ animation: ... }` over a `ringBorder(...)` style** —
+  use `extraAnimation` / `extraAnimationDelay`, or the spread silently kills the
+  ring's spin (this broke the dashboard panels once).
+- Don't mix the two ring families: a dark-filled secondary button never uses
+  `variant: "filled"`, a solid-accent CTA never uses `"outline"`.

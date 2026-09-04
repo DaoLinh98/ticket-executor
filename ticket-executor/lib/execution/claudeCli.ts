@@ -184,6 +184,11 @@ function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResul
   }
 }
 
+function sandboxEnv(): Record<string, string> {
+  const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  return asRoot ? { IS_SANDBOX: "1" } : {};
+}
+
 /** Run one Claude turn; resolves when the process closes. */
 export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
   return new Promise((resolve) => {
@@ -192,21 +197,7 @@ export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
     try {
       child = spawn(CLAUDE_BIN, args, {
         cwd: live.ctx.cwd,
-        // In hub mode the run authenticates with a credential EmeHub resolved,
-        // materialised into its own directory (lib/claudeConfig.ts). With the
-        // hub off `claudeCredentialDir` is empty and the environment is passed
-        // through untouched, so the CLI reads the machine's own login exactly as
-        // it always has — that path is not overridden, it is simply not entered.
-        //
-        // `CLAUDE_SECURESTORAGE_CONFIG_DIR`, never `CLAUDE_CONFIG_DIR`: the
-        // narrow variable relocates the credential file alone, while the wide
-        // one also relocates `skills/`, `settings.json` and `projects/`. Pointing
-        // the wide one at a credential-only directory took the run's own skills
-        // with it, and `/implement-ticket-v3` came back `Unknown command`. See
-        // lib/claudeConfig.ts for the measurement.
-        env: live.claudeCredentialDir
-          ? { ...process.env, CLAUDE_SECURESTORAGE_CONFIG_DIR: live.claudeCredentialDir }
-          : process.env,
+        env: { ...process.env, ...sandboxEnv() },
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       });

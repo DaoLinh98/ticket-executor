@@ -45,9 +45,6 @@ export default function AppReactor() {
     const onUpdated = (e: Event) => {
       const detail = (e as CustomEvent<SettingsUpdatedDetail>).detail;
       if (detail && typeof detail.animatedBackground === "boolean") setEnabled(detail.animatedBackground);
-      // AppTheme stamps `data-theme` from the same event. Re-read on the next
-      // frame so the new palette has been applied before the colour is sampled.
-      if (detail && typeof detail.emehubTheme === "boolean") requestAnimationFrame(readAccent);
     };
     window.addEventListener(SETTINGS_UPDATED_EVENT, onUpdated);
     return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, onUpdated);

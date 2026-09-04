@@ -59,11 +59,10 @@ export async function openStep(live: LiveRun, node: Node): Promise<{ id: string;
     select: { id: true },
   });
   // The run's *first* step adopts the log from index 0, so everything the run
-  // printed before any node opened — which account EmeHub resolved, the isolated
-  // worktree it created — is persisted with it. `Step.logLines` is the only
-  // durable home a log line has (drive() stores `live.logLines.slice(logStart)`),
-  // so those lines used to exist purely in memory and vanish on restart: the run
-  // that spent the shared account could not afterwards be shown to have done so.
+  // printed before any node opened — the isolated worktree it created — is
+  // persisted with it. `Step.logLines` is the only durable home a log line has
+  // (drive() stores `live.logLines.slice(logStart)`), so those lines used to
+  // exist purely in memory and vanish on restart.
   // Every later step still starts at the current tail, so no line is stored twice.
   return { id: row.id, logStart: priorAnyNode === 0 ? 0 : live.logLines.length };
 }

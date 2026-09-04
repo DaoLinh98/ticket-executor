@@ -123,10 +123,7 @@ export async function POST(req: Request) {
   const provider = normalizeProvider(body.provider);
 
   // Use whatever the form supplied; for anything it did not, fall back to the
-  // credential this provider would actually run with — the EmeHub one when hub
-  // mode is on, the locally-stored one otherwise. Testing the local row while
-  // runs use the hub's would be a test of the wrong thing, and in hub mode the
-  // form supplies neither field because neither is editable there.
+  // credential this provider would actually run with.
   let url = typeof body.org === "string" ? body.org.trim() : "";
   let token = typeof body.pat === "string" ? body.pat.trim() : "";
   if (!url || !token) {

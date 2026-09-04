@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import { useBoltsContext } from "./BoltsContext";
-import { ensureHubSession } from "./hubSession";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
 import CommitFilesModal from "./ticket-executor/CommitFilesModal";
@@ -70,7 +69,6 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     costUsd: run.costUsd as number | undefined,
     inputTokens: run.inputTokens as number | undefined,
     outputTokens: run.outputTokens as number | undefined,
-    claudeSource: (run.claudeSource as string) ?? "",
     planMarkdown: (run.planMarkdown as string) || prev?.planMarkdown,
     filesChanged: (run.filesChanged as FileChange[]) ?? [],
     channels: (run.channels as ExecView["channels"]) ?? {},
@@ -82,8 +80,8 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
  *
  * The picker shows names, but Azure DevOps' `System.IterationPath` is a rooted
  * path (`RIS\Sprint 61`), and a query built from the bare name is not a query
- * that matches nothing — ADO rejects it outright with a 400. The hub hands the
- * path out alongside the name for exactly this, so use it when it is there.
+ * that matches nothing — ADO rejects it outright with a 400. Use the path when
+ * a provider hands one out alongside the name.
  *
  * Falls back to the name, which is correct for the direct Azure DevOps client:
  * it has no paths and resolves the override by name against the team's
@@ -154,7 +152,6 @@ export default function TicketExecutor() {
     pat: "",
     hasPat: false,
     animatedBackground: true,
-    emehubTheme: false,
     autoImplement: true,
     autoResolveCodeReview: true,
     scope: "team",
@@ -165,8 +162,8 @@ export default function TicketExecutor() {
     hourlyRateUsd: 0,
     hoursPerStoryPoint: 6,
     evaluateBeforePublish: false,
-    hubEnabled: false,
-    hubConnectionId: "",
+    gitUserName: "",
+    gitUserEmail: "",
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -219,10 +216,6 @@ export default function TicketExecutor() {
     setLoadError("");
     setTicketsNotice("");
     try {
-      // Every entry point into a ticket load goes through here — mount, refresh,
-      // a project or sprint switch — so this is where an expired hub session is
-      // renewed. A no-op unless hub mode is on.
-      await ensureHubSession();
       const qs = new URLSearchParams({ provider, scope: viewScope });
       if (project) qs.set("project", project);
       // A sprint only bounds the sprint view; sending it with a backlog or a
@@ -296,7 +289,7 @@ export default function TicketExecutor() {
       // An empty picker renders as a plain label with no chevron, which is
       // indistinguishable from a project that has one iteration. When the read
       // actually failed, say so — this is the exact failure that read as "the
-      // dropdown stopped working" rather than "the hub refused the call".
+      // dropdown stopped working" rather than "the call was refused".
       const why = data.error || data.notice;
       if (why && scopeRef.current === "sprint") showToast(`Sprints could not be loaded — ${why}`, 9000, "error");
       const current = typeof data.current === "string" ? data.current : "";
@@ -339,12 +332,6 @@ export default function TicketExecutor() {
   useEffect(() => {
     (async () => {
       let provider: ProviderId = "azure-devops";
-      // In hub mode every read below goes through EmeHub on a token that lasts
-      // 15 minutes, so opening this screen after a pause found the session gone
-      // and the only recovery was a trip to Settings. Re-mint before the first
-      // read; with hub mode off this is a single local request and nothing else.
-      const session = await ensureHubSession();
-      if (session.status === "failed") showToast(session.error, 10000, "error");
       try {
         const r = await fetch("/api/settings");
         const data = await r.json();
@@ -561,7 +548,7 @@ export default function TicketExecutor() {
       const r = await fetch(`/api/reviews/summary?${qs}`);
       const data = await r.json();
       // A degraded answer is not an answer. Keeping the last known list is the
-      // difference between "the hub is down" and "you have nothing to review".
+      // difference between "the provider refused" and "you have nothing to review".
       if (data.degraded) {
         setReviewDegraded(true);
         return;
@@ -782,8 +769,8 @@ export default function TicketExecutor() {
   // "Auto resolve code review" setting picks the one-shot v2 vs the
   // plan-review-gated v3.
   const getReviewSkill = () => (settings.autoResolveCodeReview ? "fix-code-review-v2" : "fix-code-review-v3");
-  // No app-wide default: one provider connection spans many projects, so the repo
-  // a run executes in is per-ticket (prefilled from the project's saved mapping).
+  // The repo a run executes in. Chosen per ticket: one provider connection spans
+  // many projects, so there is nothing app-wide to fall back to.
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "";
   const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
