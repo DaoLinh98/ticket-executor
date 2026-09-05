@@ -15,11 +15,6 @@ model Setting {
   // it, disposing the WebGL context). Not a "pause": the setting means no
   // backdrop, so the globe and the star field go too.
   animatedBackground Boolean @default(true)
-  // true → the whole UI is repainted in the EmeHub design language (EMESOFT red
-  // accent, glass panels, rounded corners, ambient blooms). false (default) →
-  // the D-Agent look, unchanged. Purely presentational: it selects a palette of
-  // CSS custom properties (app/globals.css) and nothing reads it server-side.
-  emehubTheme    Boolean  @default(false)
   // true (default) → the lightning-bolt effect fires on clicks and self-strikes
   // into every mounted spinner (running buttons). false → both are suppressed;
   // the effect layer stays mounted but never emits a bolt.
@@ -58,65 +53,45 @@ model Setting {
   // configured themselves. false → the app never touches MCP; preflight only
   // verifies what the machine already has.
   manageMcp      Boolean  @default(true)
-  // EmeHub integration. false (default) → this app behaves exactly as it always
-  // has: it talks to the provider itself, with credentials from
-  // ProviderCredential, edited on the Settings page. true → **EmeHub is the only
-  // gateway**: every provider read and write goes out as an HTTP call to the hub
-  // (lib/hubGateway.ts), and this app holds no provider credential of its own.
+  // ---- the git author a run commits as ----
   //
-  // Off by default *in the schema* and off is not a degraded mode: an install
-  // with no hub is the normal case, and nothing below matters while this is
-  // false. A deployment that **is** pointed at a hub (`DAGENT_HUB_URL` set)
-  // starts it on instead — see `lib/settings.ts`, which owns that decision,
-  // because the schema cannot read the environment.
-  hubEnabled     Boolean  @default(false)
-  // Has anyone actually decided about `hubEnabled`, or is it still whatever the
-  // install defaulted to? Saving the Settings page sets this, and it is the only
-  // thing that does.
+  // Needed because the app now executes inside a container, where there is no
+  // developer's `~/.gitconfig` to inherit: without an author `git commit` fails
+  // outright at the first implementing node, after the run has already been paid
+  // for. So it is asked for once and remembered.
   //
-  // It exists so the "point it at a hub and it works" default can be applied to
-  // an install that predates the hub *without* it ever re-applying: the default
-  // is for a row nobody has ruled on, and a user who switches hub mode off has
-  // ruled on it. Without this the adoption in `lib/settings.ts` could not tell
-  // "never chosen" from "chosen: no", and would turn the hub back on under them.
-  hubModeChosen  Boolean  @default(false)
-  // Which of the hub's connections every provider call is routed through — the
-  // hub's own `provider_connections.id`, as a string. The hub can hold several
-  // connections of the same kind, so "use the hub" is not by itself an answer;
-  // something has to pick one, and a wrong pick is a run against the wrong
-  // organization. Empty means none chosen yet, which the gateway reports as "not
-  // configured" rather than guessing at the first row.
-  hubConnectionId String  @default("")
-  // ---- the hub session ----
-  //
-  // The hub's access token is the *whole* of what this app stores about EmeHub.
-  // There is deliberately no mirror of the hub's connections or their PATs: a
-  // second editable copy of a credential is the drift the hub exists to remove,
-  // and a copy nobody edits still goes stale the moment the hub rotates a PAT.
-  //
-  // Only the browser can mint one — `POST {hub}/auth/agent-token` authenticates
-  // with the shared refresh cookie, which server code cannot see (INTEGRATION.md
-  // §2) — so the browser mints and hands it to `POST /api/hub/token`, which is
-  // the only writer. Encrypted with lib/crypto.ts and never returned to a page.
-  hubToken       String   @default("")
-  // When the token above stops being accepted. A hub call past this refuses with
-  // "signed out" rather than making a request it knows will 401 — §5 requires
-  // that to read differently from "the hub is down".
-  hubTokenExpiresAt DateTime?
-  // The token's `sid`. §2: a new sid means a new hub session, so anything cached
-  // against the old one is dropped rather than served to a different login.
-  hubSid         String   @default("")
+  // Empty is a legitimate state — with the app on a developer's own machine the
+  // machine's git identity is the right one, and writing over it would be worse
+  // than leaving it alone. See `applyGitIdentity()` in lib/execution/runner.ts.
+  gitUserName    String   @default("")
+  gitUserEmail   String   @default("")
   updatedAt      DateTime @updatedAt
 }
 
-// Per-provider connection credentials (org/repo URL + PAT, encrypted at rest).
-// Keyed by ProviderId so switching providers in Settings remembers each one's
-// own saved values instead of overwriting a single shared pair.
+// One connection to one organization (org/repo URL + PAT, encrypted at rest).
+//
+// A provider holds as many of these as the operator works with — one ADO
+// organization per client, say — and exactly one of them is `isActive`, which
+// is the one every consumer runs as (`resolveCredential()`). Switching the
+// active row in the header re-points ticket, project, sprint and review loading
+// at that organization without touching a single call site.
 model ProviderCredential {
-  provider  String   @id // azure-devops | github | jira | gitlab
+  id        String   @id @default(cuid())
+  provider  String // azure-devops | github | jira | gitlab
+  // Operator-given name for the connection. Empty falls back to the name
+  // derived from the URL (`connectionLabel()` in lib/providers.ts).
+  label     String   @default("")
   org       String   @default("")
   pat       String   @default("")
+  // The connection this provider currently runs as. At most one true per
+  // provider — `setActiveConnection()` clears the others in the same
+  // transaction that sets this one.
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([provider, org])
+  @@index([provider])
 }
 
 // One execution of one graph against one ticket. A Run owns no agent output of
@@ -133,6 +108,11 @@ model Run {
   // Persisted per-run so the dashboard can group/filter by provider (the global
   // Setting.provider only reflects the current selection, not each run's).
   provider     String    @default("")
+  // The organization URL the run authenticated against, snapshotted from the
+  // active ProviderCredential. Persisted for the same reason as `provider`: the
+  // dashboard scopes history to the organization the header is switched to, and
+  // the active connection only says which one that is *now*.
+  org          String    @default("")
   project      String
   // The project's real working copy, and the worktree the run actually executes
   // in. They are equal when the run was not isolated (single-ticket mode).
@@ -200,25 +180,6 @@ model Run {
   // Set when the run had to be rebuilt from this row because the in-process
   // state was lost (server restart) — a session a bare terminal would have dropped.
   resumedAfterRestart Boolean @default(false)
-  // ── EmeHub Claude credential (hub mode only) ──────────────────────────────
-  // All three are empty on a run started with `Setting.hubEnabled` off, which is
-  // the original flow: the CLI authenticates with the machine's own login and
-  // this app never sees a credential.
-  //
-  // Which Claude account the run executes under: "" (hub off — the machine's
-  // login) | own | shared. Recorded, never decided here: the hub owns the
-  // own → shared precedence and the user's prefer_shared choice, so a second
-  // opinion on this row could only ever be a wrong one.
-  claudeSource String   @default("")
-  // The run-scoped credential grant (emehub ADR 0009), encrypted at rest.
-  //
-  // On the row rather than in memory for one reason: crash recovery. Minting a
-  // grant needs a live 15-minute access token, which needs the browser — after a
-  // server restart there may be no way to mint another. A recovered run can
-  // still re-resolve the credential from the grant it was started with, for as
-  // long as that grant lives.
-  claudeGrant  String   @default("")
-  claudeGrantExpiresAt DateTime?
   startedAt    DateTime  @default(now())
   endedAt      DateTime?
 
@@ -309,6 +270,7 @@ model BlockedAttempt {
   id          String   @id @default(cuid())
   ticketId    String
   provider    String   @default("")
+  org         String   @default("")
   projectName String   @default("")
   // root-repo | agent-access        — preflight refused it
   // duplicate-ticket                — that ticket already has a run in flight
@@ -316,13 +278,6 @@ model BlockedAttempt {
   // concurrency-cap                 — Setting.concurrentRuns is already reached
   // unknown-skill                   — the caller asked for a skill no graph serves
   // missing-skill                   — a node's skill is not installed on this machine
-  // claude-credential               — hub mode is on and EmeHub has no Claude
-  //                                   credential this run could execute under.
-  //                                   Refused here rather than falling back to
-  //                                   the machine's own login: with the hub on,
-  //                                   that login is a different account from the
-  //                                   one the workspace chose, and silently
-  //                                   spending it is the drift hub mode removes.
   reason      String
   detail      String   @default("")
   createdAt   DateTime @default(now())
@@ -420,19 +375,3 @@ model KnowledgeNote {
   @@unique([rootRepo, fingerprint])
   @@index([rootRepo, active])
 }
-
-// There is no HubConnection table, and its absence is the design.
-//
-// This app used to mirror the hub's connections — label, org URL, and the PAT —
-// into a local table, refreshed by a "Sync from EmeHub" button. That is gone.
-// In hub mode the hub is not a place to copy configuration *from*, it is the
-// gateway every provider call goes *through* (`lib/hubGateway.ts`), so there is
-// nothing left to mirror: the connection list is read live from
-// `GET {hub}/connections`, and the only credential a run still needs is fetched
-// per run from `GET {hub}/connections/{id}/secret` and never written down.
-//
-// A copy nobody edits still rots — the hub rotating a PAT leaves the mirror
-// authenticating as a credential that no longer works, and the mirror cannot
-// tell that from a hub that is merely offline. Not storing it removes the
-// question. What replaces the table is `Setting.hubToken`: one short-lived
-// access token, which is the whole of what this app persists about EmeHub.

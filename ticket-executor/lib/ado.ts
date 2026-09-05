@@ -235,22 +235,47 @@ type RawIteration = {
   attributes?: { startDate?: string; finishDate?: string; timeFrame?: "past" | "current" | "future" };
 };
 
+/**
+ * Short-lived memo for the iteration list.
+ *
+ * Every ticket load resolves its sprint through `listIterations`, and the sprint
+ * picker asks for the same list in the same tick — so one page load paid two
+ * round-trips for an answer that changes when someone creates a sprint, which is
+ * not something that happens between two clicks. The entry holds the in-flight
+ * promise rather than its result, so concurrent callers share one request
+ * instead of racing to fill the same slot.
+ *
+ * Keyed by org + project: switching organization or project is a different
+ * question, not a stale answer to this one. A rejected fetch is evicted so the
+ * next caller retries rather than inheriting the failure for a whole TTL.
+ */
+const ITERATIONS_TTL_MS = 60_000;
+const iterationsCache = new Map<string, { at: number; value: Promise<IterationInfo[]> }>();
+
 /** Iterations for the project's default team (used to resolve the current sprint and to populate the sprint picker). */
 export async function listIterations(project: string): Promise<IterationInfo[]> {
   const { org, pat, project: proj } = await loadCreds(project);
+  const key = `${org}::${proj}`;
+  const hit = iterationsCache.get(key);
+  if (hit && Date.now() - hit.at < ITERATIONS_TTL_MS) return hit.value;
+
   // No team segment: ADO falls back to the project's default team, so the user
   // only has to configure the project URL.
   const url = `https://dev.azure.com/${org}/${encodeURIComponent(
     proj
   )}/_apis/work/teamsettings/iterations?${API}`;
-  const data = await adoGet<{ value: RawIteration[] }>(url, pat);
-  return data.value.map((i) => ({
-    id: i.id,
-    name: i.name,
-    timeFrame: i.attributes?.timeFrame,
-    startDate: i.attributes?.startDate,
-    finishDate: i.attributes?.finishDate,
-  }));
+  const value = adoGet<{ value: RawIteration[] }>(url, pat).then((data) =>
+    data.value.map((i) => ({
+      id: i.id,
+      name: i.name,
+      timeFrame: i.attributes?.timeFrame,
+      startDate: i.attributes?.startDate,
+      finishDate: i.attributes?.finishDate,
+    }))
+  );
+  value.catch(() => iterationsCache.delete(key));
+  iterationsCache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 /** Resolve which iteration to load: an explicit override name, else ADO's current iteration. */
@@ -274,6 +299,16 @@ type WorkItemDetail = {
   fields: Record<string, unknown>;
 };
 
+/**
+ * The fields a *list* needs, which deliberately exclude `System.Description` and
+ * `Microsoft.VSTS.Common.AcceptanceCriteria`.
+ *
+ * Those two are rich HTML — screenshots, tables, nested lists — and routinely run
+ * to tens of kilobytes per work item. A 200-item view was transferring and
+ * sanitizing every one of them so that the single ticket the user then clicked
+ * could render two panels. They are read per ticket instead, by
+ * `getWorkItemDetail`, on the same lazy path the discussion comments already use.
+ */
 const TICKET_FIELDS = [
   "System.Id",
   "System.Title",
@@ -282,8 +317,6 @@ const TICKET_FIELDS = [
   "System.AssignedTo",
   "System.AreaPath",
   "System.IterationPath",
-  "System.Description",
-  "Microsoft.VSTS.Common.AcceptanceCriteria",
   "Microsoft.VSTS.Scheduling.OriginalEstimate",
   "Microsoft.VSTS.Scheduling.StoryPoints",
   // The kanban column the item sits in, which is **not** its state: a board maps
@@ -292,11 +325,14 @@ const TICKET_FIELDS = [
   "System.BoardColumn",
 ].join(",");
 
+/** The two heavy rich-text fields, read for one ticket at a time. */
+const TICKET_DETAIL_FIELDS = ["System.Description", "Microsoft.VSTS.Common.AcceptanceCriteria"].join(",");
+
 /** ADO's own cap on the `ids` parameter of the batch work-item read. */
 const BATCH_SIZE = 200;
 
 /**
- * Cap on one fetch, matching the hub's `MAX_TICKETS`. A sprint is bounded by its
+ * Cap on one fetch. A sprint is bounded by its
  * iteration, but a backlog or a board is not — a 2000-item project would
  * otherwise hang the page load.
  */
@@ -319,8 +355,7 @@ function wiqlQuoted(value: string): string {
 }
 
 /**
- * The work items one view asks for. Mirrors the hub's `dagent_provider._wiql`
- * so the same three views mean the same thing on both sides of the hub switch.
+ * The work items one view asks for.
  *
  * - `backlog` — open work not scheduled into any iteration yet. In ADO that is
  *   the iteration path still sitting at the project root, which is what an
@@ -361,8 +396,6 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
         assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
         project: lastAreaSegment(area, proj) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
-        description: htmlToRich((f["System.Description"] as string) ?? ""),
-        criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
         storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
@@ -386,7 +419,7 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
  *   the list the user sees at `_sprints/backlog/<team>/…`, and reading the
  *   project's classification tree instead returns every team's sub-tree at once.
  * - `backlog` and `board` have no team-scoped endpoint, so they are WIQL, using
- *   the same clauses the hub builds (`wiqlFor`).
+ *   the same clauses `wiqlFor` builds.
  *
  * `truncated` is the honest half of `MAX_TICKETS`: neither a backlog nor a board
  * is bounded by an iteration, so a big project silently losing its tail would
@@ -440,6 +473,21 @@ async function getSprintTickets(
 
   // Keep ADO's board order roughly stable by id.
   return { tickets: await fetchWorkItems(creds, ids), sprintName: iteration.name };
+}
+
+/** The rich-text half of one work item — the fields `TICKET_FIELDS` leaves out.
+ *  Read when a ticket is opened rather than for every row of a list. */
+export async function getWorkItemDetail(id: string): Promise<{ description: string; criteria: string }> {
+  const { org, pat } = await loadCreds();
+  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
+    id
+  )}?fields=${TICKET_DETAIL_FIELDS}&${API}`;
+  const data = await adoGet<{ fields?: Record<string, unknown> }>(url, pat);
+  const f = data.fields ?? {};
+  return {
+    description: htmlToRich((f["System.Description"] as string) ?? ""),
+    criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
+  };
 }
 
 type RawWorkItemState = { name: string };

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { startRun } from "@/lib/executionStore";
 import { prisma } from "@/lib/prisma";
 import { validateAgentAccess, validateRootRepo } from "@/lib/preflight";
+import { resolveCredential } from "@/lib/providerCredentials";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +18,9 @@ async function recordBlocked(
   detail: string | undefined
 ) {
   try {
+    const { org } = await resolveCredential(provider);
     await prisma.blockedAttempt.create({
-      data: { ticketId, provider, projectName, reason, detail: detail ?? "" },
+      data: { ticketId, provider, org, projectName, reason, detail: detail ?? "" },
     });
   } catch {
     /* metrics are not worth failing the request over */

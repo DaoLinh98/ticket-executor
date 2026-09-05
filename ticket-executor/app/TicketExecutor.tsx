@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import { useBoltsContext } from "./BoltsContext";
-import { ensureHubSession } from "./hubSession";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
 import CommitFilesModal from "./ticket-executor/CommitFilesModal";
@@ -23,6 +22,7 @@ import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
 import { reviewFingerprint } from "./ticket-executor/helpers";
+import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
@@ -70,7 +70,6 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     costUsd: run.costUsd as number | undefined,
     inputTokens: run.inputTokens as number | undefined,
     outputTokens: run.outputTokens as number | undefined,
-    claudeSource: (run.claudeSource as string) ?? "",
     planMarkdown: (run.planMarkdown as string) || prev?.planMarkdown,
     filesChanged: (run.filesChanged as FileChange[]) ?? [],
     channels: (run.channels as ExecView["channels"]) ?? {},
@@ -82,8 +81,8 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
  *
  * The picker shows names, but Azure DevOps' `System.IterationPath` is a rooted
  * path (`RIS\Sprint 61`), and a query built from the bare name is not a query
- * that matches nothing — ADO rejects it outright with a 400. The hub hands the
- * path out alongside the name for exactly this, so use it when it is there.
+ * that matches nothing — ADO rejects it outright with a 400. Use the path when
+ * a provider hands one out alongside the name.
  *
  * Falls back to the name, which is correct for the direct Azure DevOps client:
  * it has no paths and resolves the override by name against the team's
@@ -154,7 +153,6 @@ export default function TicketExecutor() {
     pat: "",
     hasPat: false,
     animatedBackground: true,
-    emehubTheme: false,
     autoImplement: true,
     autoResolveCodeReview: true,
     scope: "team",
@@ -165,8 +163,8 @@ export default function TicketExecutor() {
     hourlyRateUsd: 0,
     hoursPerStoryPoint: 6,
     evaluateBeforePublish: false,
-    hubEnabled: false,
-    hubConnectionId: "",
+    gitUserName: "",
+    gitUserEmail: "",
   });
   const [reviews, setReviews] = useState<Record<string, ReviewData>>({});
   // True while a ticket's Resolve Review data is being (re)fetched — lets the
@@ -205,6 +203,10 @@ export default function TicketExecutor() {
   const batchQueueRef = useRef<string[]>([]);
   const batchRunningRef = useRef<Set<string>>(new Set());
   const tryStartNextQueuedRef = useRef<() => void>(() => { });
+  // Tickets whose description/criteria have already been asked for, so a failed
+  // fetch is not retried on every reselect. Cleared whenever the list reloads —
+  // those are new ticket objects, with the fields unloaded again.
+  const detailFetchedRef = useRef<Set<string>>(new Set());
 
   const searchParams = useSearchParams();
 
@@ -219,10 +221,6 @@ export default function TicketExecutor() {
     setLoadError("");
     setTicketsNotice("");
     try {
-      // Every entry point into a ticket load goes through here — mount, refresh,
-      // a project or sprint switch — so this is where an expired hub session is
-      // renewed. A no-op unless hub mode is on.
-      await ensureHubSession();
       const qs = new URLSearchParams({ provider, scope: viewScope });
       if (project) qs.set("project", project);
       // A sprint only bounds the sprint view; sending it with a backlog or a
@@ -236,6 +234,7 @@ export default function TicketExecutor() {
       else if (data.truncated) setTicketsNotice(`Showing the first ${(data.tickets ?? []).length} work items — this ${SCOPE_LABEL[viewScope].toLowerCase()} has more.`);
       setSprintLabel(typeof data.sprint === "string" ? data.sprint : "");
       const list: Ticket[] = data.tickets ?? [];
+      detailFetchedRef.current.clear();
       setTickets(list);
       setSelectedId((prev) => (list.some((t) => t.id === prev) ? prev : list[0]?.id ?? ""));
       if (opts?.notify) {
@@ -296,7 +295,7 @@ export default function TicketExecutor() {
       // An empty picker renders as a plain label with no chevron, which is
       // indistinguishable from a project that has one iteration. When the read
       // actually failed, say so — this is the exact failure that read as "the
-      // dropdown stopped working" rather than "the hub refused the call".
+      // dropdown stopped working" rather than "the call was refused".
       const why = data.error || data.notice;
       if (why && scopeRef.current === "sprint") showToast(`Sprints could not be loaded — ${why}`, 9000, "error");
       const current = typeof data.current === "string" ? data.current : "";
@@ -336,33 +335,39 @@ export default function TicketExecutor() {
     reloadTickets(settings.provider, value, current || undefined, { notify: true });
   };
 
-  useEffect(() => {
-    (async () => {
-      let provider: ProviderId = "azure-devops";
-      // In hub mode every read below goes through EmeHub on a token that lasts
-      // 15 minutes, so opening this screen after a pause found the session gone
-      // and the only recovery was a trip to Settings. Re-mint before the first
-      // read; with hub mode off this is a single local request and nothing else.
-      const session = await ensureHubSession();
-      if (session.status === "failed") showToast(session.error, 10000, "error");
-      try {
-        const r = await fetch("/api/settings");
-        const data = await r.json();
-        if (data.settings) {
-          setSettings(data.settings);
-          provider = data.settings.provider ?? provider;
-        }
-      } catch {
-        /* ignore — fall back to default provider */
+  // Settings → projects → sprints → tickets, in that order because each answer
+  // narrows the next. Run on mount and again whenever the header switches
+  // organization: every one of these calls is answered by the provider as the
+  // active connection, so the whole screen is that organization's.
+  const loadWorkspace = useCallback(async () => {
+    let provider: ProviderId = "azure-devops";
+    try {
+      const r = await fetch("/api/settings");
+      const data = await r.json();
+      if (data.settings) {
+        setSettings(data.settings);
+        provider = data.settings.provider ?? provider;
       }
-      const list = await loadProjectOptions(provider);
-      const urlProject = searchParams.get("project") ?? "";
-      const project =
-        urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
-      setSelectedProject(project);
-      const current = await loadSprintOptions(provider, project);
-      await reloadTickets(provider, project, current || undefined);
-    })();
+    } catch {
+      /* ignore — fall back to default provider */
+    }
+    const list = await loadProjectOptions(provider);
+    const urlProject = searchParams.get("project") ?? "";
+    const project =
+      urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
+    setSelectedProject(project);
+    const current = await loadSprintOptions(provider, project);
+    await reloadTickets(provider, project, current || undefined);
+  }, [loadProjectOptions, loadSprintOptions, reloadTickets, searchParams]);
+
+  useEffect(() => {
+    const onConnectionChanged = () => { void loadWorkspace(); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
+  }, [loadWorkspace]);
+
+  useEffect(() => {
+    void loadWorkspace();
     (async () => {
       try {
         const r = await fetch("/api/skills");
@@ -389,7 +394,7 @@ export default function TicketExecutor() {
       Object.values(pollTimers.current).forEach(clearInterval);
       Object.values(sseConnections.current).forEach((es) => es.close());
     };
-  }, [reloadTickets, loadSprintOptions, loadProjectOptions, searchParams]);
+  }, [loadWorkspace]);
 
   // ---- execution history ----
   const loadHistory = useCallback(async (ticketId: string) => {
@@ -434,6 +439,38 @@ export default function TicketExecutor() {
   useEffect(() => {
     if (selectedId) loadComments(selectedId, settings.provider, selectedProject);
   }, [selectedId, settings.provider, selectedProject, loadComments]);
+
+  // Lazily load a ticket's description and acceptance criteria when it becomes
+  // selected. They are not in the list payload — see TICKET_FIELDS in
+  // lib/ado.ts — so `description === undefined` means "not fetched yet" and is
+  // the whole trigger. A provider that already sent them (GitHub) therefore
+  // never gets here, and a ticket genuinely without a description is fetched
+  // once and then reads as "" rather than being asked for again.
+  useEffect(() => {
+    if (!selectedId) return;
+    const t = tickets.find((x) => x.id === selectedId);
+    if (!t || t.description !== undefined) return;
+    if (detailFetchedRef.current.has(selectedId)) return;
+    detailFetchedRef.current.add(selectedId);
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/tickets/${selectedId}/detail?provider=${settings.provider}`);
+        const data = await r.json();
+        if (cancelled || data.error) return;
+        setTickets((list) =>
+          list.map((x) =>
+            x.id === selectedId
+              ? { ...x, description: data.description ?? "", criteria: data.criteria ?? "" }
+              : x
+          )
+        );
+      } catch {
+        /* the panel keeps its empty state; reselecting retries after a reload */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedId, tickets, settings.provider]);
 
   // Fetch (or refetch) the Resolve Review data for one ticket — the linked PR
   // overview plus its open/resolved review-comment threads.
@@ -561,7 +598,7 @@ export default function TicketExecutor() {
       const r = await fetch(`/api/reviews/summary?${qs}`);
       const data = await r.json();
       // A degraded answer is not an answer. Keeping the last known list is the
-      // difference between "the hub is down" and "you have nothing to review".
+      // difference between "the provider refused" and "you have nothing to review".
       if (data.degraded) {
         setReviewDegraded(true);
         return;
@@ -782,8 +819,8 @@ export default function TicketExecutor() {
   // "Auto resolve code review" setting picks the one-shot v2 vs the
   // plan-review-gated v3.
   const getReviewSkill = () => (settings.autoResolveCodeReview ? "fix-code-review-v2" : "fix-code-review-v3");
-  // No app-wide default: one provider connection spans many projects, so the repo
-  // a run executes in is per-ticket (prefilled from the project's saved mapping).
+  // The repo a run executes in. Chosen per ticket: one provider connection spans
+  // many projects, so there is nothing app-wide to fall back to.
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "";
   const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;

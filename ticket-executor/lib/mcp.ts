@@ -50,9 +50,9 @@ export type McpTemplate = {
   cli?: { bin: string; statusArgs: string[]; label: string };
 };
 
-// Pinned to major 2: the `<org>` positional argument and the AZURE_DEVOPS_TOKEN
-// env var are that major's contract, and a silent major bump would break every
-// generated config at once.
+// Pinned to major 2: the `<org>` positional argument and the `-a pat` /
+// PERSONAL_ACCESS_TOKEN contract are that major's, and a silent major bump would
+// break every generated config at once.
 const ADO_MCP_NAME = "@azure-devops/mcp";
 const ADO_MCP_MAJOR = 2;
 const ADO_MCP_PACKAGE = `${ADO_MCP_NAME}@${ADO_MCP_MAJOR}`;
@@ -80,6 +80,9 @@ const ADO_MCP_PACKAGE = `${ADO_MCP_NAME}@${ADO_MCP_MAJOR}`;
 // it.
 const ADO_MCP_DOMAINS = ["-d", "work-items", "repositories", "core"];
 
+const ADO_MCP_AUTH = ["-a", "pat"];
+const adoBasicToken = (pat: string) => Buffer.from(`:${pat}`).toString("base64");
+
 const TEMPLATES: Record<string, McpTemplate> = {
   "azure-devops": {
     server: "azure-devops",
@@ -92,11 +95,12 @@ const TEMPLATES: Record<string, McpTemplate> = {
     build: (org, pat) => {
       const slug = parseAdoUrl(org).org;
       if (!slug || !pat) return null;
-      const env = { AZURE_DEVOPS_TOKEN: pat };
+      const env = { PERSONAL_ACCESS_TOKEN: adoBasicToken(pat) };
       const installed = globalPackageEntry(ADO_MCP_NAME, ADO_MCP_MAJOR);
+      const serverArgs = [slug, ...ADO_MCP_AUTH, ...ADO_MCP_DOMAINS];
       return installed
-        ? { command: process.execPath, args: [installed.entry, slug, ...ADO_MCP_DOMAINS], env }
-        : { command: "npx", args: ["-y", ADO_MCP_PACKAGE, slug, ...ADO_MCP_DOMAINS], env };
+        ? { command: process.execPath, args: [installed.entry, ...serverArgs], env }
+        : { command: "npx", args: ["-y", ADO_MCP_PACKAGE, ...serverArgs], env };
     },
   },
   github: {
@@ -538,7 +542,7 @@ export async function resolveMcp(opts: {
 export function mcpAddHint(provider: string, org: string): string {
   if (provider === "azure-devops") {
     const slug = parseAdoUrl(org).org || "<your-org>";
-    return `Run: claude mcp add azure-devops -s user -e AZURE_DEVOPS_TOKEN=<PAT> -- npx -y ${ADO_MCP_PACKAGE} ${slug}`;
+    return `Run: claude mcp add azure-devops -s user -e PERSONAL_ACCESS_TOKEN=<base64 of ":<PAT>"> -- npx -y ${ADO_MCP_PACKAGE} ${slug} -a pat`;
   }
   const t = mcpTemplate(provider);
   if (t?.cli) return `Install and log in to ${t.cli.label} (\`${t.cli.bin} auth login\`), or add an MCP server with \`claude mcp add\`.`;

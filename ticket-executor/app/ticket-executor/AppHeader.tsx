@@ -81,7 +81,6 @@ export default function AppHeader({
         <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} currentName={currentSprint} onSelect={onSprintChange} />
       )}
       <div style={{ flex: 1 }} />
-      <ProviderBadge provider={pm.id} />
       <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
         <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
       </div>
@@ -132,6 +131,7 @@ export default function AppHeader({
           </div>
         )}
       </div>
+      <ProviderBadge provider={pm.id} />
     </header>
   );
 }

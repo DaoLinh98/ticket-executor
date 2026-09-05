@@ -10,6 +10,7 @@ import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, pill, tinte
 import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/preflight";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
@@ -100,6 +101,13 @@ export default function SystemCheckPage() {
     load();
   }, [load]);
 
+  // The connection checks below authenticate as the active organization.
+  useEffect(() => {
+    const onChanged = () => { load(); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+  }, [load]);
+
   const summary = result?.summary;
   const banner = !summary
     ? null
@@ -111,7 +119,7 @@ export default function SystemCheckPage() {
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="System Check" kicker="D-AGENT · DIAGNOSTICS" icon={<><path d="M9 11l3 3L22 4" /><path d="M21 12a9 9 0 1 1-6.2-8.56" /></>} />
         <div style={{ flex: 1 }} />
         <ProviderBadge />

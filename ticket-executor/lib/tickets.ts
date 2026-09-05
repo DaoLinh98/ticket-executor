@@ -2,7 +2,7 @@ import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, Revi
 import {
   adoCreds, getScopedTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
-  getWorkItemState, listIterations,
+  getWorkItemState, listIterations, getWorkItemDetail,
   type ProjectInfo,
 } from "./ado";
 import {
@@ -13,39 +13,6 @@ import { prisma } from "./prisma";
 import { resolveCredential } from "./providerCredentials";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
 import type { TicketScope } from "./ticketScope";
-import {
-  hubCommitFiles, hubCommits, hubPrOutcomes, hubProjects, hubReview, hubReviewSummaries,
-  hubSprints, hubStatusOptions, hubTicketComments, hubTicketStatus, hubTickets, hubUpdateStatus,
-} from "./hubGateway";
-
-/**
- * Is EmeHub the gateway for this app's provider calls?
- *
- * Every dispatch below asks this **first**, before it asks which provider it is
- * talking to. That order is the whole point: with the hub on, this app makes no
- * provider call at all, and a function that checked the provider first would
- * find a perfectly good `lib/ado.ts` path and take it — authenticating with a
- * credential that, in hub mode, does not exist.
- *
- * Off is not a degraded mode. It is the original behaviour, unchanged.
- */
-async function viaHub(): Promise<boolean> {
-  try {
-    return !!(await prisma.setting.findUnique({ where: { id: "default" } }))?.hubEnabled;
-  } catch {
-    // The DB is down. Answering "no" sends the caller to the direct client,
-    // which needs the same DB for its credential and will fail there with a
-    // better message than this function could produce.
-    return false;
-  }
-}
-
-/** A hub failure, as the message a user should read. The typed errors already
- *  say which of the four cases it is (lib/hub.ts); this is where that reaches
- *  the UI without every call site re-deriving it. */
-function hubNotice(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 export type TicketLoadResult = {
   tickets: Ticket[];
@@ -57,29 +24,6 @@ export type TicketLoadResult = {
   truncated?: boolean;
 };
 
-// "personal" scope config: only tickets assigned to (and PRs authored by) this
-// account are shown. Provider-agnostic — matched against whatever identifier
-// each provider's ticket/PR data exposes (display name, email, or login).
-export type PersonalFilter = { scope: "team" | "personal"; account: string };
-
-// Loose, case-insensitive match: exact match on either identifier, or one
-// contains the other (handles "sara.lin@company.com" vs "Sara Lin" style
-// mismatches without requiring an exact provider-specific identifier).
-function matchesAccount(candidates: Array<string | undefined>, account: string): boolean {
-  const needle = account.trim().toLowerCase();
-  if (!needle) return true; // no account configured yet — don't filter anything out
-  return candidates.some((c) => {
-    const v = (c ?? "").trim().toLowerCase();
-    if (!v) return false;
-    return v === needle || v.includes(needle) || needle.includes(v);
-  });
-}
-
-function applyPersonalFilter(tickets: Ticket[], filter?: PersonalFilter): Ticket[] {
-  if (!filter || filter.scope !== "personal" || !filter.account.trim()) return tickets;
-  return tickets.filter((t) => matchesAccount([t.assignee, t.assigneeEmail], filter.account));
-}
-
 // Dispatch ticket loading by provider. Azure DevOps is fully wired; the other
 // providers are scaffolded — they return a graceful empty result rather than
 // throwing, so the UI can show a "not connected yet" state.
@@ -87,21 +31,8 @@ export async function loadTickets(
   provider: ProviderId,
   project?: string,
   sprintOverride?: string,
-  personalFilter?: PersonalFilter,
   scope: TicketScope = "sprint"
 ): Promise<TicketLoadResult> {
-  if (await viaHub()) {
-    if (!project) return { tickets: [], sprint: "", connected: true, notice: "Select a project to load its tickets." };
-    try {
-      const { tickets, sprint, truncated } = await hubTickets(provider, project, sprintOverride, scope);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint, connected: true, truncated };
-    } catch (e) {
-      // Never an empty list with `connected: true` — that reads as an empty
-      // sprint, and INTEGRATION.md §5 is explicit that a failed read must not
-      // be mistaken for one that returned nothing.
-      return { tickets: [], sprint: "", connected: false, notice: hubNotice(e) };
-    }
-  }
   switch (provider) {
     case "azure-devops": {
       if (!(await adoCreds())) {
@@ -115,12 +46,12 @@ export async function loadTickets(
       if (!project) {
         return { tickets: [], sprint: "", connected: true, notice: "Select a project to load its tickets." };
       }
-      // All three views, off the hub as well as on it. Each is its own provider
+      // All three views. Each is its own provider
       // query (`getScopedTickets`) — none of them is a filter this side could
       // apply to a sprint fetch, because a backlog item and most of a board sit
       // outside the iteration the sprint query is bounded by.
       const { tickets, sprintName, truncated } = await getScopedTickets(project, scope, sprintOverride);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true, truncated };
+      return { tickets, sprint: sprintName, connected: true, truncated };
     }
     case "github": {
       const creds = await githubCreds();
@@ -139,7 +70,7 @@ export async function loadTickets(
         };
       }
       const tickets = await getGithubIssues(creds.url, creds.token);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: parseRepoLabel(creds.url), connected: true };
+      return { tickets, sprint: parseRepoLabel(creds.url), connected: true };
     }
     case "jira":
     case "gitlab":
@@ -163,13 +94,6 @@ export type ProjectLoadResult = {
 // List the projects available for a provider's configured organization. Azure
 // DevOps is wired; other providers degrade to an empty "not connected" result.
 export async function loadProjects(provider: ProviderId): Promise<ProjectLoadResult> {
-  if (await viaHub()) {
-    try {
-      return { projects: await hubProjects(provider), connected: true };
-    } catch (e) {
-      return { projects: [], connected: false, notice: hubNotice(e) };
-    }
-  }
   switch (provider) {
     case "azure-devops": {
       if (!(await adoCreds())) {
@@ -186,10 +110,25 @@ export async function loadProjects(provider: ProviderId): Promise<ProjectLoadRes
   }
 }
 
+/**
+ * The rich-text fields for one ticket — description and acceptance criteria.
+ *
+ * They are not in the list payload for Azure DevOps (see `TICKET_FIELDS`), so
+ * the UI asks for them when a ticket is opened. GitHub already carries both in
+ * its issue list, so it has nothing left to fetch and returns them unset — the
+ * caller keeps what it has rather than overwriting good text with blanks.
+ */
+export async function loadTicketDetail(
+  provider: ProviderId,
+  id: string
+): Promise<{ description: string; criteria: string } | null> {
+  if (provider === "azure-devops") return getWorkItemDetail(id);
+  return null;
+}
+
 // Load the discussion comments for a single ticket. Only Azure DevOps is wired;
 // other providers return an empty list so the section simply hides.
 export async function loadTicketComments(provider: ProviderId, id: string, project?: string): Promise<TicketComment[]> {
-  if (await viaHub()) return hubTicketComments(provider, id);
   if (provider === "azure-devops") return getWorkItemComments(project ?? "", id);
   return [];
 }
@@ -206,26 +145,10 @@ export type SprintLoadResult = {
 };
 
 /**
- * The sprint picker's iterations. Lives here rather than in the route so hub
- * mode is decided in the same place as every other provider read — a route that
- * called `listIterations()` directly would be the one call site still reaching
- * for a credential hub mode does not have.
+ * The sprint picker's iterations. Lives here rather than in the route so every
+ * provider read is dispatched from one place.
  */
 export async function loadSprints(provider: ProviderId, project: string): Promise<SprintLoadResult> {
-  if (await viaHub()) {
-    if (!project) return { sprints: [], current: "" };
-    try {
-      // Already sorted newest-first with `current` resolved by the hub, which is
-      // where the iteration dates are. The project has to go with it: one hub
-      // connection spans an organisation, and without it the hub answers for
-      // whichever project the *connection* names — which is how this picker
-      // came to be empty while the ticket list beside it, which does send the
-      // project, kept working.
-      return await hubSprints(provider, project);
-    } catch (e) {
-      return { sprints: [], current: "", notice: hubNotice(e) };
-    }
-  }
   if (provider !== "azure-devops" || !project) return { sprints: [], current: "" };
   const iterations = await listIterations(project);
   return {
@@ -240,7 +163,6 @@ export async function loadSprints(provider: ProviderId, project: string): Promis
 export async function loadReview(provider: ProviderId, ticketId: string): Promise<ReviewData> {
   const known = await latestPrUrlForTicket(provider, ticketId);
   const review = await (async () => {
-    if (await viaHub()) return hubReview(provider, ticketId, known);
     if (provider === "azure-devops") return getPullRequestReview(ticketId, known);
     if (provider === "github") return githubReviewFor(ticketId, known);
     return { pr: null, comments: [], unresolvedCount: 0 };
@@ -346,7 +268,6 @@ async function githubCreds(): Promise<{ url: string; token: string } | null> {
 // Load every commit on the ticket's linked PR source branch. Azure DevOps and
 // GitHub are wired; other providers report no commits (Commits tab stays empty).
 export async function loadPullRequestCommits(provider: ProviderId, ticketId: string): Promise<CommitSummary[]> {
-  if (await viaHub()) return hubCommits(provider, ticketId, await latestPrUrlForTicket(provider, ticketId));
   if (provider === "azure-devops") return getPullRequestCommits(ticketId, await latestPrUrlForTicket(provider, ticketId));
   if (provider === "github") {
     const creds = await githubCreds();
@@ -360,7 +281,6 @@ export async function loadPullRequestCommits(provider: ProviderId, ticketId: str
 
 // Load the file changes (each with a unified diff) for a single commit.
 export async function loadCommitFileChanges(provider: ProviderId, ticketId: string, sha: string): Promise<CommitFile[]> {
-  if (await viaHub()) return hubCommitFiles(provider, ticketId, sha, await latestPrUrlForTicket(provider, ticketId));
   if (provider === "azure-devops") return getCommitFileChanges(ticketId, sha, await latestPrUrlForTicket(provider, ticketId));
   if (provider === "github") {
     const creds = await githubCreds();
@@ -378,11 +298,6 @@ export async function loadCommitFileChanges(provider: ProviderId, ticketId: stri
 // falling back to the repo's "status: X" labels if the issue isn't on a board.
 // Jira/GitLab: not wired yet.
 export async function getStatusOptions(provider: ProviderId, ticketId: string, ticketType: string, project?: string): Promise<string[]> {
-  if (await viaHub()) {
-    // An empty dropdown is recoverable (the user keeps the current status); an
-    // exception here would take the whole ticket detail pane down with it.
-    return hubStatusOptions(provider, ticketId, ticketType, project).catch(() => []);
-  }
   if (provider === "azure-devops") return getWorkItemTypeStates(project ?? "", ticketType);
   if (provider === "github") {
     const creds = await githubCreds();
@@ -401,10 +316,6 @@ export async function resolveStatusForUpdate(
   ticketId: string,
   desired: string
 ): Promise<string | null> {
-  // The hub resolves the target state itself and answers 502 with the
-  // provider's own reason when it cannot, so there is nothing to pre-resolve
-  // here — passing the label through lets that reason reach the user intact.
-  if (await viaHub()) return desired;
   if (provider === "azure-devops") return resolveWorkItemState(ticketId, desired);
   return desired;
 }
@@ -414,7 +325,6 @@ export async function resolveStatusForUpdate(
 // instead of silently pretending the change synced. Returns the status the provider
 // actually ended up in, which is not always the one that was requested.
 export async function updateTicketStatus(provider: ProviderId, ticketId: string, status: string): Promise<string> {
-  if (await viaHub()) return hubUpdateStatus(provider, ticketId, status);
   if (provider === "azure-devops") return updateWorkItemState(ticketId, status);
   if (provider === "github") {
     const creds = await githubCreds();
@@ -430,13 +340,12 @@ export async function updateTicketStatus(provider: ProviderId, ticketId: string,
 // state rather than an optimistic local guess that quietly drifted out of sync.
 // Returns "" when the provider isn't wired up — the caller then keeps what it has.
 export async function readTicketStatus(provider: ProviderId, ticketId: string): Promise<string> {
-  if (await viaHub()) return hubTicketStatus(provider, ticketId).catch(() => "");
   if (provider === "azure-devops") return getWorkItemState(ticketId);
   return "";
 }
 
 /** What the review bell got back. `degraded` means the answer is incomplete —
- *  the provider (or the hub) refused, so an empty list here is not the same
+ *  the provider refused, so an empty list here is not the same
  *  claim as "nothing to review", and the UI must keep what it had. */
 export type ReviewsSummaryResult = {
   reviews: ReviewSummaryEntry[];
@@ -459,20 +368,13 @@ export type ReviewsSummaryResult = {
 export async function loadReviewsSummary(
   provider: ProviderId,
   ticketIds: string[],
-  personalFilter?: PersonalFilter,
   prUrls?: Map<string, string>
 ): Promise<ReviewsSummaryResult> {
   if (!ticketIds.length) return { reviews: [], degraded: false };
-  const hub = await viaHub();
-  if (!hub && provider !== "azure-devops" && provider !== "github") {
+  if (provider !== "azure-devops" && provider !== "github") {
     return { reviews: [], degraded: false };
   }
   const urls = prUrls ?? (await latestPrUrls(provider, ticketIds));
-
-  // Hub mode answers the whole board in one request — see hubReviewSummaries().
-  // The direct-provider paths below still fan out, because neither Azure DevOps
-  // nor GitHub offers a batch equivalent this app could call.
-  if (hub) return hubSummaries(provider, ticketIds, urls, personalFilter);
 
   const loadOne =
     provider === "azure-devops"
@@ -489,7 +391,7 @@ export async function loadReviewsSummary(
   for (const r of results) {
     if (r.status !== "fulfilled") {
       failed += 1;
-      if (!firstFailure) firstFailure = hubNotice(r.reason);
+      if (!firstFailure) firstFailure = r.reason instanceof Error ? r.reason.message : String(r.reason);
       continue;
     }
     const { id, review } = r.value;
@@ -498,8 +400,6 @@ export async function loadReviewsSummary(
     // four-call resolution on every poll for the rest of its life.
     if (review.pr?.url) resolved.push({ ticketId: id, prUrl: review.pr.url });
     if (!review.pr || review.unresolvedCount === 0) continue;
-    // Personal scope: only surface notifications for PRs this account authored.
-    if (personalFilter?.scope === "personal" && personalFilter.account.trim() && !matchesAccount([review.pr.author], personalFilter.account)) continue;
     const latest = [...review.comments].reverse().find((c) => c.status === "open");
     entries.push({
       ticketId: id,
@@ -512,59 +412,12 @@ export async function loadReviewsSummary(
       latestAt: latest?.date ?? "",
     });
   }
-  // Every read failing is the signature of a dead hub or an expired session, and
-  // it must not render as a quiet "no reviews". One ticket failing is ordinary —
+  // Every read failing is the signature of a dead credential or a provider
+  // outage, and it must not render as a quiet "no reviews". One ticket failing is ordinary —
   // a deleted PR, a permission gap — and the rest of the answer is still good.
   const degraded = failed > 0 && failed === results.length;
   await rememberPrUrls(provider, urls, resolved);
   return { reviews: entries, degraded, notice: degraded ? firstFailure : undefined };
-}
-
-/**
- * The hub's answer for the whole board, as bell entries.
- *
- * One request, and the failure story is simpler than the fan-out's: the hub has
- * already decided that a batch it could not read at all is a 502, so a throw
- * here means degraded and a returned list means the answer is complete.
- */
-async function hubSummaries(
-  provider: ProviderId,
-  ticketIds: string[],
-  urls: Map<string, string>,
-  personalFilter?: PersonalFilter
-): Promise<ReviewsSummaryResult> {
-  let rows: Awaited<ReturnType<typeof hubReviewSummaries>>;
-  try {
-    rows = await hubReviewSummaries(
-      provider,
-      ticketIds.map((id) => ({ ticketId: id, prUrl: urls.get(id) ?? null }))
-    );
-  } catch (e) {
-    return { reviews: [], degraded: true, notice: hubNotice(e) };
-  }
-  const reviews: ReviewSummaryEntry[] = [];
-  const resolved: Array<{ ticketId: string; prUrl: string }> = [];
-  for (const row of rows) {
-    if (!row) continue;
-    // The hub answers with an entry for every PR it resolved, open comments or
-    // not, precisely so this line can run before the notification filter below.
-    if (row.prUrl) resolved.push({ ticketId: row.ticketId, prUrl: row.prUrl });
-    if (row.unresolvedCount === 0) continue;
-    // Personal scope: only surface notifications for PRs this account authored.
-    if (personalFilter?.scope === "personal" && personalFilter.account.trim() && !matchesAccount([row.author], personalFilter.account)) continue;
-    reviews.push({
-      ticketId: row.ticketId,
-      prId: row.prId,
-      prUrl: row.prUrl,
-      prTitle: row.prTitle,
-      reviewer: row.latestAuthor || row.reviewers[0] || "",
-      unresolvedCount: row.unresolvedCount,
-      latestComment: row.latestText,
-      latestAt: row.latestDate,
-    });
-  }
-  await rememberPrUrls(provider, urls, resolved);
-  return { reviews, degraded: false };
 }
 
 export type DeliveryFunnel = {
@@ -594,29 +447,6 @@ const FUNNEL_SAMPLE_CAP = 60;
  */
 export async function loadDeliveryFunnel(provider: ProviderId, prUrls: string[]): Promise<DeliveryFunnel> {
   const empty = { prCreated: prUrls.length, merged: 0, mergedClean: 0, sampled: 0 };
-  if (await viaHub()) {
-    const sample = prUrls.slice(0, FUNNEL_SAMPLE_CAP);
-    if (!sample.length) return { ...empty, providerBacked: true, sampled: 0 };
-    try {
-      const resolved = (await hubPrOutcomes(provider, sample)).filter((o) => !!o);
-      return {
-        prCreated: prUrls.length,
-        merged: resolved.filter((o) => o!.merged).length,
-        mergedClean: resolved.filter((o) => o!.merged && o!.reviewComments === 0).length,
-        sampled: resolved.length,
-        providerBacked: true,
-        notice:
-          prUrls.length > sample.length
-            ? `Showing the ${sample.length} most recent PRs of ${prUrls.length}.`
-            : undefined,
-      };
-    } catch (e) {
-      // `providerBacked: false` makes the dashboard render "not measured"
-      // rather than zero merges — a funnel that reports nothing merged because
-      // a call failed is worse than one that admits it does not know.
-      return { ...empty, providerBacked: false, notice: hubNotice(e) };
-    }
-  }
   if (provider !== "azure-devops" && provider !== "github") {
     return { ...empty, providerBacked: false, notice: `${labelFor(provider)} cannot report PR outcomes yet.` };
   }

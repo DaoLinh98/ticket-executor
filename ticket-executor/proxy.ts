@@ -8,19 +8,10 @@ import { AUTH_COOKIE, authDisabled, isValidToken } from "@/lib/auth";
 // login page itself are always allowed so the gate can be passed.
 
 // Paths reachable without a session.
-//
-// `/api/hub/token` is here for the EmeHub bootstrap (emehub
-// `docs/DAGENT-HANDOFF.md` § 4): the login page asks it where the hub is, mints
-// a token in the browser, and hands it back — and every one of those steps
-// happens *before* there is a session, so gating them makes the bootstrap
-// impossible to reach. It is not an unauthenticated door: the POST hands a hub
-// token to `verifyHubToken`, and a caller who cannot produce one the hub accepts
-// leaves with a 401 and no cookie.
 const PUBLIC_PATHS = new Set([
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
-  "/api/hub/token",
 ]);
 
 export async function proxy(request: NextRequest) {
@@ -57,8 +48,8 @@ export async function proxy(request: NextRequest) {
   // Cloned from `nextUrl` for the basePath reason described above. This one
   // matters more than it looks: under `basePath: "/dagent"` the plain form sends
   // every unauthenticated page request to `/login`, which is a 404 there — so
-  // the login page, and with it the EmeHub bootstrap, was unreachable by the one
-  // route that is supposed to lead to it.
+  // the login page was unreachable by the one route that is supposed to lead
+  // to it.
   const loginUrl = request.nextUrl.clone();
   loginUrl.pathname = "/login";
   return NextResponse.redirect(loginUrl);
@@ -74,8 +65,7 @@ export const config = {
   // not assumed — with only the pattern, `/settings` and `/projects` redirected
   // to the login page while `/` served the app shell to anyone who asked.
   //
-  // It reads like a cosmetic omission and was not: the root is the URL the hub's
-  // Launch button sends people to, so the one page that had to reach the login
-  // route — and with it the EmeHub bootstrap — was the one page that never did.
+  // It reads like a cosmetic omission and was not: the one page that had to
+  // reach the login route was the one page that never did.
   matcher: ["/", "/((?!_next/static|_next/image|favicon.ico).*)"],
 };

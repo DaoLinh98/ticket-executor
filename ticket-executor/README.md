@@ -201,7 +201,7 @@ and you go straight in).
 
 ### Host or container — never both at once
 
-The app also ships as a container (`dagent-web` in the EmeHub suite). Both copies
+The app also ships as a container (`dagent-web`). Both copies
 can point at the same Postgres, and that is the supported setup: one database, one
 set of settings, one run history. What is **not** supported is running both at the
 same time.
@@ -217,7 +217,7 @@ Pick one side per session:
 | Doing | Command |
 |---|---|
 | Implementing — you want your own skills, `~/.claude.json` MCP config, and sibling clones | `docker stop emesoft-dagent-web-1` then `npm run dev` |
-| Demoing the suite | stop `npm run dev`, then `docker start emesoft-dagent-web-1` |
+| Demoing the container build | stop `npm run dev`, then `docker start emesoft-dagent-web-1` |
 
 Before switching sides, make sure no run is mid-flight — a `running` row left
 behind is exactly what the other side picks up:
@@ -229,10 +229,6 @@ docker exec emesoft-dagent-db-1 psql -U dagent -d dagent -c "select id, state fr
 # and when you are on the host, this should print nothing
 docker ps --format "{{.Names}}" | grep dagent-web
 ```
-
-Sharing one database also means sharing the single `Setting` row, `hubToken`
-included: signing in on one side invalidates the other side's hub session. Nothing
-is lost — you just log in again.
 
 ## 8. Verify the setup — System Check
 
@@ -330,8 +326,10 @@ What happens when you press the CTA, in order — the cheap guards come first:
 
 ## 11. Notes
 
-- There is no lint or test script — `package.json` has only `dev` / `build` /
-  `start`. Don't add tooling implicitly; ask first.
+- `npm run test` runs the unit suite (`node --test` over `tests/*.test.ts`, TypeScript
+  via `tests/register.mjs`) — it needs no database and costs no tokens. Run it after
+  any change to a graph, an edge, a node contract or `resolveSkill()`.
+- There is no lint script. Don't add tooling implicitly; ask first.
 - Type-check with `npx tsc --noEmit`.
 - The check logic lives in `lib/preflight.ts` (read-only, token-free) and has two
   consumers: `GET /api/preflight` for the System Check page, and
