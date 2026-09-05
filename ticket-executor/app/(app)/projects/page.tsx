@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import { COLORS, FONT, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 type Project = { id: string; name: string; description?: string };
 
@@ -18,25 +19,35 @@ export default function ProjectsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const sr = await fetch("/api/settings");
-        const sd = await sr.json();
-        const provider = sd.settings?.provider ?? "azure-devops";
-        const r = await fetch(`/api/projects?provider=${provider}`);
-        const data = await r.json();
-        if (data.error) setError(data.error);
-        if (data.notice) setNotice(data.notice);
-        setProjects(Array.isArray(data.projects) ? data.projects : []);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      // No provider param: the route resolves it from the stored setting and
+      // echoes it back. Asking /api/settings first only to fill in a value the
+      // server already holds made this page two sequential round-trips.
+      const r = await fetch("/api/projects");
+      const data = await r.json();
+      if (data.error) setError(data.error);
+      if (data.notice) setNotice(data.notice);
+      setProjects(Array.isArray(data.projects) ? data.projects : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // The organization switched in the header — these projects belong to the old
+  // one.
+  useEffect(() => {
+    const onChanged = () => { load(); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+  }, [load]);
 
   const openProject = (name: string, e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);
@@ -45,7 +56,7 @@ export default function ProjectsPage() {
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Projects" kicker="D-AGENT · WORKSPACE" icon={<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />} />
         <div style={{ flex: 1 }} />
         <ProviderBadge />

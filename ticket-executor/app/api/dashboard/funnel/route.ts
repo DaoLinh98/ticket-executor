@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { loadDeliveryFunnel, normalizeProvider } from "@/lib/tickets";
+import { activeConnection } from "@/lib/providerCredentials";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,12 +22,16 @@ export async function GET(req: Request) {
       ? null
       : await prisma.setting.findUnique({ where: { id: "default" }, select: { provider: true } });
     const provider = normalizeProvider(providerParam ?? setting?.provider);
+    // Only this organization's pull requests can be resolved with the credential
+    // the query will run under, and only its runs are the history on screen.
+    const active = await activeConnection(provider);
 
     const rows = await prisma.run.findMany({
       where: {
         NOT: { prUrl: "" },
         ...(days ? { startedAt: { gte: new Date(Date.now() - days * 86400000) } } : {}),
         ...(providerParam ? { provider: providerParam } : {}),
+        ...(active?.org ? { org: active.org } : {}),
         ...(project ? { project } : {}),
       },
       orderBy: { startedAt: "desc" },

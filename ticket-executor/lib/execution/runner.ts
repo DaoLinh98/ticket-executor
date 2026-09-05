@@ -2,6 +2,7 @@ import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { prisma } from "../prisma";
+import { resolveCredential } from "../providerCredentials";
 import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
@@ -143,6 +144,9 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   const provider = cleanPath(params.provider || "azure-devops");
 
   const setting = await prisma.setting.findUnique({ where: { id: "default" } });
+  // The organization this run authenticates against, snapshotted onto the row:
+  // switching the active connection later must not re-attribute past runs.
+  const { org } = await resolveCredential(provider);
 
   const skill = resolveSkill(cleanPath(params.requestedSkill), !!params.skillExplicit, {
     autoImplement: setting?.autoImplement ?? true,
@@ -231,6 +235,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
           ticketId,
           ticketUrl: params.ticketUrl ? cleanPath(params.ticketUrl) : "",
           provider,
+          org,
           project,
           rootRepo,
           worktreePath: rootRepo,

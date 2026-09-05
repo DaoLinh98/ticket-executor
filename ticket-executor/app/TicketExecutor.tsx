@@ -22,6 +22,7 @@ import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
 import { reviewFingerprint } from "./ticket-executor/helpers";
+import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
@@ -202,6 +203,10 @@ export default function TicketExecutor() {
   const batchQueueRef = useRef<string[]>([]);
   const batchRunningRef = useRef<Set<string>>(new Set());
   const tryStartNextQueuedRef = useRef<() => void>(() => { });
+  // Tickets whose description/criteria have already been asked for, so a failed
+  // fetch is not retried on every reselect. Cleared whenever the list reloads —
+  // those are new ticket objects, with the fields unloaded again.
+  const detailFetchedRef = useRef<Set<string>>(new Set());
 
   const searchParams = useSearchParams();
 
@@ -229,6 +234,7 @@ export default function TicketExecutor() {
       else if (data.truncated) setTicketsNotice(`Showing the first ${(data.tickets ?? []).length} work items — this ${SCOPE_LABEL[viewScope].toLowerCase()} has more.`);
       setSprintLabel(typeof data.sprint === "string" ? data.sprint : "");
       const list: Ticket[] = data.tickets ?? [];
+      detailFetchedRef.current.clear();
       setTickets(list);
       setSelectedId((prev) => (list.some((t) => t.id === prev) ? prev : list[0]?.id ?? ""));
       if (opts?.notify) {
@@ -329,27 +335,39 @@ export default function TicketExecutor() {
     reloadTickets(settings.provider, value, current || undefined, { notify: true });
   };
 
-  useEffect(() => {
-    (async () => {
-      let provider: ProviderId = "azure-devops";
-      try {
-        const r = await fetch("/api/settings");
-        const data = await r.json();
-        if (data.settings) {
-          setSettings(data.settings);
-          provider = data.settings.provider ?? provider;
-        }
-      } catch {
-        /* ignore — fall back to default provider */
+  // Settings → projects → sprints → tickets, in that order because each answer
+  // narrows the next. Run on mount and again whenever the header switches
+  // organization: every one of these calls is answered by the provider as the
+  // active connection, so the whole screen is that organization's.
+  const loadWorkspace = useCallback(async () => {
+    let provider: ProviderId = "azure-devops";
+    try {
+      const r = await fetch("/api/settings");
+      const data = await r.json();
+      if (data.settings) {
+        setSettings(data.settings);
+        provider = data.settings.provider ?? provider;
       }
-      const list = await loadProjectOptions(provider);
-      const urlProject = searchParams.get("project") ?? "";
-      const project =
-        urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
-      setSelectedProject(project);
-      const current = await loadSprintOptions(provider, project);
-      await reloadTickets(provider, project, current || undefined);
-    })();
+    } catch {
+      /* ignore — fall back to default provider */
+    }
+    const list = await loadProjectOptions(provider);
+    const urlProject = searchParams.get("project") ?? "";
+    const project =
+      urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
+    setSelectedProject(project);
+    const current = await loadSprintOptions(provider, project);
+    await reloadTickets(provider, project, current || undefined);
+  }, [loadProjectOptions, loadSprintOptions, reloadTickets, searchParams]);
+
+  useEffect(() => {
+    const onConnectionChanged = () => { void loadWorkspace(); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
+  }, [loadWorkspace]);
+
+  useEffect(() => {
+    void loadWorkspace();
     (async () => {
       try {
         const r = await fetch("/api/skills");
@@ -376,7 +394,7 @@ export default function TicketExecutor() {
       Object.values(pollTimers.current).forEach(clearInterval);
       Object.values(sseConnections.current).forEach((es) => es.close());
     };
-  }, [reloadTickets, loadSprintOptions, loadProjectOptions, searchParams]);
+  }, [loadWorkspace]);
 
   // ---- execution history ----
   const loadHistory = useCallback(async (ticketId: string) => {
@@ -421,6 +439,38 @@ export default function TicketExecutor() {
   useEffect(() => {
     if (selectedId) loadComments(selectedId, settings.provider, selectedProject);
   }, [selectedId, settings.provider, selectedProject, loadComments]);
+
+  // Lazily load a ticket's description and acceptance criteria when it becomes
+  // selected. They are not in the list payload — see TICKET_FIELDS in
+  // lib/ado.ts — so `description === undefined` means "not fetched yet" and is
+  // the whole trigger. A provider that already sent them (GitHub) therefore
+  // never gets here, and a ticket genuinely without a description is fetched
+  // once and then reads as "" rather than being asked for again.
+  useEffect(() => {
+    if (!selectedId) return;
+    const t = tickets.find((x) => x.id === selectedId);
+    if (!t || t.description !== undefined) return;
+    if (detailFetchedRef.current.has(selectedId)) return;
+    detailFetchedRef.current.add(selectedId);
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/tickets/${selectedId}/detail?provider=${settings.provider}`);
+        const data = await r.json();
+        if (cancelled || data.error) return;
+        setTickets((list) =>
+          list.map((x) =>
+            x.id === selectedId
+              ? { ...x, description: data.description ?? "", criteria: data.criteria ?? "" }
+              : x
+          )
+        );
+      } catch {
+        /* the panel keeps its empty state; reselecting retries after a reload */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedId, tickets, settings.provider]);
 
   // Fetch (or refetch) the Resolve Review data for one ticket — the linked PR
   // overview plus its open/resolved review-comment threads.

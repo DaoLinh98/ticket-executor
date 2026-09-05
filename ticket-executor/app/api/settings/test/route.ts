@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveCredential } from "@/lib/providerCredentials";
+import { connectionCredential, resolveCredential } from "@/lib/providerCredentials";
 import { normalizeProvider } from "@/lib/tickets";
 import { parseAdoUrl } from "@/lib/ado";
 
@@ -123,11 +123,13 @@ export async function POST(req: Request) {
   const provider = normalizeProvider(body.provider);
 
   // Use whatever the form supplied; for anything it did not, fall back to the
-  // credential this provider would actually run with.
+  // saved credential — the specific connection being edited when the form names
+  // one, otherwise the one this provider would actually run with.
   let url = typeof body.org === "string" ? body.org.trim() : "";
   let token = typeof body.pat === "string" ? body.pat.trim() : "";
   if (!url || !token) {
-    const cred = await resolveCredential(provider);
+    const id = typeof body.id === "string" ? body.id : "";
+    const cred = (id ? await connectionCredential(id) : null) ?? (await resolveCredential(provider));
     if (!url) url = cred.org;
     if (!token) token = cred.pat;
   }

@@ -72,18 +72,22 @@ export default function OverviewTab({
       <section>
         <h3 style={sectionHeading}>DESCRIPTION</h3>
         <div style={card({ padding: "15px 18px", border: COLORS.borderSubtle })}>
-          {hasContent(t.description)
-            ? <RichText html={t.description} />
-            : <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>No description.</p>}
+          {/* `undefined` is "still loading", not "empty" — saying "No description."
+              while the fetch is in flight states something the app does not yet know. */}
+          {t.description === undefined
+            ? <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>Loading description…</p>
+            : hasContent(t.description)
+              ? <RichText html={t.description} />
+              : <p style={{ margin: 0, fontSize: FONT.md, color: COLORS.textDim }}>No description.</p>}
         </div>
       </section>
-      {hasContent(t.criteria) && (
+      {hasContent(t.criteria ?? "") && (
         <section>
           <h3 style={sectionHeading}>ACCEPTANCE CRITERIA</h3>
           {/* One panel holding the whole field, not one card per line: the criteria
               are a single numbered document to read top to bottom. */}
           <div style={card({ padding: "15px 18px", border: COLORS.borderSubtle })}>
-            <RichText html={t.criteria} />
+            <RichText html={t.criteria ?? ""} />
           </div>
         </section>
       )}

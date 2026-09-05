@@ -8,6 +8,7 @@ import type { CountEntry, DashboardMetrics, SkillConsistency } from "@/lib/execu
 import { COLORS, FONT, card, pill, ringBorder, tintedCard } from "@/lib/ui";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -253,6 +254,17 @@ export default function DashboardPage() {
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [rangeLabel, setRangeLabel] = useState("");
+  // Bumped when the header switches organization. The server scopes these
+  // metrics to the active connection, so the same query string is a different
+  // question after a switch — and the project filter is another organization's
+  // list, so it goes back to All.
+  const [orgEpoch, setOrgEpoch] = useState(0);
+
+  useEffect(() => {
+    const onChanged = () => { setProject(""); setOrgEpoch((n) => n + 1); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+  }, []);
 
   const query = useCallback(() => {
     const qs = new URLSearchParams();
@@ -279,7 +291,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, orgEpoch]);
 
   // The funnel talks to the provider (one or two round-trips per PR), so it is
   // fetched on its own and merged in when it lands — a slow or unreachable
@@ -299,7 +311,7 @@ export default function DashboardPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [query]);
+  }, [query, orgEpoch]);
 
   // Same rounded-panel-with-spinning-ring treatment as the log panel in ExecutionTab —
   // shape:"none" keeps the ring's animated conic-gradient background while letting us

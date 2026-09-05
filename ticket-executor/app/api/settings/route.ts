@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { encryptSecret } from "@/lib/crypto";
 import { clearMcpProbe } from "@/lib/mcp";
 import { normalizeProvider } from "@/lib/tickets";
+import { activeConnection, type ConnectionView } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,6 @@ const clean = (s: string) => s.replace(/[\r\n]+/g, "").trim();
 
 
 type SettingRow = Awaited<ReturnType<typeof getOrCreateSetting>>;
-type Credential = { org: string; pat: string } | null;
 
 /**
  * What a page is allowed to know about the settings row.
@@ -21,7 +20,7 @@ type Credential = { org: string; pat: string } | null;
  * schema and forgotten here renders as a missing value in the UI, whereas one
  * forgotten from a blacklist leaks.
  */
-function publicSettings(s: SettingRow, cred: Credential) {
+function publicSettings(s: SettingRow, cred: ConnectionView | null) {
   return {
     provider: s.provider,
     scope: s.scope,
@@ -38,24 +37,25 @@ function publicSettings(s: SettingRow, cred: Credential) {
     evaluateBeforePublish: s.evaluateBeforePublish,
     gitUserName: s.gitUserName,
     gitUserEmail: s.gitUserEmail,
-    // The credential for the provider being asked about: its org, and whether a
-    // token exists. Never the token itself, in either direction.
+    // The organization this provider currently runs as, and whether it has a
+    // token. Read-only here — connections are written through /api/connections.
+    // Never the token itself, in either direction.
     org: cred?.org ?? "",
     pat: "",
-    hasPat: !!cred && cred.pat.length > 0,
+    hasPat: !!cred?.hasPat,
   };
 }
 
-// GET /api/settings — full settings, credentials for the currently-selected provider.
-// GET /api/settings?provider=github — same non-credential fields, but credentials
-// (org/hasPat) for the requested provider instead — used when the UI switches the
+// GET /api/settings — full settings, plus the active organization of the
+// currently-selected provider.
+// GET /api/settings?provider=github — same non-credential fields, but the active
+// organization of the requested provider instead — used when the UI switches the
 // provider dropdown without having saved yet.
 export async function GET(req: Request) {
   const s = await getOrCreateSetting();
   const { searchParams } = new URL(req.url);
   const provider = normalizeProvider(searchParams.get("provider") ?? s.provider);
-  const cred = await prisma.providerCredential.findUnique({ where: { provider } });
-  return NextResponse.json({ settings: publicSettings(s, cred) });
+  return NextResponse.json({ settings: publicSettings(s, await activeConnection(provider)) });
 }
 
 export async function POST(req: Request) {
@@ -99,30 +99,15 @@ export async function POST(req: Request) {
     update: data,
   });
 
-  // Credentials are stored per-provider, keyed by the provider being saved for.
+  // Credentials are not written here: an organization is a row of its own now,
+  // created and switched through /api/connections. This route only ever reports
+  // which one the saved provider currently runs as.
   const provider = normalizeProvider(typeof body.provider === "string" ? body.provider : s.provider);
-  const credData: { org?: string; pat?: string } = {};
-  if (typeof body.org === "string") credData.org = clean(body.org);
-  // Only overwrite PAT when a non-empty value is supplied; encrypt at rest.
-  if (typeof body.pat === "string" && body.pat.length > 0)
-    credData.pat = encryptSecret(body.pat);
-  const cred = await prisma.providerCredential.upsert({
-    where: { provider },
-    create: { provider, org: "", pat: "", ...credData },
-    update: credData,
-  });
 
-  // Anything that changes which MCP server a run would use invalidates the
-  // cached deep-check verdict — a stale "MCP is fine" would gate the next run on
-  // a setup that no longer exists.
-  if (
-    typeof body.provider === "string" ||
-    typeof body.manageMcp === "boolean" ||
-    typeof body.org === "string" ||
-    (typeof body.pat === "string" && body.pat.length > 0)
-  ) {
-    clearMcpProbe();
-  }
+  // Switching provider changes which MCP server a run would use, which
+  // invalidates the cached deep-check verdict — a stale "MCP is fine" would gate
+  // the next run on a setup that no longer exists.
+  if (typeof body.provider === "string" || typeof body.manageMcp === "boolean") clearMcpProbe();
 
-  return NextResponse.json({ settings: publicSettings(s, cred) });
+  return NextResponse.json({ settings: publicSettings(s, await activeConnection(provider)) });
 }

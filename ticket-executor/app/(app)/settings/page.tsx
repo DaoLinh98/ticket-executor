@@ -7,12 +7,13 @@ import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
 import { SETTINGS_UPDATED_EVENT } from "../../settingsEvents";
-import { PROVIDERS, providerMeta, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
+import { PROVIDERS, providerMeta, connectionLabel, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
@@ -72,6 +73,11 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: ReactNo
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono), monospace" };
 
+// One saved organization, as /api/connections reports it — never the token.
+type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean };
+// The row being added ("" id) or edited. Null = the list only.
+type ConnectionEditor = { id: string; label: string; org: string; pat: string; hasPat: boolean };
+
 export default function SettingsPage() {
   const { fireBoltFromEvent } = useBoltsContext();
   const [tab, setTab] = useState<SettingsTabId>("connection");
@@ -81,18 +87,39 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
   const [loading, setLoading] = useState(true);
+  // Every organization saved for the selected provider. The active one is what
+  // the whole app runs as; the header picker switches it.
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [editor, setEditor] = useState<ConnectionEditor | null>(null);
+  const [connBusy, setConnBusy] = useState(false);
   const pm = providerMeta(settings.provider);
   // The Toast owns its own countdown (and pauses it on hover), so all this does
   // is hand it a fresh message.
   const showToast = (msg: string, kind: "success" | "error" | "warning" = "success", ms = 7000) =>
     setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
 
+  const loadConnections = async (provider: ProviderId) => {
+    try {
+      const r = await fetch(`/api/connections?provider=${provider}`);
+      const data = await r.json();
+      const list: Connection[] = Array.isArray(data.connections) ? data.connections : [];
+      setConnections(list);
+      return list;
+    } catch {
+      setConnections([]);
+      return [];
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
         const r = await fetch("/api/settings");
         const data = await r.json();
-        if (data.settings) setSettings(data.settings);
+        if (data.settings) {
+          setSettings(data.settings);
+          await loadConnections(data.settings.provider);
+        }
       } catch {
         /* keep defaults */
       } finally {
@@ -101,18 +128,110 @@ export default function SettingsPage() {
     })();
   }, []);
 
+  // The header picker switches the very organizations listed here — without this
+  // the list keeps badging the one it last fetched as ACTIVE.
+  useEffect(() => {
+    const onChanged = () => { loadConnections(settings.provider); };
+    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadConnections is re-created every render; the provider is what it depends on
+  }, [settings.provider]);
+
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
 
   const onProviderChange = async (label: string) => {
     const provider = PROVIDERS.find((p) => p.name === label)?.id ?? DEFAULT_PROVIDER;
     setConnTest({ status: "idle", message: "" });
+    setEditor(null);
+    setSettings((s) => ({ ...s, provider }));
+    await loadConnections(provider);
+  };
+
+  // ---- organizations ----
+  const startEdit = (c: Connection) => {
+    setConnTest({ status: "idle", message: "" });
+    setEditor({ id: c.id, label: c.label, org: c.org, pat: "", hasPat: c.hasPat });
+  };
+  const startAdd = () => {
+    setConnTest({ status: "idle", message: "" });
+    setEditor({ id: "", label: "", org: "", pat: "", hasPat: false });
+  };
+
+  /** Everything that reads a credential runs as the active organization, so a
+   *  change to the list is a change to what every other page shows. */
+  const announceConnectionChange = (org: string, id: string) =>
+    window.dispatchEvent(
+      new CustomEvent(CONNECTION_CHANGED_EVENT, { detail: { provider: settings.provider, connectionId: id, org } })
+    );
+
+  const validateConnection = (org: string, hasPat: boolean, pat: string): string => {
+    const url = org.trim();
+    if (!url) return `${pm.urlLabel} is required.`;
+    // A malformed URL is a hard error: saving it only moves the failure to a
+    // place with less context.
     try {
-      const r = await fetch(`/api/settings?provider=${provider}`);
-      const data = await r.json();
-      setSettings((s) => ({ ...s, provider, org: data.settings?.org ?? "", hasPat: !!data.settings?.hasPat, pat: "" }));
+      const u = new URL(url);
+      if (!/^https?:$/.test(u.protocol)) return "URL must start with http:// or https://";
     } catch {
-      setSettings((s) => ({ ...s, provider, org: "", hasPat: false, pat: "" }));
+      return "Enter a valid URL (e.g. https://…).";
+    }
+    if (!hasPat && !pat.trim()) return `${pm.tokenLabel} is required.`;
+    return "";
+  };
+
+  const saveConnection = async () => {
+    if (!editor) return;
+    const v = validateConnection(editor.org, editor.hasPat, editor.pat);
+    if (v) { setError(v); return; }
+    setError("");
+    setConnBusy(true);
+    try {
+      const r = await fetch("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editor.id || undefined, provider: settings.provider, label: editor.label, org: editor.org, pat: editor.pat }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || "Failed to save the organization."); return; }
+      setConnections(Array.isArray(data.connections) ? data.connections : []);
+      setEditor(null);
+      setConnTest({ status: "idle", message: "" });
+      announceConnectionChange(editor.org, data.connection?.id ?? "");
+      showToast("Organization saved.");
+    } catch {
+      setError("Failed to save the organization.");
+    } finally {
+      setConnBusy(false);
+    }
+  };
+
+  const activateConnection = async (c: Connection) => {
+    if (c.isActive) return;
+    setConnections((cs) => cs.map((x) => ({ ...x, isActive: x.id === c.id })));
+    await fetch("/api/connections/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: settings.provider, id: c.id }),
+    });
+    announceConnectionChange(c.org, c.id);
+    showToast(`Now connected to ${connectionLabel(c)}.`);
+  };
+
+  const removeConnection = async (c: Connection) => {
+    setConnBusy(true);
+    try {
+      const r = await fetch(`/api/connections?id=${encodeURIComponent(c.id)}&provider=${settings.provider}`, { method: "DELETE" });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || "Failed to remove the organization."); return; }
+      const list: Connection[] = Array.isArray(data.connections) ? data.connections : [];
+      setConnections(list);
+      if (editor?.id === c.id) setEditor(null);
+      const active = list.find((x) => x.isActive) ?? list[0];
+      announceConnectionChange(active?.org ?? "", active?.id ?? "");
+      showToast(`Removed ${connectionLabel(c)}.`);
+    } finally {
+      setConnBusy(false);
     }
   };
 
@@ -122,7 +241,7 @@ export default function SettingsPage() {
       const r = await fetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: settings.provider, org: settings.org, pat: settings.pat }),
+        body: JSON.stringify({ provider: settings.provider, id: editor?.id || undefined, org: editor?.org ?? "", pat: editor?.pat ?? "" }),
       });
       const data = await r.json();
       setConnTest({ status: data.ok ? "ok" : "fail", message: data.message || (data.ok ? "Connected." : "Failed.") });
@@ -131,37 +250,7 @@ export default function SettingsPage() {
     }
   };
 
-  const validate = (): string => {
-    // An *absent* credential does not block the save. Save posts all four tabs
-    // as one object, so requiring the org URL made an unrelated Appearance
-    // change unsaveable. Being unconfigured is reported after the save instead,
-    // and refused where it actually costs something — preflight refuses to start
-    // a run, and Test connection says so out loud.
-    const url = settings.org.trim();
-    if (!url) return "";
-    // A value that *is* there and is wrong is still a hard error: saving a
-    // malformed URL only moves the failure to a place with less context.
-    try {
-      const u = new URL(url);
-      if (!/^https?:$/.test(u.protocol)) return "URL must start with http:// or https://";
-    } catch {
-      return "Enter a valid URL (e.g. https://…).";
-    }
-    if (!settings.hasPat && !settings.pat.trim()) return `${pm.tokenLabel} is required.`;
-    return "";
-  };
-
-  /** No credential — legal to save, but nothing can run on it.
-   *  Said out loud on save so the gap is never discovered by a failed run.
-   *  Takes the *saved* settings rather than reading state: the server's echo is
-   *  what is now in effect, and the local copy is one render behind it. */
-  const credentialMissing = (s: SettingsView) => !s.org.trim();
-
   const save = async (e?: React.MouseEvent) => {
-    const v = validate();
-    // A validation failure always lives on the Connection tab, so send the user
-    // there rather than showing a message about a field they cannot see.
-    if (v) { setError(v); setTab("connection"); return; }
     setError("");
     if (e) fireBoltFromEvent(e);
     try {
@@ -183,9 +272,9 @@ export default function SettingsPage() {
           },
         })
       );
-      if (credentialMissing(data.settings)) {
+      if (!connections.length) {
         showToast(
-          `Settings saved. ${pm.name} is not configured — add the ${pm.urlLabel} and ${pm.tokenLabel} before running a ticket.`,
+          `Settings saved. ${pm.name} has no organization yet — add one under Organizations before running a ticket.`,
           "warning",
           10000
         );
@@ -202,6 +291,48 @@ export default function SettingsPage() {
   const hint: CSSProperties = { fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.55 };
 
   // ---- the panes ----
+  const connectionRow = (c: Connection) => (
+    <div
+      key={c.id}
+      style={{
+        display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px",
+        ...(c.isActive
+          ? ringBorder({ fill: "#14171D", duration: 4.4, shape: "none" })
+          : { border: `1px solid ${COLORS.border}`, background: COLORS.panelBg }),
+        borderRadius: "12px",
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: "3px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+          <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {connectionLabel(c)}
+          </span>
+          {c.isActive && <span style={pill({ color: COLORS.accent, border: COLORS.border, size: "xs", weight: 700 })}>ACTIVE</span>}
+          {!c.hasPat && <span style={pill({ color: COLORS.warning, size: "xs", weight: 700 })}>NO TOKEN</span>}
+        </div>
+        <span style={{ ...mono, fontSize: FONT.sm, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.org}</span>
+      </div>
+      {!c.isActive && (
+        <button
+          onClick={(e) => { fireBoltFromEvent(e); activateConnection(c); }}
+          style={{ ...ctaButtonStyle("ghost", { height: "30px", cornerPx: 7 }), color: COLORS.accent }}
+        >
+          Use
+        </button>
+      )}
+      <button onClick={(e) => { fireBoltFromEvent(e); startEdit(c); }} style={ctaButtonStyle("ghost", { height: "30px", cornerPx: 7 })}>
+        Edit
+      </button>
+      <button
+        onClick={(e) => { fireBoltFromEvent(e); removeConnection(c); }}
+        disabled={connBusy}
+        style={{ ...ctaButtonStyle("ghost", { height: "30px", cornerPx: 7 }), color: COLORS.danger, cursor: connBusy ? "default" : "pointer" }}
+      >
+        Remove
+      </button>
+    </div>
+  );
+
   const connectionPane = (
     <div style={pane}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
@@ -230,37 +361,68 @@ export default function SettingsPage() {
         </label>
       </div>
 
-      {settings.scope === "personal" && (
-        <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={fieldLabel()}>YOUR {pm.name.toUpperCase()} ACCOUNT</span>
-          <input value={settings.personalAccount} onChange={setField("personalAccount")} placeholder="you@company.com or display name" style={fieldInput()} />
-          <span style={hint}>Only tickets assigned to this account and PR review notifications it authored will be shown.</span>
-        </label>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+          <span style={fieldLabel()}>ORGANIZATIONS</span>
+          <button onClick={(e) => { fireBoltFromEvent(e); startAdd(); }} style={ctaButtonStyle("outline", { height: "30px", cornerPx: 7 })}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+            Add organization
+          </button>
+        </div>
+        {connections.length === 0 && !editor ? (
+          <div style={tintedCard("warning", { padding: "12px 14px" })}>
+            <span style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>
+              No {pm.name} organization yet — add one before running a ticket.
+            </span>
+          </div>
+        ) : (
+          connections.map(connectionRow)
+        )}
+        <span style={hint}>
+          Add one per organization you work with. The header switches between them, and every page — projects,
+          tickets, sprints, review notifications and the dashboard — reloads as the one selected there.
+        </span>
+      </div>
+
+      {editor && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", ...card({ padding: "16px", background: "#0E1015" }) }}>
+          <span style={fieldLabel()}>{editor.id ? "EDIT ORGANIZATION" : "NEW ORGANIZATION"}</span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span style={fieldLabel()}>NAME (OPTIONAL)</span>
+              <input value={editor.label} onChange={(e) => setEditor({ ...editor, label: e.target.value })} placeholder="Client A" autoComplete="off" style={fieldInput()} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span style={fieldLabel()}>{pm.urlLabel}</span>
+              <input value={editor.org} onChange={(e) => setEditor({ ...editor, org: e.target.value })} placeholder={pm.urlPlaceholder} autoComplete="off" style={fieldInput()} />
+            </label>
+          </div>
+          <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <span style={fieldLabel()}>{pm.tokenLabel}</span>
+            <input type="password" value={editor.pat} onChange={(e) => setEditor({ ...editor, pat: e.target.value })} placeholder={editor.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} autoComplete="new-password" style={fieldInput()} />
+          </label>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "11px", flexWrap: "wrap" }}>
+            <button onClick={(e) => { fireBoltFromEvent(e); testConnection(); }} disabled={connTest.status === "testing"} style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), cursor: connTest.status === "testing" ? "default" : "pointer" }}>
+              {connTest.status === "testing" ? <LoadingRing size={13} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
+              Test connection
+            </button>
+            <button onClick={(e) => { fireBoltFromEvent(e); saveConnection(); }} disabled={connBusy} style={{ ...ctaButtonStyle("primary", { height: "30px", cornerPx: 7 }), cursor: connBusy ? "default" : "pointer" }}>
+              {editor.id ? "Save organization" : "Add organization"}
+            </button>
+            <button onClick={(e) => { fireBoltFromEvent(e); setEditor(null); setConnTest({ status: "idle", message: "" }); }} style={ctaButtonStyle("ghost", { height: "30px", cornerPx: 7 })}>
+              Cancel
+            </button>
+            {connTest.status !== "idle" && connTest.status !== "testing" && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
+                <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: connTest.status === "ok" ? COLORS.success : COLORS.danger, boxShadow: "0 0 8px " + (connTest.status === "ok" ? COLORS.success : COLORS.danger), flex: "0 0 auto" }} />
+                {connTest.message}
+              </span>
+            )}
+          </div>
+        </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={fieldLabel()}>{pm.urlLabel}</span>
-          <input value={settings.org} onChange={setField("org")} placeholder={pm.urlPlaceholder} style={fieldInput()} />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={fieldLabel()}>{pm.tokenLabel}</span>
-          <input type="password" value={settings.pat} onChange={setField("pat")} placeholder={settings.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} style={fieldInput()} />
-        </label>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: "11px" }}>
-        <button onClick={(e) => { fireBoltFromEvent(e); testConnection(); }} disabled={connTest.status === "testing"} style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), cursor: connTest.status === "testing" ? "default" : "pointer" }}>
-          {connTest.status === "testing" ? <LoadingRing size={13} /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h7l-1 8 10-12h-7z" /></svg>}
-          Test connection
-        </button>
-        {connTest.status !== "idle" && connTest.status !== "testing" && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
-            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: connTest.status === "ok" ? COLORS.success : COLORS.danger, boxShadow: "0 0 8px " + (connTest.status === "ok" ? COLORS.success : COLORS.danger), flex: "0 0 auto" }} />
-            {connTest.message}
-          </span>
-        )}
-      </div>
       <span style={hint}>
         Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project.
       </span>
@@ -392,7 +554,7 @@ export default function SettingsPage() {
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 1, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Settings" kicker="D-AGENT · CONFIGURATION" icon={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>} />
         <div style={{ flex: 1 }} />
         <ProviderBadge provider={pm.id} />

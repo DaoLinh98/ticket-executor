@@ -56,3 +56,20 @@ export const DEFAULT_PROVIDER: ProviderId = "azure-devops";
 export function providerMeta(id: string | undefined): ProviderMeta {
   return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0];
 }
+
+/** What a connection is called in the picker: the operator's own name when they
+ *  gave one, otherwise the organization the URL names ("dev.azure.com/acme" →
+ *  "acme", "github.com/owner/repo" → "owner/repo"). */
+export function connectionLabel(conn: { label?: string; org?: string }): string {
+  const label = (conn.label ?? "").trim();
+  if (label) return label;
+  const org = (conn.org ?? "").trim().replace(/\/+$/, "");
+  if (!org) return "Not configured";
+  try {
+    const u = new URL(org);
+    const path = u.pathname.replace(/^\/+|\/+$/g, "");
+    return path || u.hostname;
+  } catch {
+    return org;
+  }
+}

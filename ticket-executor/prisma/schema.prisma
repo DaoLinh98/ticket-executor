@@ -68,14 +68,30 @@ model Setting {
   updatedAt      DateTime @updatedAt
 }
 
-// Per-provider connection credentials (org/repo URL + PAT, encrypted at rest).
-// Keyed by ProviderId so switching providers in Settings remembers each one's
-// own saved values instead of overwriting a single shared pair.
+// One connection to one organization (org/repo URL + PAT, encrypted at rest).
+//
+// A provider holds as many of these as the operator works with — one ADO
+// organization per client, say — and exactly one of them is `isActive`, which
+// is the one every consumer runs as (`resolveCredential()`). Switching the
+// active row in the header re-points ticket, project, sprint and review loading
+// at that organization without touching a single call site.
 model ProviderCredential {
-  provider  String   @id // azure-devops | github | jira | gitlab
+  id        String   @id @default(cuid())
+  provider  String // azure-devops | github | jira | gitlab
+  // Operator-given name for the connection. Empty falls back to the name
+  // derived from the URL (`connectionLabel()` in lib/providers.ts).
+  label     String   @default("")
   org       String   @default("")
   pat       String   @default("")
+  // The connection this provider currently runs as. At most one true per
+  // provider — `setActiveConnection()` clears the others in the same
+  // transaction that sets this one.
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([provider, org])
+  @@index([provider])
 }
 
 // One execution of one graph against one ticket. A Run owns no agent output of
@@ -92,6 +108,11 @@ model Run {
   // Persisted per-run so the dashboard can group/filter by provider (the global
   // Setting.provider only reflects the current selection, not each run's).
   provider     String    @default("")
+  // The organization URL the run authenticated against, snapshotted from the
+  // active ProviderCredential. Persisted for the same reason as `provider`: the
+  // dashboard scopes history to the organization the header is switched to, and
+  // the active connection only says which one that is *now*.
+  org          String    @default("")
   project      String
   // The project's real working copy, and the worktree the run actually executes
   // in. They are equal when the run was not isolated (single-ticket mode).
@@ -249,6 +270,7 @@ model BlockedAttempt {
   id          String   @id @default(cuid())
   ticketId    String
   provider    String   @default("")
+  org         String   @default("")
   projectName String   @default("")
   // root-repo | agent-access        — preflight refused it
   // duplicate-ticket                — that ticket already has a run in flight

@@ -12,8 +12,13 @@ export type Ticket = {
   // links, pasted screenshots). Flattening them to lines lost the structure the
   // requirement was written in. Producers must pass provider HTML through
   // `sanitizeHtml()` (lib/richText.ts) — never assign raw provider markup here.
-  description: string;
-  criteria: string; // acceptance criteria, as one rich-text block
+  //
+  // `undefined` means *not loaded yet*, which is not the same claim as an empty
+  // description: a provider that carries the text in its list response (GitHub)
+  // fills both in, and one that does not (Azure DevOps) leaves them absent until
+  // the ticket is opened. The distinction is what tells the UI whether to fetch.
+  description?: string;
+  criteria?: string; // acceptance criteria, as one rich-text block
   url: string; // deep link to the ticket in ADO/GitHub
   // The team's own sizing of this ticket, snapshotted onto a run so the dashboard
   // can compare "what we thought it would take" against what the agent spent.

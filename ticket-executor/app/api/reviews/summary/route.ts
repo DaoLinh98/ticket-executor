@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { latestPrUrls, loadReviewsSummary, normalizeProvider } from "@/lib/tickets";
-import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,17 +42,10 @@ export async function GET(req: Request) {
   const reviewable = reviewableParam === null ? new Set(ids) : new Set(idList(reviewableParam));
 
   try {
-    const [setting, prUrls] = await Promise.all([
-      prisma.setting.findUnique({ where: { id: "default" } }),
-      latestPrUrls(provider, ids),
-    ]);
-    const personalFilter =
-      setting && setting.scope === "personal"
-        ? { scope: "personal" as const, account: setting.personalAccount }
-        : undefined;
+    const prUrls = await latestPrUrls(provider, ids);
 
     const candidates = ids.filter((id) => reviewable.has(id) || prUrls.has(id));
-    const result = await loadReviewsSummary(provider, candidates, personalFilter, prUrls);
+    const result = await loadReviewsSummary(provider, candidates, prUrls);
     return NextResponse.json({
       reviews: result.reviews,
       degraded: result.degraded,

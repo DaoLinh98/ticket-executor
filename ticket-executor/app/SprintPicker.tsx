@@ -28,6 +28,7 @@ export default function SprintPicker({
   onSelect,
   leading = defaultLeading,
   currentName = "",
+  align = "left",
 }: {
   label: string;
   options: IterationOption[];
@@ -39,6 +40,9 @@ export default function SprintPicker({
    *  iteration sub-trees really does have several sprints spanning today, and
    *  badging all of them says "current" about sprints the app is not on. */
   currentName?: string;
+  /** Which edge the panel hangs from. "right" for a picker near the window's
+   *  right edge, where a left-aligned panel would open off screen. */
+  align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -94,7 +98,7 @@ export default function SprintPicker({
           style={{
             position: "absolute",
             top: "calc(100% + 10px)",
-            left: 0,
+            ...(align === "right" ? { right: 0 } : { left: 0 }),
             zIndex: 40,
             animation: "fadeUp .16s ease-out both",
             ...dropdownPanelStyle({ minWidth: "230px", maxHeight: "340px" }),

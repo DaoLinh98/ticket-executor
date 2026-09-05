@@ -2,7 +2,7 @@ import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, Revi
 import {
   adoCreds, getScopedTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
-  getWorkItemState, listIterations,
+  getWorkItemState, listIterations, getWorkItemDetail,
   type ProjectInfo,
 } from "./ado";
 import {
@@ -24,29 +24,6 @@ export type TicketLoadResult = {
   truncated?: boolean;
 };
 
-// "personal" scope config: only tickets assigned to (and PRs authored by) this
-// account are shown. Provider-agnostic — matched against whatever identifier
-// each provider's ticket/PR data exposes (display name, email, or login).
-export type PersonalFilter = { scope: "team" | "personal"; account: string };
-
-// Loose, case-insensitive match: exact match on either identifier, or one
-// contains the other (handles "sara.lin@company.com" vs "Sara Lin" style
-// mismatches without requiring an exact provider-specific identifier).
-function matchesAccount(candidates: Array<string | undefined>, account: string): boolean {
-  const needle = account.trim().toLowerCase();
-  if (!needle) return true; // no account configured yet — don't filter anything out
-  return candidates.some((c) => {
-    const v = (c ?? "").trim().toLowerCase();
-    if (!v) return false;
-    return v === needle || v.includes(needle) || needle.includes(v);
-  });
-}
-
-function applyPersonalFilter(tickets: Ticket[], filter?: PersonalFilter): Ticket[] {
-  if (!filter || filter.scope !== "personal" || !filter.account.trim()) return tickets;
-  return tickets.filter((t) => matchesAccount([t.assignee, t.assigneeEmail], filter.account));
-}
-
 // Dispatch ticket loading by provider. Azure DevOps is fully wired; the other
 // providers are scaffolded — they return a graceful empty result rather than
 // throwing, so the UI can show a "not connected yet" state.
@@ -54,7 +31,6 @@ export async function loadTickets(
   provider: ProviderId,
   project?: string,
   sprintOverride?: string,
-  personalFilter?: PersonalFilter,
   scope: TicketScope = "sprint"
 ): Promise<TicketLoadResult> {
   switch (provider) {
@@ -75,7 +51,7 @@ export async function loadTickets(
       // apply to a sprint fetch, because a backlog item and most of a board sit
       // outside the iteration the sprint query is bounded by.
       const { tickets, sprintName, truncated } = await getScopedTickets(project, scope, sprintOverride);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: sprintName, connected: true, truncated };
+      return { tickets, sprint: sprintName, connected: true, truncated };
     }
     case "github": {
       const creds = await githubCreds();
@@ -94,7 +70,7 @@ export async function loadTickets(
         };
       }
       const tickets = await getGithubIssues(creds.url, creds.token);
-      return { tickets: applyPersonalFilter(tickets, personalFilter), sprint: parseRepoLabel(creds.url), connected: true };
+      return { tickets, sprint: parseRepoLabel(creds.url), connected: true };
     }
     case "jira":
     case "gitlab":
@@ -132,6 +108,22 @@ export async function loadProjects(provider: ProviderId): Promise<ProjectLoadRes
     default:
       return { projects: [], connected: false, notice: `${labelFor(provider)} does not expose a project list yet.` };
   }
+}
+
+/**
+ * The rich-text fields for one ticket — description and acceptance criteria.
+ *
+ * They are not in the list payload for Azure DevOps (see `TICKET_FIELDS`), so
+ * the UI asks for them when a ticket is opened. GitHub already carries both in
+ * its issue list, so it has nothing left to fetch and returns them unset — the
+ * caller keeps what it has rather than overwriting good text with blanks.
+ */
+export async function loadTicketDetail(
+  provider: ProviderId,
+  id: string
+): Promise<{ description: string; criteria: string } | null> {
+  if (provider === "azure-devops") return getWorkItemDetail(id);
+  return null;
 }
 
 // Load the discussion comments for a single ticket. Only Azure DevOps is wired;
@@ -376,7 +368,6 @@ export type ReviewsSummaryResult = {
 export async function loadReviewsSummary(
   provider: ProviderId,
   ticketIds: string[],
-  personalFilter?: PersonalFilter,
   prUrls?: Map<string, string>
 ): Promise<ReviewsSummaryResult> {
   if (!ticketIds.length) return { reviews: [], degraded: false };
@@ -409,8 +400,6 @@ export async function loadReviewsSummary(
     // four-call resolution on every poll for the rest of its life.
     if (review.pr?.url) resolved.push({ ticketId: id, prUrl: review.pr.url });
     if (!review.pr || review.unresolvedCount === 0) continue;
-    // Personal scope: only surface notifications for PRs this account authored.
-    if (personalFilter?.scope === "personal" && personalFilter.account.trim() && !matchesAccount([review.pr.author], personalFilter.account)) continue;
     const latest = [...review.comments].reverse().find((c) => c.status === "open");
     entries.push({
       ticketId: id,

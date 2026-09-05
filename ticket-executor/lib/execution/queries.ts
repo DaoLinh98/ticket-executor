@@ -411,6 +411,13 @@ const isHumanEnded = (endReason: string) => endReason === "cancelled" || endReas
  *  rows, neither of which is selected here. */
 export async function dashboardMetrics(filter?: {
   provider?: string;
+  /** Organization URL of the active connection, and the provider it belongs to.
+   *  History belongs to the organization it was run against, so the dashboard
+   *  follows the header's organization switch the way every provider-backed page
+   *  does — but only over that provider's own runs: an Azure DevOps organization
+   *  says nothing about a GitHub run. */
+  org?: string;
+  orgProvider?: string;
   project?: string;
   /** Lookback window in days; 0 or undefined = all time. */
   days?: number;
@@ -422,7 +429,7 @@ export async function dashboardMetrics(filter?: {
     prisma.run.findMany({
       where: since ? { startedAt: { gte: since } } : undefined,
       select: {
-        id: true, ticketId: true, provider: true, project: true, skill: true, graphId: true,
+        id: true, ticketId: true, provider: true, org: true, project: true, skill: true, graphId: true,
         state: true, endReason: true, prUrl: true, model: true, effort: true,
         humanWaitMs: true, resumedAfterRestart: true, channels: true,
         filesTouched: true, linesAdded: true, linesDeleted: true, estimateHours: true,
@@ -431,10 +438,10 @@ export async function dashboardMetrics(filter?: {
     }),
     // Filter option lists must span ALL runs, not just the selected window —
     // otherwise narrowing the range hides the project you wanted to select.
-    prisma.run.findMany({ select: { provider: true, project: true }, distinct: ["provider", "project"] }),
+    prisma.run.findMany({ select: { provider: true, org: true, project: true }, distinct: ["provider", "org", "project"] }),
     prisma.blockedAttempt.findMany({
       where: since ? { createdAt: { gte: since } } : undefined,
-      select: { provider: true, projectName: true },
+      select: { provider: true, org: true, projectName: true },
     }),
     prisma.setting.findUnique({ where: { id: "default" }, select: { hourlyRateUsd: true } }),
     prisma.step.groupBy({
@@ -462,13 +469,27 @@ export async function dashboardMetrics(filter?: {
   });
 
   const providers = [...new Set(distinct.map((r) => r.provider).filter(Boolean))].sort();
-  const projects = [...new Set(distinct.map((r) => r.project).filter(Boolean))].sort();
+  // A run is in the selected organization when it targeted it, or when it
+  // belongs to a different provider entirely (that provider has its own
+  // organization, and this filter is not about it).
+  const inOrg = (rowProvider: string, rowOrg: string) =>
+    !filter?.org || rowProvider !== filter.orgProvider || rowOrg === filter.org;
+
+  const projects = [
+    ...new Set(distinct.filter((r) => inOrg(r.provider, r.org)).map((r) => r.project).filter(Boolean)),
+  ].sort();
 
   const scoped = rows.filter(
-    (r) => (!filter?.provider || r.provider === filter.provider) && (!filter?.project || r.project === filter.project)
+    (r) =>
+      (!filter?.provider || r.provider === filter.provider) &&
+      inOrg(r.provider, r.org) &&
+      (!filter?.project || r.project === filter.project)
   );
   const scopedBlocked = blocked.filter(
-    (b) => (!filter?.provider || b.provider === filter.provider) && (!filter?.project || b.projectName === filter.project)
+    (b) =>
+      (!filter?.provider || b.provider === filter.provider) &&
+      inOrg(b.provider, b.org) &&
+      (!filter?.project || b.projectName === filter.project)
   );
 
   const completed = scoped.filter((r) => r.state === "succeeded").length;
