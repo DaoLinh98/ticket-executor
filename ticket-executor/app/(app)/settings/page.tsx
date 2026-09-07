@@ -74,9 +74,9 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: ReactNo
 const mono: CSSProperties = { fontFamily: "var(--font-mono), monospace" };
 
 // One saved organization, as /api/connections reports it — never the token.
-type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean };
+type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean; identityEmail: string; identityName: string };
 // The row being added ("" id) or edited. Null = the list only.
-type ConnectionEditor = { id: string; label: string; org: string; pat: string; hasPat: boolean };
+type ConnectionEditor = { id: string; label: string; org: string; pat: string; hasPat: boolean; identityEmail: string; identityName: string };
 
 export default function SettingsPage() {
   const { fireBoltFromEvent } = useBoltsContext();
@@ -151,11 +151,11 @@ export default function SettingsPage() {
   // ---- organizations ----
   const startEdit = (c: Connection) => {
     setConnTest({ status: "idle", message: "" });
-    setEditor({ id: c.id, label: c.label, org: c.org, pat: "", hasPat: c.hasPat });
+    setEditor({ id: c.id, label: c.label, org: c.org, pat: "", hasPat: c.hasPat, identityEmail: c.identityEmail, identityName: c.identityName });
   };
   const startAdd = () => {
     setConnTest({ status: "idle", message: "" });
-    setEditor({ id: "", label: "", org: "", pat: "", hasPat: false });
+    setEditor({ id: "", label: "", org: "", pat: "", hasPat: false, identityEmail: "", identityName: "" });
   };
 
   /** Everything that reads a credential runs as the active organization, so a
@@ -190,7 +190,7 @@ export default function SettingsPage() {
       const r = await fetch("/api/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editor.id || undefined, provider: settings.provider, label: editor.label, org: editor.org, pat: editor.pat }),
+        body: JSON.stringify({ id: editor.id || undefined, provider: settings.provider, label: editor.label, org: editor.org, pat: editor.pat, identityEmail: editor.identityEmail, identityName: editor.identityName }),
       });
       const data = await r.json();
       if (!r.ok) { setError(data.error || "Failed to save the organization."); return; }
@@ -311,6 +311,11 @@ export default function SettingsPage() {
           {!c.hasPat && <span style={pill({ color: COLORS.warning, size: "xs", weight: 700 })}>NO TOKEN</span>}
         </div>
         <span style={{ ...mono, fontSize: FONT.sm, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.org}</span>
+        {(c.identityEmail || c.identityName) && (
+          <span style={{ fontSize: FONT.sm, color: COLORS.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {c.identityName || c.identityEmail}{c.identityName && c.identityEmail ? ` · ${c.identityEmail}` : ""}
+          </span>
+        )}
       </div>
       {!c.isActive && (
         <button
@@ -340,23 +345,6 @@ export default function SettingsPage() {
           <span style={fieldLabel()}>PROVIDER</span>
           <div style={{ ...card({ padding: "0 13px", background: "#0E1015" }), height: "40px", display: "flex", alignItems: "center" }}>
             <SelectMenu value={pm.name} onChange={onProviderChange} options={PROVIDERS.map((p) => p.name)} ariaLabel="Provider" />
-          </div>
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={fieldLabel()}>SCOPE</span>
-          <div style={{ display: "flex", gap: "8px" }}>
-            {(["team", "personal"] as const).map((sc) => {
-              const active = settings.scope === sc;
-              return (
-                <button
-                  key={sc}
-                  onClick={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, scope: sc })); }}
-                  style={{ flex: 1, height: "40px", fontSize: FONT.base, fontWeight: 700, cursor: "pointer", textTransform: "capitalize", color: active ? "#F3F5F9" : COLORS.textDim, ...(active ? ringBorder({ fill: "#171A21", duration: 3.4, cornerPx: 7 }) : { border: "1.5px solid #262B36", background: "#0E1015", clipPath: clipCorner(7) }) }}
-                >
-                  {sc}
-                </button>
-              );
-            })}
           </div>
         </label>
       </div>
@@ -401,6 +389,21 @@ export default function SettingsPage() {
             <span style={fieldLabel()}>{pm.tokenLabel}</span>
             <input type="password" value={editor.pat} onChange={(e) => setEditor({ ...editor, pat: e.target.value })} placeholder={editor.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} autoComplete="new-password" style={fieldInput()} />
           </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span style={fieldLabel()}>MY EMAIL HERE (OPTIONAL)</span>
+              <input value={editor.identityEmail} onChange={(e) => setEditor({ ...editor, identityEmail: e.target.value })} placeholder="ken.nguyen@emesoft.net" autoComplete="off" style={fieldInput()} />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span style={fieldLabel()}>MY DISPLAY NAME HERE</span>
+              <input value={editor.identityName} onChange={(e) => setEditor({ ...editor, identityName: e.target.value })} placeholder="Ken Nguyen" autoComplete="off" style={fieldInput()} />
+            </label>
+          </div>
+          <span style={hint}>
+            The account this organization hands work to. Work items are assigned per organization, so this is
+            stored per organization rather than once for the app. Leave it empty and nothing filters by you.
+          </span>
 
           <div style={{ display: "flex", alignItems: "center", gap: "11px", flexWrap: "wrap" }}>
             <button onClick={(e) => { fireBoltFromEvent(e); testConnection(); }} disabled={connTest.status === "testing"} style={{ ...ctaButtonStyle("outline", { height: "30px", cornerPx: 7 }), cursor: connTest.status === "testing" ? "default" : "pointer" }}>

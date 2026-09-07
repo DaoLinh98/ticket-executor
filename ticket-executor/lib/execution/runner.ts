@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
@@ -18,6 +18,38 @@ import { store } from "./store";
 export type { GateAction };
 
 // ---- repo hygiene ----
+
+/** Instruction files a run reads but git will not carry into a worktree.
+ *
+ *  `git worktree add` materialises tracked files only. A repo that keeps its
+ *  CLAUDE.md / KNOWLEDGE.md untracked or gitignored — which is the normal case for
+ *  a client repo nobody wants agent files committed into — hands an isolated run
+ *  an empty tree of guidance, and the agent rediscovers the layout from scratch
+ *  every time. Copying is best-effort and never overwrites: a file the worktree
+ *  already has is the tracked one, which wins.
+ *
+ *  Only isolated runs need this. A single-ticket run executes in rootRepo itself
+ *  and already sees every one of these files.
+ */
+const CONTEXT_FILES = ["CLAUDE.md", "AGENTS.md", "KNOWLEDGE.md", path.join(".claude", "CLAUDE.md")];
+
+function carryRepoContext(rootRepo: string, worktree: string): string[] {
+  const copied: string[] = [];
+  for (const rel of CONTEXT_FILES) {
+    try {
+      const src = path.join(rootRepo, rel);
+      const dst = path.join(worktree, rel);
+      if (!existsSync(src) || existsSync(dst)) continue;
+      mkdirSync(path.dirname(dst), { recursive: true });
+      copyFileSync(src, dst);
+      copied.push(rel);
+    } catch {
+      /* one unreadable file costs the run some tokens, it does not stop it */
+    }
+  }
+  return copied;
+}
+
 
 // The run writes two things into the developer's repo that must never reach a
 // commit: the plan-gate contract (`.te/`) and the isolated worktrees
@@ -264,8 +296,8 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // failing an admitted run over.
   try {
     await prisma.rootRepoProjectMap.upsert({
-      where: { project },
-      create: { project, rootRepo },
+      where: { provider_org_project: { provider, org, project } },
+      create: { provider, org, project, rootRepo },
       update: { rootRepo },
     });
   } catch {
@@ -340,6 +372,10 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
       live.ctx.cwd = wt;
       live.logLines.push({ text: `● Isolated worktree ${wt}`, kind: "step" });
+      const carried = carryRepoContext(rootRepo, wt);
+      if (carried.length) {
+        live.logLines.push({ text: `● Carried repo context into the worktree: ${carried.join(", ")}`, kind: "step" });
+      }
     } catch (e) {
       await finish(
         live,

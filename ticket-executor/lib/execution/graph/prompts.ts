@@ -3,6 +3,27 @@ import type { RunContext } from "./types";
 // The ticket is addressed by its provider URL when we know it: a URL names the
 // org/project/work item unambiguously, so the skill can open it directly instead
 // of searching the tracker for an id that several projects may share.
+/**
+ * Why every pull request this app opens starts as a draft.
+ *
+ * Opening a pull request is what notifies a reviewer, so opening it *is*
+ * publishing. The agent works ahead — through the night, through a weekend,
+ * several tickets deep — and if each finished ticket announced itself the moment
+ * it was done, a reviewer would receive a fortnight of work in two days and
+ * review none of it properly.
+ *
+ * So the two are separated: the agent finishes and parks the work in draft, and
+ * the harness publishes it on the day the sprint plan says (`lib/execution/
+ * release.ts`), assigning the reviewers and moving the work item then. The agent
+ * is told not to assign reviewers for the same reason it is told not to publish —
+ * both are the reviewer's notification, and neither belongs to the node.
+ */
+export const DRAFT_RULE =
+  "Open it as a DRAFT pull request and leave it as one — do NOT mark it ready for review, and do NOT add reviewers. " +
+  "This is not optional and it is not a limitation: the work is handed to a reviewer later, on a schedule, by the " +
+  "application itself. Report the draft state in your `isDraft` field. If a pull request already exists and is " +
+  "already published, leave it published and report `isDraft: false` rather than turning it back into a draft.\n";
+
 export function invokeSkill(c: RunContext, mode: string): string {
   const ticket = `Ticket: ${c.ticketUrl || c.ticketId}`;
   const target = c.prUrl ? `PR: ${c.prUrl} - ${ticket}` : ticket;
@@ -19,8 +40,17 @@ export function invokeSkill(c: RunContext, mode: string): string {
  * but is not deciding anything a repo convention bears on — it pushes a branch
  * that is already final.
  */
-export function openingPrompt(c: RunContext, mode: string): string {
-  return invokeSkill(c, mode) + c.knowledge;
+export function openingPrompt(c: RunContext, mode: string, opts: { opensPr?: boolean } = {}): string {
+  // The one-shot implement flow opens its pull request inside this same node —
+  // there is no separate publish prompt to carry the draft rule — so it is
+  // attached here instead. The graph says whether the node opens anything rather
+  // than this function inferring it from `mode`: the one-shot *review* flow
+  // shares both this prompt and that mode, and it opens nothing at all. It works
+  // on a pull request somebody else already published, so telling it to open a
+  // draft would be an instruction with no referent, and asking it for `isDraft`
+  // would ask for a field its contract does not declare.
+  const draft = opts.opensPr ? "\n\n" + DRAFT_RULE : "";
+  return invokeSkill(c, mode) + draft + c.knowledge;
 }
 
 // Resume prompts stay short: the session already holds the ticket and the
@@ -77,6 +107,7 @@ export function publishPrompt(c: RunContext): string {
     "Push the branch, then open the pull request. Check first whether one already exists for this branch and reuse " +
     "it if so, since this phase may be retried after a crash. Use `.te/plan.md` and `git log` for the PR title and " +
     "description — do not re-derive them by reading the source.\n" +
+    DRAFT_RULE +
     "Do not edit source, do not commit, do not re-verify, and do not review the diff."
   );
 }

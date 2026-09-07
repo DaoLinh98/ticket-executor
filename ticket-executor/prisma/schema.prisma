@@ -87,6 +87,20 @@ model ProviderCredential {
   // provider — `setActiveConnection()` clears the others in the same
   // transaction that sets this one.
   isActive  Boolean  @default(false)
+  // Who the developer *is* inside this organization. Work is handed out per
+  // organization account, so the same person is ken.nguyen@emesoft.net in one
+  // client's ADO and somebody else entirely in the next — which is why this
+  // cannot live on `Setting`: one global value would answer the question wrong
+  // the moment the header switches connection.
+  //
+  // Empty is a legitimate state: a connection used only for browsing a team's
+  // board needs no identity, and every consumer treats "no identity" as "do not
+  // filter" rather than as "match nobody".
+  //
+  // Email is the reliable key (`Ticket.assigneeEmail`); the display name is the
+  // fallback for providers and work items that only carry a name.
+  identityEmail String @default("")
+  identityName  String @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -299,11 +313,21 @@ model SavedOption {
 
 // Remembers which Root Repo a Project was last run with, so opening a
 // different ticket that shares the same Project auto-selects that Root Repo.
+//
+// Keyed by connection, not by project name alone. Project names are only unique
+// inside one organization, and two clients both having a project called "Web" is
+// ordinary — with a bare `project` key the second connection would silently
+// overwrite the first, and the scheduler would then check out the wrong clone at
+// two in the morning.
 model RootRepoProjectMap {
   id        String   @id @default(cuid())
-  project   String   @unique
+  provider  String   @default("")
+  org       String   @default("")
+  project   String
   rootRepo  String
   updatedAt DateTime @updatedAt
+
+  @@unique([provider, org, project])
 }
 
 // Which pull request a ticket's review lives on, once anything has resolved it.
@@ -374,4 +398,162 @@ model KnowledgeNote {
 
   @@unique([rootRepo, fingerprint])
   @@index([rootRepo, active])
+}
+
+// One triage turn over one developer's slice of one sprint.
+//
+// Not a Run: triage writes nothing — no file, no comment, no story point — so it
+// has no worktree, no branch and nothing for admission control to protect. What
+// it keeps from a run is the part that matters, a declared output contract, so
+// the answer is data the planner acts on rather than a table a human retypes.
+//
+// Persisted rather than held in memory because the plan built from it is acted
+// on for a fortnight: "why is #123 marked blocked" must stay answerable long
+// after the turn's log is gone.
+model SprintTriage {
+  id            String   @id @default(cuid())
+  provider      String
+  org           String
+  project       String
+  sprint        String
+  // Whose slice was triaged. Two developers on one sprint are two triages.
+  identityEmail String   @default("")
+  // Exactly the work items the turn was told to review. Kept so a result can be
+  // read back without re-deriving which tickets were in the sprint that day.
+  ticketIds     String[]
+  status        String   @default("running") // running | succeeded | failed
+  // The validated structured output (see TRIAGE_OUTPUT in lib/execution/triage.ts).
+  result        Json     @default("{}")
+  errorMessage  String   @default("")
+  costUsd       Float    @default(0)
+  createdAt     DateTime @default(now())
+  endedAt       DateTime?
+
+  @@index([provider, org, project, sprint])
+}
+
+// The developer's plan for one sprint: the queue the agent works through, and
+// the calendar its finished work is revealed on.
+//
+// Persisted rather than recomputed on every page load, because the scheduler
+// acts on it unattended. Three weeks later "why did it run #123 on Tuesday" has
+// to be answerable from a row, not by re-running an algorithm over data that has
+// since changed — the same reason BlockedAttempt exists.
+//
+// A plan is `draft` until a human activates it. Nothing is ever scheduled from a
+// draft: the step after activation spends money and writes to the tracker.
+model SprintPlan {
+  id            String   @id @default(cuid())
+  provider      String
+  org           String
+  project       String
+  sprint        String
+  identityEmail String   @default("")
+  status        String   @default("draft") // draft | active | archived
+  // The iteration window the calendar was laid out on, snapshotted: a provider
+  // that shifts a sprint's dates must not silently re-date an active plan.
+  startDate     String   @default("")
+  finishDate    String   @default("")
+  // The pace this plan was built with, snapshotted for the same reason — the
+  // Settings values may move on, and an active plan keeps the shape it was
+  // approved on.
+  pointsPerDay     Float @default(2)
+  hoursPerDay      Float @default(8)
+  hoursPerPoint    Float @default(4)
+  maxTicketsPerDay Int   @default(0)
+  // Whether this plan was built from the developer's assigned work wherever it
+  // lives (board, backlog, an earlier iteration) or from the iteration alone.
+  // Stored rather than re-decided per read: the scheduler re-reads ownership on
+  // every tick and must ask the same question the plan was approved on, or a
+  // ticket the plan legitimately contains reads as one that left the sprint.
+  includeWider  Boolean  @default(true)
+  // The two halves of automation, separately switchable on purpose: working
+  // ahead is cheap to undo (a branch nobody has seen), while releasing is
+  // outward-facing (a reviewer is notified, a work item changes state). A
+  // developer who wants the agent to work overnight but wants to press the
+  // button on what reaches their reviewer sets exactly that.
+  autoImplement Boolean  @default(false)
+  autoRelease   Boolean  @default(false)
+  // Reviewers every pull request from this plan is assigned when it is released.
+  // Held per plan rather than per ticket: the team a sprint is delivered to is
+  // the same team all fortnight.
+  reviewers     String[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         PlannedTicket[]
+
+  @@unique([provider, org, project, sprint, identityEmail])
+}
+
+// One ticket's place in a plan, and what has actually happened to it.
+//
+// The two schedules are two columns and neither is derived from the other:
+// `implementOrder` is a queue the agent works down as fast as the machine
+// allows, `releaseDay` is a calendar a reviewer receives work on.
+//
+// The release half is three booleans rather than one `released` flag because the
+// three provider writes can diverge — a draft can be published while assigning a
+// reviewer fails — and a single flag would record that as either a success or a
+// failure, both of which would be wrong.
+model PlannedTicket {
+  id             String     @id @default(cuid())
+  planId         String
+  plan           SprintPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  ticketId       String
+  title          String     @default("")
+  implementOrder Int        @default(0)
+  points         Float      @default(0)
+  estimateHours  Float      @default(0)
+  // ISO working day (YYYY-MM-DD). Empty means the pace never reached this ticket
+  // inside the sprint — a finding, not a rounding error.
+  releaseDay     String     @default("")
+  // Triage said a person has to answer something first. Planned and counted, but
+  // never eligible for an automatic run.
+  blocked        Boolean    @default(false)
+  // Where the developer's claim on this ticket stands — see `lib/sprintClaim.ts`.
+  // mine | handed-off | dropped. The row outlives the assignment that created
+  // it: a ticket moved to QA under somebody else's name is still part of the
+  // sprint the developer delivered, and deleting it would make a good sprint
+  // report as a quiet one.
+  claim          String     @default("mine")
+  assigneeNow    String     @default("")
+  implementState String     @default("pending") // pending | running | implemented | failed | skipped
+  // The run that implemented it, when one has.
+  runId          String     @default("")
+  prUrl          String     @default("")
+  // ---- release: one column per provider write ----
+  prPublished    Boolean    @default(false)
+  reviewersSet   Boolean    @default(false)
+  statusMoved    Boolean    @default(false)
+  releasedAt     DateTime?
+  releaseError   String     @default("")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([planId, ticketId])
+  @@index([releaseDay])
+  @@index([claim])
+}
+
+// Every decision the scheduler made, including the ones to do nothing.
+//
+// Same reasoning as BlockedAttempt: an automatic system is only debuggable if
+// its refusals are as visible as its actions. "Why did nothing run last night"
+// is answered by rows saying which ticket was considered and what stopped it —
+// never by the server's console output, which is gone by morning.
+model AutomationEvent {
+  id        String   @id @default(cuid())
+  planId    String   @default("")
+  ticketId  String   @default("")
+  action    String   // implement | release
+  outcome   String   // started | done | skipped | failed
+  // Short machine-readable cause: blocked-by-triage, not-due, already-running,
+  // admission-refused, no-pr, provider-error, …
+  reason    String   @default("")
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([planId])
 }

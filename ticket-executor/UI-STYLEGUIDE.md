@@ -48,7 +48,9 @@ component.
 | `clipCorner(6\|7\|8)` | Just the corner-cut clip-path token (`var(--te-clip-N)`). No 4th size. |
 | `ringBorder(opts)` | The spinning conic-gradient "energy ring". `variant: "outline"` (4-stop, dark fill) vs `"filled"` (3-stop sheen, accent fill). `shape: "pill" \| "clip" \| "none"`. |
 | `card(opts?)` / `tintedCard(tone, opts?)` | Neutral bordered container / color-tinted banner (`success \| danger \| warning \| accent`). |
+| `tintFill(tone)` | Just the tint's fill, for a row highlighted rather than boxed (a list row inside an already-bordered panel). |
 | `modalShellStyle(opts?)` | Full-screen modal panel shell (`DiffModal`, `CommitFilesModal`). |
+| `modalOverlayStyle(opts?)` | The scrim + blur + fade-in sheet a modal panel centres on. Pair with `modalShellStyle()`. |
 | `logoText(fontSize)` | The animated fire-gradient wordmark — pass only the size. |
 | `fieldLabel()` / `fieldInput(opts?)` | Form input caption / dark inset input chrome. |
 | `sectionCaption()` | Uppercase caption over read-only content in a detail pane. One step smaller than `fieldLabel()`. |
@@ -67,7 +69,7 @@ component.
 - No inline `linear-gradient(...) padding-box, conic-gradient(...) border-box` — `ringBorder(...)`.
 - No inline `clipPath: "polygon(...)"` — `clipCorner(px)`.
 - No inline container border/background triples — `card(...)` / `tintedCard(...)`.
-- No inline modal shell — `modalShellStyle(...)`. No inline wordmark — `logoText(...)`.
+- No inline modal shell — `modalShellStyle(...)`, on a `modalOverlayStyle(...)` sheet. No inline wordmark — `logoText(...)`.
 - No raw hex for accent/success/danger/warning/info — `COLORS.*`.
 - No bespoke CSS spinner or text-only "Loading…" — `LoadingRing`.
 - No bespoke click/ripple effect and no other color for it — `useBoltsContext()`.

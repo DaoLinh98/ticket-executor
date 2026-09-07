@@ -32,6 +32,8 @@ export async function POST(req: Request) {
     label: clean(typeof body.label === "string" ? body.label : ""),
     org,
     pat: typeof body.pat === "string" ? body.pat.trim() : "",
+    identityEmail: clean(typeof body.identityEmail === "string" ? body.identityEmail : ""),
+    identityName: clean(typeof body.identityName === "string" ? body.identityName : ""),
   });
   // The generated MCP config is built from this credential, so a cached "MCP is
   // fine" verdict no longer describes the setup a run would get.

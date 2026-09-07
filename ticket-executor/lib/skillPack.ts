@@ -26,6 +26,7 @@ export const REQUIRED_SKILLS = [
  *  unknown slash command a turn later. */
 export const OPTIONAL_SKILLS = [
   "review-changes-v1", // the `evaluate` node — Setting.evaluateBeforePublish
+  "triage-sprint-v1", // My Sprint's triage turn — invoked by hand, never by a run
 ] as const;
 
 /** Every skill this repo ships a copy of. */

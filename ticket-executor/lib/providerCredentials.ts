@@ -11,12 +11,16 @@
 
 import { prisma } from "@/lib/prisma";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { NO_IDENTITY, type DevIdentity } from "@/lib/identity";
 
 export type ResolvedCredential = {
   /** Organization / base URL, the shape `parseAdoUrl()` accepts. */
   org: string;
   /** Decrypted PAT. Empty when nothing usable is configured. */
   pat: string;
+  /** Who the developer is inside this organization. Empty fields mean the
+   *  connection has no identity configured — not that it matches nobody. */
+  identity: DevIdentity;
 };
 
 /** A connection as a page is allowed to see it — never the token itself. */
@@ -27,10 +31,13 @@ export type ConnectionView = {
   org: string;
   hasPat: boolean;
   isActive: boolean;
+  identityEmail: string;
+  identityName: string;
 };
 
 const view = (c: {
   id: string; provider: string; label: string; org: string; pat: string; isActive: boolean;
+  identityEmail: string; identityName: string;
 }): ConnectionView => ({
   id: c.id,
   provider: c.provider,
@@ -38,6 +45,8 @@ const view = (c: {
   org: c.org,
   hasPat: c.pat.length > 0,
   isActive: c.isActive,
+  identityEmail: c.identityEmail,
+  identityName: c.identityName,
 });
 
 /** Every connection saved for `provider`, oldest first — the order the picker
@@ -80,8 +89,12 @@ export async function activeConnection(provider: string): Promise<ConnectionView
  */
 export async function resolveCredential(provider: string): Promise<ResolvedCredential> {
   const row = await activeRow(provider);
-  if (!row) return { org: "", pat: "" };
-  return { org: row.org, pat: decryptSecret(row.pat) };
+  if (!row) return { org: "", pat: "", identity: NO_IDENTITY };
+  return {
+    org: row.org,
+    pat: decryptSecret(row.pat),
+    identity: { email: row.identityEmail, name: row.identityName },
+  };
 }
 
 /** One specific connection's credential, for the connection test: testing the
@@ -90,7 +103,11 @@ export async function resolveCredential(provider: string): Promise<ResolvedCrede
 export async function connectionCredential(id: string): Promise<ResolvedCredential | null> {
   const row = await prisma.providerCredential.findUnique({ where: { id } });
   if (!row) return null;
-  return { org: row.org, pat: decryptSecret(row.pat) };
+  return {
+    org: row.org,
+    pat: decryptSecret(row.pat),
+    identity: { email: row.identityEmail, name: row.identityName },
+  };
 }
 
 /** Make `id` the connection this provider runs as. A no-op for an id that is
@@ -119,10 +136,14 @@ export async function saveConnection(input: {
   label: string;
   org: string;
   pat: string;
+  identityEmail: string;
+  identityName: string;
 }): Promise<ConnectionView> {
-  const data: { label: string; org: string; pat?: string } = {
+  const data: { label: string; org: string; identityEmail: string; identityName: string; pat?: string } = {
     label: input.label,
     org: input.org,
+    identityEmail: input.identityEmail,
+    identityName: input.identityName,
   };
   if (input.pat.length > 0) data.pat = encryptSecret(input.pat);
 

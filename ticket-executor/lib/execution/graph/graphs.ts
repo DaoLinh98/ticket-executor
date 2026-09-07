@@ -282,7 +282,9 @@ function oneShotGraph(review: boolean): Graph {
         label: review ? "Resolve review" : "Implement & open PR",
         effects: "external",
         context: "fresh",
-        prompt: (c) => openingPrompt(c, ""),
+        // Only the implement flow opens a pull request here; the review flow
+        // answers threads on one that already exists and is already published.
+        prompt: (c) => openingPrompt(c, "", { opensPr: !review }),
         output: (review ? REVIEW_ONESHOT_OUTPUT : ONESHOT_OUTPUT) as unknown as Record<string, unknown>,
       },
     },

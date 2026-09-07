@@ -29,6 +29,7 @@
   --te-app-bg: #06070A;
   --te-inset-bg: #0E1015;   /* inputs, code blocks, dropdown panels */
   --te-modal-bg: #14171D;   /* modal + toast shells */
+  --te-scrim: rgba(6,7,9,.72); /* the dimmed sheet a modal sits on */
 
   /* shape */
   --te-clip-6: polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);

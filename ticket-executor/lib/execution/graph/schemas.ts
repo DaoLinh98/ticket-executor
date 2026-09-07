@@ -170,9 +170,13 @@ export const PUBLISH_OUTPUT = {
       type: "boolean",
       description: "True if a PR already existed for this branch and you reused it instead of creating one.",
     },
+    isDraft: {
+      type: "boolean",
+      description: "True if the pull request is in draft state. The harness publishes it later, on the sprint plan's release day.",
+    },
     blocked: BLOCKED,
   },
-  required: ["pushed", "prUrl", "linked", "reusedExisting", "blocked"],
+  required: ["pushed", "prUrl", "linked", "reusedExisting", "isDraft", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -188,10 +192,14 @@ export const ONESHOT_OUTPUT = {
     pushed: { type: "boolean" },
     prUrl: { type: "string" },
     linked: { type: "boolean" },
+    isDraft: {
+      type: "boolean",
+      description: "True if the pull request is in draft state. The harness publishes it later, on the sprint plan's release day.",
+    },
     lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["committed", "branch", "summary", "verification", "pushed", "prUrl", "linked", "lessons", "blocked"],
+  required: ["committed", "branch", "summary", "verification", "pushed", "prUrl", "linked", "isDraft", "lessons", "blocked"],
   additionalProperties: false,
 } as const;
 

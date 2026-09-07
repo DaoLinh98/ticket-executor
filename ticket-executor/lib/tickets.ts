@@ -1,8 +1,8 @@
-import type { CommitFile, CommitSummary, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
+import type { CommitFile, CommitSummary, PullRequestBrief, Ticket, TicketActivity, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
-  adoCreds, getScopedTickets, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  adoCreds, getScopedTickets, getMyOpenWorkItems, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
-  getWorkItemState, listIterations, getWorkItemDetail,
+  getWorkItemState, listIterations, getWorkItemDetail, listActivePullRequests, listRecentTicketActivity,
   type ProjectInfo,
 } from "./ado";
 import {
@@ -10,6 +10,7 @@ import {
   getGithubPullRequestCommits, getGithubCommitFiles,
 } from "./github";
 import { prisma } from "./prisma";
+import { hasIdentity, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
 import type { TicketScope } from "./ticketScope";
@@ -83,6 +84,72 @@ export async function loadTickets(
     default:
       return { tickets: [], sprint: "", connected: false, notice: "Unknown provider." };
   }
+}
+
+/**
+ * The developer's sprint, widened to wherever their assigned work actually is.
+ *
+ * Two reads, and they answer two different questions:
+ *
+ * - `sprintTickets` is the whole team's iteration, every state included. The
+ *   claim rules need it unfiltered: only a ticket still sitting in the iteration
+ *   under somebody else's name distinguishes "handed to QA" from "moved out".
+ * - `outside` is the developer's own open work that the iteration does not
+ *   contain — an unscheduled backlog item, or a card still parked in an earlier
+ *   sprint. This is the flexibility the Ticket Execution screen already has
+ *   through its Backlog and Board tabs, applied to one person's work instead of
+ *   the project's.
+ *
+ * `tickets` is the union, iteration rows winning a duplicate: the iteration
+ * fetch is the more authoritative read of a ticket that is in both.
+ *
+ * The widening is Azure DevOps only, and silently skipped elsewhere. GitHub
+ * issues carry no iteration, so "outside the sprint" has no meaning there and
+ * every issue would come back as out-of-sprint work.
+ */
+export type MySprintLoad = TicketLoadResult & {
+  /** The iteration on its own — what "N of the team's M tickets" counts. */
+  sprintTickets: Ticket[];
+  /** The developer's open tickets found outside the iteration. */
+  outside: Ticket[];
+  /** Whether the wider search actually ran. False when it was switched off, when
+   *  the provider does not support it, or when no identity is configured — the
+   *  page says which rather than showing an unexplained short list. */
+  widened: boolean;
+};
+
+export async function loadMySprintTickets(
+  provider: ProviderId,
+  project: string | undefined,
+  sprintOverride: string | undefined,
+  identity: DevIdentity,
+  includeWider: boolean
+): Promise<MySprintLoad> {
+  const base = await loadTickets(provider, project, sprintOverride, "sprint");
+  const narrow: MySprintLoad = { ...base, sprintTickets: base.tickets, outside: [], widened: false };
+
+  if (!includeWider || provider !== "azure-devops" || !project) return narrow;
+  if (!base.connected || !hasIdentity(identity)) return narrow;
+
+  // A failed widening must not take the sprint down with it: the iteration is
+  // the plan's backbone and is already in hand.
+  let found: { tickets: Ticket[]; truncated: boolean };
+  try {
+    found = await getMyOpenWorkItems(project, identity);
+  } catch {
+    return narrow;
+  }
+
+  const inSprint = new Set(base.tickets.map((t) => String(t.id)));
+  const outside = found.tickets.filter((t) => !inSprint.has(String(t.id)));
+  return {
+    ...base,
+    tickets: [...base.tickets, ...outside],
+    sprintTickets: base.tickets,
+    outside,
+    widened: true,
+    truncated: base.truncated || found.truncated,
+  };
 }
 
 export type ProjectLoadResult = {
@@ -512,4 +579,43 @@ function labelFor(provider: ProviderId): string {
 export function normalizeProvider(value: string | null | undefined): ProviderId {
   const ok: ProviderId[] = ["azure-devops", "github", "jira", "gitlab"];
   return ok.includes(value as ProviderId) ? (value as ProviderId) : DEFAULT_PROVIDER;
+}
+
+/**
+ * Every active pull request in the organization, for the notification bell.
+ *
+ * One provider round-trip whatever the board on screen is — the cost does not
+ * scale with the number of tickets, which is what separates this source from
+ * the review-comment one. The caller decides which of them are the developer's
+ * (`isMyPullRequest` / `myVoteOn`), because the identity rule belongs in
+ * `lib/identity.ts` and not in a provider client.
+ *
+ * GitHub is not wired: its search API answers the same question in one call
+ * (`is:pr is:open review-requested:@me`) and is worth adding, but it needs its
+ * own paging and rate-limit handling rather than a shape-shim over this one.
+ * Unwired providers report no pull requests, so the bell simply says nothing
+ * about them.
+ */
+export async function loadPullRequestInbox(provider: ProviderId): Promise<PullRequestBrief[]> {
+  if (provider !== "azure-devops") return [];
+  return listActivePullRequests();
+}
+
+/**
+ * Comments that landed on the developer's work, or named them, since `since`.
+ *
+ * Two provider round-trips to find out whether anything happened, and reads
+ * beyond that only for the work items that actually changed — see
+ * `listRecentTicketActivity`. GitHub is not wired: its notifications API
+ * answers the same question far better than polling issues would, and shimming
+ * it into this shape would waste that.
+ */
+export async function loadTicketActivity(
+  provider: ProviderId,
+  identity: DevIdentity,
+  since: string
+): Promise<TicketActivity[]> {
+  if (provider !== "azure-devops") return [];
+  if (!hasIdentity(identity)) return [];
+  return listRecentTicketActivity(since, identity);
 }

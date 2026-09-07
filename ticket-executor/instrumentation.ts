@@ -51,4 +51,12 @@ export async function register() {
   } catch (e) {
     console.error("[ticket-executor] crash-recovery sweep failed:", e);
   }
+
+  // The scheduler comes last, and after the recovery sweep on purpose: it may
+  // start runs, and it must not do that while the sweep is still deciding which
+  // of the previous process's runs are still alive. Its own tick takes a
+  // Postgres advisory lock, so a host and a container sharing one database still
+  // only schedule once.
+  const { startScheduler } = await import("./lib/executionStore");
+  startScheduler();
 }

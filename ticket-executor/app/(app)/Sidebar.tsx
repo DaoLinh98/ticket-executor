@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { COLORS, FONT, clipCorner, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
+import ProviderTag from "./ProviderTag";
 
 type NavItem = { href: string; label: string; icon: ReactNode };
 
@@ -24,6 +25,16 @@ const NAV: NavItem[] = [
     href: "/ticket-execution",
     label: "Ticket Execution",
     icon: <path d="M8 5l8 7-8 7" />,
+  },
+  {
+    href: "/my-sprint",
+    label: "My Sprint",
+    icon: (
+      <>
+        <path d="M8 2v4M16 2v4M3 10h18" />
+        <path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      </>
+    ),
   },
   {
     href: "/dashboard",
@@ -99,7 +110,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         position: "relative",
         zIndex: 6,
         flex: "0 0 auto",
-        width: collapsed ? "68px" : "232px",
+        width: collapsed ? "68px" : "272px",
         transition: "width .18s ease",
         height: "100vh",
         display: "flex",
@@ -198,6 +209,12 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
       </nav>
 
       <div style={{ flex: 1 }} />
+
+      {!collapsed && (
+        <div style={{ padding: "0 6px 12px" }}>
+          <ProviderTag />
+        </div>
+      )}
 
       {/* Logout */}
       {authEnabled && <button
