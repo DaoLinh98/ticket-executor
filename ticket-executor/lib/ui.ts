@@ -109,13 +109,11 @@ export function actionInfoFor(status: string): ActionInfo | null {
   return null;
 }
 
-// The status a ticket moves to once a given skill's run completes (simulated ADO sync).
-export function nextStatusAfter(skill: string, current: string): string {
-  if (skill === "implement-ticket-v2" || skill === "implement-ticket-v3")
-    return "Code Review";
-  // if (skill === "senior-code-review") return "Ready for QA";
-  return current;
-}
+// `nextStatusAfter` used to live here: the status a ticket moved to once a run
+// finished. It is gone because that is no longer what a finished run means —
+// work is handed to a reviewer on the sprint plan's release day, by
+// `lib/execution/release.ts` (RELEASE_STATUS), not at the moment the agent
+// stopped typing.
 
 // True for either code-review-resolution skill (auto v2 or plan-review-gated v3) —
 // used everywhere the UI needs to treat both the same regardless of which one ran.
@@ -190,6 +188,8 @@ export const SURFACE = {
   app: "var(--te-app-bg)",
   inset: "var(--te-inset-bg)",
   modal: "var(--te-modal-bg)",
+  /** The dimmed sheet a modal panel sits on. */
+  scrim: "var(--te-scrim)",
 } as const;
 
 /** Shape tokens. D-Agent chips are corner-cut hexagons, so the clip-path and
@@ -356,6 +356,14 @@ const TINT: Record<
   warning: { border: "var(--te-tint-warning-bd)", background: "var(--te-tint-warning-bg)" },
   accent: { border: "var(--te-tint-accent-bd)", background: "var(--te-tint-accent-bg)" },
 };
+/** Just the fill from a tint, for a row that is *highlighted* rather than boxed
+ *  — the notification bell's unread rows sit inside an already-bordered panel,
+ *  so a second border around each one would read as a nested card.
+ *  `tintedCard` is the boxed variant; both draw from the same tokens. */
+export function tintFill(tone: keyof typeof TINT): string {
+  return TINT[tone].background;
+}
+
 export function tintedCard(
   tone: keyof typeof TINT,
   opts?: { padding?: string; radius?: string },
@@ -380,6 +388,24 @@ export function modalShellStyle(opts?: { radius?: string }): CSSProperties {
     background: SURFACE.modal,
     boxShadow: "0 40px 90px -30px #000",
     animation: "slideIn .28s both",
+  };
+}
+
+/** The full-screen sheet a modal panel centres on: scrim, blur, and the fade-in.
+ *  Pair it with `modalShellStyle()` on the panel inside. Its own `zIndex` is a
+ *  parameter because a modal opened from another overlay has to sit above it. */
+export function modalOverlayStyle(opts?: { zIndex?: number }): CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    zIndex: opts?.zIndex ?? 55,
+    background: SURFACE.scrim,
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    animation: "fadeIn .2s both",
   };
 }
 

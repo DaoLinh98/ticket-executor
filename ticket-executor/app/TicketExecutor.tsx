@@ -21,7 +21,10 @@ import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
-import { reviewFingerprint } from "./ticket-executor/helpers";
+import {
+  buildNotifications, markAllRead, markRead,
+  type AppNotification, type AutomationSource, type PullRequestSource, type ReadMap, type RunEventSource, type TicketActivitySource,
+} from "@/lib/notifications";
 import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
@@ -30,24 +33,35 @@ import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, 
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
-import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, nextStatusAfter, pill, tabStyle as uiTabStyle } from "@/lib/ui";
+import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
 // in ./ticket-executor/*.
 
-// How often the review bell re-asks the provider. Minutes rather than seconds:
-// each poll costs one provider round-trip per candidate ticket, and a reviewer's
-// comment is not a real-time event. The moments the answer genuinely changes —
-// a run publishing a PR, a fix-review run finishing — call
-// refreshReviewSummary() directly instead of waiting for the tick.
-const REVIEW_POLL_MS = 120_000;
+// How often the bell re-asks its sources. Minutes rather than seconds: the
+// review half costs one provider round-trip per candidate ticket, and a
+// reviewer's comment is not a real-time event. The moments the answer genuinely
+// changes — a run publishing a PR, a fix-review run finishing — call
+// refreshNotifications() directly instead of waiting for the tick.
+const NOTIFY_POLL_MS = 120_000;
 
-// A hard floor between two summary reads, whatever asked for them. The interval
-// above is the schedule; this is the guard, because an interval owned by an
-// effect is only as stable as that effect's dependencies — and the cost of
-// getting those wrong is paid at the provider, one round-trip per ticket.
-const REVIEW_MIN_GAP_MS = 20_000;
+// A hard floor between two polls, whatever asked for them. The interval above is
+// the schedule; this is the guard, because an interval owned by an effect is
+// only as stable as that effect's dependencies — and the cost of getting those
+// wrong is paid at the provider, one round-trip per ticket.
+const NOTIFY_MIN_GAP_MS = 20_000;
+
+// Where the bell's read state lives. A different key from the review-only bell's
+// `reviewReadMap` on purpose: those entries were keyed by ticket id alone, which
+// is exactly the collision `notificationKey()` exists to fix, so the old map is
+// left behind rather than migrated into a shape it cannot express.
+const NOTIFY_READ_KEY = "notificationsRead";
+
+// Observed run outcomes are session state with nothing to expire them, and a tab
+// left open for a day of batch runs would accumulate every one. The oldest are
+// also the least worth showing.
+const RUN_EVENT_CAP = 50;
 
 // One place that turns the API's RunView into the UI's ExecView. This used to be
 // written out three times (open a past run / stream update / rehydrate), which is
@@ -177,10 +191,23 @@ export default function TicketExecutor() {
   // The last poll could not reach the provider. The bell keeps showing what it
   // last knew and says so, rather than rendering an outage as "all clear".
   const [reviewDegraded, setReviewDegraded] = useState(false);
+  // What the scheduler did while nobody was watching — one database read, no
+  // provider round-trip (see /api/notifications).
+  const [automation, setAutomation] = useState<AutomationSource[]>([]);
+  // Pull requests that concern the developer, already narrowed server-side —
+  // one provider round-trip whatever the board holds.
+  const [pullRequests, setPullRequests] = useState<PullRequestSource[]>([]);
+  // Comments that landed on the developer's work. Server-side this is the one
+  // incremental source; it arrives here as a rolling window like the rest.
+  const [ticketActivity, setTicketActivity] = useState<TicketActivitySource[]>([]);
+  // Terminal run outcomes this session actually watched happen. Kept as observed
+  // events rather than derived from `execs`, because a run that succeeded last
+  // week is not news — see `fromRunEvents`.
+  const [runEvents, setRunEvents] = useState<RunEventSource[]>([]);
   // skill → the node list its graph walks, so the progress timeline can be drawn
   // before a run exists. Fetched once; the graphs are static code on the server.
   const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; effects: string }[]>>({});
-  const [reviewReadMap, setReviewReadMap] = useState<Record<string, { seen: string; readAt: string }>>({});
+  const [notifRead, setNotifRead] = useState<ReadMap>({});
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
   // Mirror of selectedId for use inside stable callbacks (SSE handlers) without
@@ -531,36 +558,42 @@ export default function TicketExecutor() {
   // Load the bell's read/unread bookkeeping (persisted across reloads).
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("reviewReadMap");
-      if (raw) setReviewReadMap(JSON.parse(raw));
+      const raw = localStorage.getItem(NOTIFY_READ_KEY);
+      if (raw) setNotifRead(JSON.parse(raw));
     } catch {
       /* ignore corrupt storage */
     }
   }, []);
 
-  // Mark a bell notification as read up to its current unresolved-comment count.
-  const markReviewRead = useCallback((rv: ReviewSummaryEntry) => {
-    setReviewReadMap((prev) => {
-      const next = { ...prev, [rv.ticketId]: { seen: reviewFingerprint(rv), readAt: new Date().toISOString() } };
-      try {
-        localStorage.setItem("reviewReadMap", JSON.stringify(next));
-      } catch {
-        /* ignore quota errors */
-      }
-      return next;
-    });
+  const persistRead = useCallback((next: ReadMap): ReadMap => {
+    try {
+      localStorage.setItem(NOTIFY_READ_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota errors */
+    }
+    return next;
   }, []);
 
-  // Poll the bell's unresolved-review-comment summary.
+  // Mark one notification read at its current fingerprint — so the same ticket
+  // saying something new becomes unread again.
+  const markNotificationRead = useCallback((n: AppNotification) => {
+    setNotifRead((prev) => persistRead(markRead(prev, n, new Date().toISOString())));
+  }, [persistRead]);
+
+  // Poll the bell's two fetched sources on one timer.
   //
-  // Three things bound the cost, because each poll costs the provider one
-  // round-trip *per ticket asked about*:
+  // The review half is what costs money, because it costs the provider one
+  // round-trip *per ticket asked about*. Three things bound it:
   //  - only tickets in the review lane are offered as candidates (the server
   //    adds back any ticket this app opened a PR for, whatever its state);
   //  - a hidden tab polls not at all, and refreshes the moment it comes back;
   //  - the interval is minutes, not seconds — a review comment is not a
-  //    real-time event, and `refreshReviewSummary` is called directly at the
+  //    real-time event, and `refreshNotifications` is called directly at the
   //    moments the answer actually changes (a run publishing, a fix landing).
+  //
+  // The automation half is one database query and rides the same tick rather
+  // than adding a second timer — two timers over one dropdown is two schedules
+  // to reason about for no gain.
   const reviewPollIds = useMemo(() => {
     const ids = tickets.map((tk) => tk.id);
     // The same "effective status" getStatus() computes — spelled out because
@@ -585,45 +618,67 @@ export default function TicketExecutor() {
   reviewPollRef.current = { ...reviewPollIds, provider: settings.provider };
   const reviewFetchedAt = useRef(0);
 
-  const refreshReviewSummary = useCallback(async (opts?: { force?: boolean }) => {
+  const refreshNotifications = useCallback(async (opts?: { force?: boolean }) => {
     const { ids, reviewable, provider } = reviewPollRef.current;
-    if (!ids) return;
     // A floor on the rate, independent of whatever caused the call. The interval
     // is the schedule; this is what stops a re-render storm, a remount or a
     // burst of run updates from turning into a burst of provider reads.
-    if (!opts?.force && Date.now() - reviewFetchedAt.current < REVIEW_MIN_GAP_MS) return;
+    if (!opts?.force && Date.now() - reviewFetchedAt.current < NOTIFY_MIN_GAP_MS) return;
     reviewFetchedAt.current = Date.now();
-    try {
-      const qs = new URLSearchParams({ provider, ids, reviewable });
-      const r = await fetch(`/api/reviews/summary?${qs}`);
-      const data = await r.json();
-      // A degraded answer is not an answer. Keeping the last known list is the
-      // difference between "the provider refused" and "you have nothing to review".
-      if (data.degraded) {
-        setReviewDegraded(true);
+
+    const reviews = async () => {
+      // No board on screen is no review question to ask — and an empty answer
+      // here is a real one, unlike a degraded read.
+      if (!ids) {
+        setReviewSummary([]);
+        setReviewDegraded(false);
         return;
       }
-      setReviewDegraded(false);
-      setReviewSummary(Array.isArray(data.reviews) ? data.reviews : []);
-    } catch {
-      setReviewDegraded(true);
-    }
+      try {
+        const qs = new URLSearchParams({ provider, ids, reviewable });
+        const r = await fetch(`/api/reviews/summary?${qs}`);
+        const data = await r.json();
+        // A degraded answer is not an answer. Keeping the last known list is the
+        // difference between "the provider refused" and "you have nothing to review".
+        if (data.degraded) {
+          setReviewDegraded(true);
+          return;
+        }
+        setReviewDegraded(false);
+        setReviewSummary(Array.isArray(data.reviews) ? data.reviews : []);
+      } catch {
+        setReviewDegraded(true);
+      }
+    };
+
+    // Scoped by identity server-side, so it is asked whatever board is on
+    // screen: the scheduler works a plan while the developer looks elsewhere.
+    // A failure here leaves the last known events alone and is not reported as
+    // degraded — that flag is the review half's claim about the provider.
+    const scheduler = async () => {
+      try {
+        const r = await fetch(`/api/notifications?provider=${encodeURIComponent(provider)}`);
+        const data = await r.json();
+        if (Array.isArray(data.automation)) setAutomation(data.automation);
+        if (Array.isArray(data.pullRequests)) setPullRequests(data.pullRequests);
+        if (Array.isArray(data.ticketActivity)) setTicketActivity(data.ticketActivity);
+      } catch {
+        /* keep what was last known */
+      }
+    };
+
+    await Promise.all([reviews(), scheduler()]);
     // Deliberately no dependencies: every parameter is read from a ref above, so
     // this function's identity never changes and the interval below is never
     // torn down by a re-render.
   }, []);
 
   useEffect(() => {
-    if (!reviewPollIds.ids) {
-      setReviewSummary([]);
-      setReviewDegraded(false);
-      return;
-    }
     let timer: ReturnType<typeof setInterval> | null = null;
     const start = () => {
       if (timer) return;
-      void refreshReviewSummary();
-      timer = setInterval(() => void refreshReviewSummary({ force: true }), REVIEW_POLL_MS);
+      void refreshNotifications();
+      timer = setInterval(() => void refreshNotifications({ force: true }), NOTIFY_POLL_MS);
     };
     const stop = () => {
       if (!timer) return;
@@ -640,7 +695,7 @@ export default function TicketExecutor() {
     };
     // `reviewPollIds.ids` is a string, so this restarts only when the board
     // genuinely changes — a reload that returns the same tickets does not.
-  }, [reviewPollIds.ids, refreshReviewSummary]);
+  }, [reviewPollIds.ids, refreshNotifications]);
 
   // Close the bell dropdown on outside click.
   useEffect(() => {
@@ -940,44 +995,26 @@ export default function TicketExecutor() {
       try {
         window.__reactor?.setMode(state === "succeeded" ? "completed" : "idle");
       } catch { }
+      // Recorded here rather than derived from `execs`, because this is the one
+      // place the transition is actually observed. `cancelled` is a human
+      // decision and gets no notification — the person who pressed it knows.
+      if (state === "succeeded" || state === "failed") {
+        setRunEvents((prev) =>
+          [
+            ...prev.filter((r) => r.runId !== runId),
+            { ticketId, runId, state, at: new Date().toISOString() },
+          ].slice(-RUN_EVENT_CAP)
+        );
+      }
       if (state === "succeeded") {
-        // Advance the ticket status based on the skill that ran, and sync it to the
-        // real provider (ADO work item state / GitHub status label) — not just locally.
-        const next = nextStatusAfter((run.skill as string) ?? "", "");
-        if (next) {
-          let applied = "";
-          let syncError = "";
-          let current: unknown;
-          try {
-            const sr = await fetch(`/api/tickets/${ticketId}/status`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ provider: settings.provider, status: next }),
-            });
-            const data = await sr.json().catch(() => ({}));
-            current = data.current;
-            if (!sr.ok) syncError = data.error || "the provider rejected the change";
-            else applied = (data.status as string) || next;
-          } catch (err) {
-            syncError = err instanceof Error ? err.message : "the provider could not be reached";
-          }
-          // The run itself succeeded either way — a failed status write is a
-          // footnote to that, not a failure. Reporting it as an error toast (which
-          // is all the user used to see) hid the fact that the PR was created.
-          if (applied) {
-            setStatusOverrides((so) => ({ ...so, [ticketId]: applied }));
-            showToast(`#${ticketId} completed — status set to "${applied}"`);
-            notify("Ticket Executor", `#${ticketId} completed — status set to "${applied}"`);
-          } else {
-            // Never leave the app showing a status the provider refused.
-            resyncStatus(ticketId, current);
-            showToast(`#${ticketId} completed — result ready.\nStatus stayed at the provider's value: ${syncError}`, 12000);
-            notify("Ticket Executor", `#${ticketId} completed — result ready (status not synced)`);
-          }
-        } else {
-          showToast(`#${ticketId} completed — result ready`);
-          notify("Ticket Executor", `#${ticketId} completed — result ready`);
-        }
+        // The status advance used to happen right here, in the browser. It has
+        // moved to `lib/execution/release.ts`, which runs server-side on the
+        // sprint plan's release day — because a finished run is not the same
+        // event as handing the work to a reviewer, and because a closed tab used
+        // to leave the work item in "In Progress" with a finished pull request
+        // attached to it. The pull request this run opened is a draft until then.
+        showToast(`#${ticketId} completed — pull request opened as a draft`);
+        notify("Ticket Executor", `#${ticketId} completed — draft PR ready to release`);
       } else {
         showToast(`#${ticketId} failed`, 9000, "error");
         notify("Ticket Executor", `#${ticketId} failed`);
@@ -995,13 +1032,13 @@ export default function TicketExecutor() {
       // poll, a fix-review run resolved threads. Ask now rather than leaving the
       // notification up to two minutes stale; `force` because this is a known
       // change, not a re-render that merely might be one.
-      void refreshReviewSummary({ force: true });
+      void refreshNotifications({ force: true });
       // Free this ticket's batch-queue slot (no-op if it wasn't batch-started)
       // and let the next queued ticket, if any, take its place.
       if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
       return true;
     },
-    [showToast, loadHistory, notify, settings.provider, stopTracking, resyncStatus, refreshReviewSummary]
+    [showToast, loadHistory, notify, settings.provider, stopTracking, resyncStatus, refreshNotifications]
   );
 
   const startPollingFallback = useCallback(
@@ -1065,10 +1102,9 @@ export default function TicketExecutor() {
         setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId], skillHint) }));
         if (run.state === "running") {
           startPolling(ticketId, runId);
-        } else if (run.state === "succeeded") {
-          const next = nextStatusAfter(run.skill ?? skillHint ?? "", "");
-          if (next) setStatusOverrides((so) => (so[ticketId] ? so : { ...so, [ticketId]: next }));
         }
+        // A finished run no longer implies a status: the work item moves when the
+        // plan releases it, so the provider's own value is the only truth here.
       } catch {
         /* ignore — CTA just stays in its default state */
       }
@@ -1364,7 +1400,27 @@ export default function TicketExecutor() {
   // ---- derived ----
   const execStatusOf = (id: string): UiRunState => execs[id]?.state ?? "none";
   const activeCount = Object.values(execs).filter((e) => e.state === "running" || e.state === "waiting").length;
-  const reviewBadgeCount = reviewSummary.filter((r) => reviewReadMap[r.ticketId]?.seen !== reviewFingerprint(r)).length;
+  // Every source the bell speaks for, merged by the one module that owns the
+  // rule. Waiting runs are read off current state because a parked plan is a
+  // standing condition; the rest are events.
+  const notifications = useMemo(
+    () =>
+      buildNotifications({
+        reviews: reviewSummary,
+        pullRequests,
+        ticketActivity,
+        waitingRuns: Object.entries(execs)
+          .filter(([, ex]) => ex.state === "waiting" && ex.runId)
+          .map(([ticketId, ex]) => ({ ticketId, runId: ex.runId as string })),
+        runEvents,
+        automation,
+      }),
+    [reviewSummary, pullRequests, ticketActivity, execs, runEvents, automation]
+  );
+  const ticketTitleOf = useCallback(
+    (id: string) => tickets.find((t) => t.id === id)?.title ?? "",
+    [tickets]
+  );
 
   const q = search.trim().toLowerCase();
   const statusOptions = Array.from(new Set(tickets.map((x) => getStatus(x)).filter(Boolean)));
@@ -1625,11 +1681,28 @@ export default function TicketExecutor() {
         bellRef={bellRef}
         bellOpen={bellOpen}
         onToggleBell={(e) => { fireBoltFromEvent(e); setBellOpen((o) => !o); }}
-        reviewBadgeCount={reviewBadgeCount}
-        reviewSummary={reviewSummary}
-        reviewDegraded={reviewDegraded}
-        reviewReadMap={reviewReadMap}
-        onOpenReview={(rv, e) => { markReviewRead(rv); selectTicket(rv.ticketId, e); setTab("resolve-review"); setBellOpen(false); }}
+        notifications={notifications}
+        notificationsRead={notifRead}
+        notificationsDegraded={reviewDegraded}
+        titleOf={ticketTitleOf}
+        onOpenNotification={(n, e) => {
+          markNotificationRead(n);
+          // A pull request waiting on the developer's review belongs to
+          // somebody else's work item — there is no ticket of theirs to select,
+          // so the provider's own page is the destination.
+          if (!n.ticketId) {
+            if (n.href) window.open(n.href, "_blank", "noopener");
+            setBellOpen(false);
+            return;
+          }
+          selectTicket(n.ticketId, e);
+          // The notification's own kind decides the destination — a review
+          // comment opens Resolve Review, everything else lands where that kind
+          // is actually answered.
+          setTab(n.tab);
+          setBellOpen(false);
+        }}
+        onMarkAllNotificationsRead={() => setNotifRead((prev) => persistRead(markAllRead(prev, notifications, new Date().toISOString())))}
       />
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>

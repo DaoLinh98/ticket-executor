@@ -1,5 +1,3 @@
-import type { ReviewSummaryEntry } from "@/lib/types";
-
 // The log-scraping deriveStep() heuristic that used to live here is gone: a
 // run's progress is the state of its graph nodes, reported by the API, not a
 // guess made from regexes over the terminal output.
@@ -19,13 +17,6 @@ export function renderCommentBody(text: string) {
       )}
     </span>
   ));
-}
-
-// Identifies a review summary's current state of activity — used to detect a
-// *new* comment even when the raw unresolved count happens to net out the same
-// (e.g. one thread got resolved while a fresh one landed).
-export function reviewFingerprint(rv: ReviewSummaryEntry): string {
-  return `${rv.unresolvedCount}::${rv.latestAt}::${rv.latestComment}`;
 }
 
 // Format a token count compactly ("12.3K", "1.2M") for the Result tab's usage badges.

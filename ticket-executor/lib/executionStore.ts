@@ -12,6 +12,10 @@
 //   queries.ts        — read models and the dashboard aggregate
 //   runner.ts         — worktree isolation, run lifecycle, gate resolution, recovery
 //   store.ts          — the globalThis-backed in-process Map of live runs
+//   triage.ts         — the sprint-triage turn (no run, no worktree, one contract)
+//   planStore.ts      — reads/writes for the sprint plan and the automation log
+//   release.ts        — publishing a draft PR, assigning reviewers, moving status
+//   scheduler.ts      — the server-side tick that acts on an active plan
 export {
   cancelRun,
   recoverInterruptedRuns,
@@ -33,3 +37,31 @@ export {
   type RunView,
   type SkillConsistency,
 } from "./execution/queries";
+export {
+  getTriage,
+  latestTriage,
+  startTriage,
+  TRIAGE_SKILL,
+  type TriageInput,
+  type TriageResult,
+  type TriagedTicket,
+} from "./execution/triage";
+export {
+  claimedSprint,
+  findPlan,
+  logAutomation,
+  planById,
+  planInputs,
+  recentAutomation,
+  rebuildPlan,
+  setPlanAutomation,
+  setPlanStatus,
+  type PlanKey,
+} from "./execution/planStore";
+export {
+  dueForRelease,
+  releasePlannedTicket,
+  RELEASE_STATUS,
+  type ReleaseOutcome,
+} from "./execution/release";
+export { startScheduler, tickNow, type TickReport } from "./execution/scheduler";

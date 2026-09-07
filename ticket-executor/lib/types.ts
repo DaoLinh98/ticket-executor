@@ -7,6 +7,12 @@ export type Ticket = {
   assigneeEmail?: string; // used to match Settings' personalAccount in "personal" scope
   project: string; // last segment of area path, or default project
   areaPath: string;
+  // The provider's iteration path, verbatim ("Project\Release 1\Sprint 67", or
+  // just "Project" for an item nobody has scheduled). Kept raw rather than
+  // reduced to a sprint name because "which iteration" and "is it scheduled at
+  // all" are both read off it, and the second question needs the whole path.
+  // Absent for providers with no iteration concept.
+  iterationPath?: string;
   // Both fields are **sanitized HTML**, not plain text: a provider stores them as
   // rich text and real tickets use it (nested numbered criteria, bold terms,
   // links, pasted screenshots). Flattening them to lines lost the structure the
@@ -87,6 +93,57 @@ export type PullRequestOverview = {
   author: string;
   reviewers: string[];
   createdAt: string; // ISO
+};
+
+/** One reviewer's standing on a pull request. `vote` is the provider's own
+ *  scale, not a normalized one — see `VOTE` in `lib/notifications.ts`. */
+export type PullRequestReviewer = {
+  /** Empty for a *team* reviewer, which carries a `vstfs:///…` descriptor
+   *  instead of an address. A person added only through a team therefore cannot
+   *  be matched by identity. */
+  email: string;
+  name: string;
+  vote: number;
+};
+
+/**
+ * A pull request as it arrives from a whole-organization listing — enough to
+ * decide whether it needs the developer, without a second read per PR.
+ *
+ * Deliberately not `PullRequestOverview`: that type is the Resolve Review tab's
+ * detail view of *one* PR resolved from a work item, and it flattens reviewers
+ * to display names, which is exactly the information a vote check needs.
+ */
+export type PullRequestBrief = {
+  id: string;
+  url: string;
+  title: string;
+  repo: string;
+  isDraft: boolean;
+  /** Provider's own value; "conflicts" is the one this app acts on. */
+  mergeStatus: string;
+  authorEmail: string;
+  authorName: string;
+  reviewers: PullRequestReviewer[];
+};
+
+/**
+ * One comment that landed on a work item recently — the bell's "somebody said
+ * something about your work" source.
+ *
+ * Carries no comment text on purpose. The bell names the ticket and gets the
+ * developer to it; the conversation itself is the provider's page, one click
+ * away, and copying it into a header dropdown means rendering somebody's HTML.
+ */
+export type TicketActivity = {
+  ticketId: string;
+  /** The provider's comment id — stable, so the same comment is never reported
+   *  twice and read state survives a re-poll. */
+  commentId: string;
+  at: string; // ISO
+  authorName: string;
+  /** Was the developer @mentioned in it? */
+  mentionsMe: boolean;
 };
 
 export type ReviewComment = {

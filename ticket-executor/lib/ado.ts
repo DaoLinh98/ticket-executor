@@ -1,4 +1,5 @@
-import type { Ticket, TicketComment, ReviewData, ReviewComment, PullRequestOverview, CommitSummary, CommitFile } from "./types";
+import type { Ticket, TicketComment, TicketActivity, ReviewData, ReviewComment, PullRequestOverview, PullRequestBrief, CommitSummary, CommitFile } from "./types";
+import { isSamePerson, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
 import { markdownToHtml, sanitizeHtml } from "./richText";
@@ -395,6 +396,7 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
         assignee: assignedTo?.displayName ?? "Unassigned",
         assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
+        iterationPath: (f["System.IterationPath"] as string) || undefined,
         project: lastAreaSegment(area, proj) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
@@ -448,6 +450,60 @@ export async function getScopedTickets(
   const ids = found.slice(0, MAX_TICKETS);
   // Neither view is an iteration, so there is no sprint name to claim.
   return { tickets: await fetchWorkItems(creds, ids), sprintName: "", truncated: found.length > ids.length };
+}
+
+/**
+ * Every open work item in one project that is assigned to this developer,
+ * whatever iteration it sits in — including none.
+ *
+ * This is not any of the three scopes and cannot be derived from them. A
+ * developer's assigned work routinely lives outside the current iteration (an
+ * unscheduled backlog item, a card still parked in last sprint's iteration),
+ * and the board scope that would contain it is a whole-project query capped at
+ * `MAX_TICKETS` — so on a busy project the developer's own older tickets are
+ * exactly the rows that fall off the end. Filtering in the query instead of
+ * after it makes the cap irrelevant.
+ *
+ * Closed work is excluded on purpose: the sprint fetch is the record of what an
+ * iteration finished, and this query's job is only to find work still to do that
+ * the iteration does not know about.
+ *
+ * Matches the email **and** the display name, the way `isMine()` does — but as
+ * one `IN` list rather than a preference order, because a query cannot fall back.
+ * Both are needed: the identity a connection stores is the address the developer
+ * is known by *to us*, and an organization that federates its accounts knows them
+ * by another one (`ken.nguyen@emesoft.net` here, `ken.nguyen@creativeplanning.com`
+ * in the tracker). Querying the email alone returned nothing for exactly that
+ * reason. An address the organization has never heard of is not an error to ADO,
+ * it simply matches nothing, so listing both costs one round-trip and no risk.
+ */
+export async function getMyOpenWorkItems(
+  project: string,
+  identity: DevIdentity
+): Promise<{ tickets: Ticket[]; truncated: boolean }> {
+  const who = [identity.email, identity.name].filter(Boolean);
+  if (who.length === 0) return { tickets: [], truncated: false };
+
+  const creds = await loadCreds(project);
+  const { org, pat, project: proj } = creds;
+  const query =
+    `SELECT [System.Id] FROM WorkItems WHERE ` +
+    `[System.TeamProject] = '${wiqlQuoted(proj)}' AND ` +
+    `[System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
+    `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")}) ` +
+    `ORDER BY [System.Id] DESC`;
+
+  const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
+  const res = await adoSend<{ workItems?: { id: number }[] }>(
+    wiqlUrl,
+    "POST",
+    { query },
+    "application/json",
+    pat
+  );
+  const found = (res.workItems ?? []).map((w) => w.id);
+  const ids = found.slice(0, MAX_TICKETS);
+  return { tickets: await fetchWorkItems(creds, ids), truncated: found.length > ids.length };
 }
 
 /** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to
@@ -955,4 +1011,349 @@ export async function getCommitFileChanges(ticketId: string, sha: string, fallba
     results.push({ path, changeType, diff, additions, deletions });
   }
   return results;
+}
+
+// ---- release: taking a finished pull request out of draft ----
+//
+// The three writes below are what "hand this ticket to a reviewer" actually
+// means at the provider, and they are deliberately three separate exported calls
+// rather than one `release()`. They fail independently — publishing a draft can
+// succeed while resolving a reviewer's identity does not — and the caller
+// records each outcome on its own column, because a single success/failure flag
+// for three writes is wrong in both directions.
+//
+// Every one of them is safe to call twice. A release that half-succeeded is
+// retried, and a retry must not be a second event for the reviewer.
+
+/** Is this pull request still a draft? `null` when the PR cannot be read at all,
+ *  which the caller must not confuse with "already published". */
+export async function isPullRequestDraft(prUrl: string): Promise<boolean | null> {
+  const creds = await loadCreds();
+  const found = await quickPullRequest(creds, prUrl);
+  if (!found) return null;
+  return !!(found.raw as { isDraft?: boolean }).isDraft;
+}
+
+/**
+ * Publish a draft pull request.
+ *
+ * This is the moment the reviewer is notified, so it is the moment the work
+ * becomes visible — everything before it is the agent working ahead in private.
+ * Already-published is a success, not an error: the caller is retrying a
+ * half-finished release, and refusing here would strand it forever.
+ */
+export async function publishPullRequest(prUrl: string): Promise<{ ok: boolean; detail: string }> {
+  const creds = await loadCreds();
+  const found = await quickPullRequest(creds, prUrl);
+  if (!found) return { ok: false, detail: "The pull request could not be read at Azure DevOps." };
+  if (!(found.raw as { isDraft?: boolean }).isDraft) {
+    return { ok: true, detail: "Already published." };
+  }
+  await adoSend(
+    `${repoBaseUrl(creds.org, found.ref)}/pullrequests/${found.ref.prId}?${API}`,
+    "PATCH",
+    { isDraft: false },
+    "application/json",
+    creds.pat
+  );
+  return { ok: true, detail: "Draft published." };
+}
+
+type RawIdentity = { id?: string; providerDisplayName?: string; properties?: { Account?: { $value?: string } } };
+
+/**
+ * Resolve an email or display name to the identity id ADO needs to add a
+ * reviewer.
+ *
+ * Reviewers are configured as email addresses because that is what a developer
+ * knows; ADO wants a GUID. The lookup lives on a different host (`vssps`) and a
+ * PAT without Identity read scope simply fails it — which is why the caller
+ * treats a failed resolution as "reviewers not set" and says so, rather than
+ * failing the whole release. The draft is published either way; a missing
+ * reviewer is a message, not a reason to hide finished work.
+ */
+async function resolveIdentityId(org: string, pat: string, query: string): Promise<string | null> {
+  const host = org.replace(/^https:\/\/dev\.azure\.com\//i, "https://vssps.dev.azure.com/").replace(/\/+$/, "");
+  const url = `${host}/_apis/identities?searchFilter=General&filterValue=${encodeURIComponent(query)}&${API}`;
+  try {
+    const res = await adoGet<{ value?: RawIdentity[] }>(url, pat);
+    const rows = res.value ?? [];
+    const wanted = query.trim().toLowerCase();
+    const exact = rows.find(
+      (r) => (r.properties?.Account?.$value ?? "").toLowerCase() === wanted
+    );
+    return (exact ?? rows[0])?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add reviewers to a pull request.
+ *
+ * `PUT .../reviewers/{id}` is idempotent at ADO — adding somebody who is already
+ * a reviewer is a no-op rather than a second notification — which is what makes
+ * a half-finished release safe to retry.
+ *
+ * Returns which queries could not be resolved rather than throwing on the first
+ * one: three reviewers where one has left the company should still get the other
+ * two, and should say who was missed.
+ */
+export async function addPullRequestReviewers(
+  prUrl: string,
+  reviewers: string[]
+): Promise<{ ok: boolean; added: string[]; unresolved: string[]; detail: string }> {
+  const creds = await loadCreds();
+  const found = await quickPullRequest(creds, prUrl);
+  if (!found) {
+    return { ok: false, added: [], unresolved: reviewers, detail: "The pull request could not be read at Azure DevOps." };
+  }
+  const added: string[] = [];
+  const unresolved: string[] = [];
+  for (const who of reviewers) {
+    const id = await resolveIdentityId(creds.org, creds.pat, who);
+    if (!id) { unresolved.push(who); continue; }
+    try {
+      await adoSend(
+        `${repoBaseUrl(creds.org, found.ref)}/pullrequests/${found.ref.prId}/reviewers/${id}?${API}`,
+        "PUT",
+        { vote: 0, isRequired: false },
+        "application/json",
+        creds.pat
+      );
+      added.push(who);
+    } catch {
+      unresolved.push(who);
+    }
+  }
+  return {
+    ok: unresolved.length === 0,
+    added,
+    unresolved,
+    detail: unresolved.length
+      ? `Could not add: ${unresolved.join(", ")}. The token may lack Identity (Read) scope.`
+      : `Added ${added.length} reviewer(s).`,
+  };
+}
+
+// ---- The pull-request inbox (notification bell) ----
+
+/** One page of the organization-wide listing. ADO caps a page well below this,
+ *  so the value is a ceiling on the request rather than a promise about it. */
+const PR_PAGE = 100;
+
+/** How many pull requests the bell will look at, across pages. An organization
+ *  with more active pull requests than this is one where the answer "which of
+ *  these needs me" cannot be had from a listing at all, and it is better to
+ *  stop at a known bound than to walk a hundred pages on a timer. */
+const PR_SCAN_CAP = 300;
+
+type RawInboxReviewer = { uniqueName?: string; displayName?: string; vote?: number };
+type RawInboxPullRequest = {
+  pullRequestId: number;
+  title?: string;
+  isDraft?: boolean;
+  mergeStatus?: string;
+  createdBy?: { uniqueName?: string; displayName?: string };
+  reviewers?: RawInboxReviewer[];
+  repository?: { name?: string; webUrl?: string; project?: { name?: string } };
+};
+
+/** A team reviewer's "unique name" is a `vstfs:///…` descriptor, not an
+ *  address. Treated as no email at all, so identity matching cannot pair a
+ *  person with a group that happens to contain them. */
+function reviewerEmail(raw: RawInboxReviewer): string {
+  const u = (raw.uniqueName ?? "").trim();
+  return u.startsWith("vstfs:///") ? "" : u;
+}
+
+/**
+ * Every active pull request in the organization, in one listing.
+ *
+ * This is the cheap half of the bell. The listing is **org-wide and
+ * project-less** — verified against a live organization, where the project-less
+ * route returns pull requests across every project while the per-project route
+ * has to be asked once per project — and it already carries each reviewer's
+ * vote, the draft flag and the merge status. So "which pull requests need me"
+ * costs one round-trip whatever the board on screen is, instead of one per
+ * ticket like the review-comment half.
+ *
+ * Filtering is left to the caller on purpose. ADO's own `creatorId` /
+ * `reviewerId` criteria take an identity GUID, and this app cannot get one for
+ * the account it knows the developer as: an identity lookup by that email
+ * returns nothing under a normal PAT, and the GUID the PAT itself authenticates
+ * as is a *different* account whenever the connection's `identityEmail` names
+ * the person as their client's organization spells them. Matching on
+ * email-then-name is the same rule `isMine()` already applies to work items.
+ */
+export async function listActivePullRequests(): Promise<PullRequestBrief[]> {
+  const { org, pat } = await loadCreds();
+  const out: PullRequestBrief[] = [];
+  for (let skip = 0; skip < PR_SCAN_CAP; skip += PR_PAGE) {
+    const url =
+      `https://dev.azure.com/${org}/_apis/git/pullrequests` +
+      `?searchCriteria.status=active&$top=${PR_PAGE}&$skip=${skip}&${API}`;
+    const page = await adoGet<{ value?: RawInboxPullRequest[] }>(url, pat);
+    const rows = page.value ?? [];
+    for (const raw of rows) {
+      out.push({
+        id: String(raw.pullRequestId),
+        url: prWebUrl(org, raw.repository?.project?.name ?? "", raw as RawPullRequest),
+        title: raw.title ?? "",
+        repo: raw.repository?.name ?? "",
+        isDraft: raw.isDraft === true,
+        mergeStatus: raw.mergeStatus ?? "",
+        authorEmail: (raw.createdBy?.uniqueName ?? "").trim(),
+        authorName: (raw.createdBy?.displayName ?? "").trim(),
+        reviewers: (raw.reviewers ?? []).map((r) => ({
+          email: reviewerEmail(r),
+          name: (r.displayName ?? "").trim(),
+          vote: r.vote ?? 0,
+        })),
+      });
+    }
+    // A short page is the last page. Checked against the requested size rather
+    // than against a count field, which this endpoint does not promise.
+    if (rows.length < PR_PAGE) break;
+  }
+  return out;
+}
+
+// ---- Recent work-item activity (notification bell) ----
+
+/** How many work items one poll will read comments for. The watermark keeps the
+ *  normal answer at nought or a handful; this is the ceiling for the first poll
+ *  after a restart, or a day somebody bulk-edited a sprint. */
+const ACTIVITY_ITEM_CAP = 40;
+
+/** Newest comments read per work item. A work item that collected more than this
+ *  in one polling interval is having a conversation, not producing
+ *  notifications, and the newest are the ones worth naming. */
+const ACTIVITY_COMMENT_TOP = 10;
+
+/**
+ * The identity GUID Azure DevOps knows this connection as.
+ *
+ * `connectionData` answers it in one call with no extra scope, which matters
+ * because the alternatives do not work: an identity lookup by email returns
+ * nothing under an ordinary PAT.
+ *
+ * It is only returned when the authenticated account is the one the connection
+ * says the developer is. A personal access token belonging to somebody else is
+ * a misconfiguration, and reporting *their* mentions as yours would be a
+ * confident wrong answer — so this returns null and mention detection goes
+ * quiet instead.
+ */
+async function authenticatedIdentityId(org: string, pat: string, identity: DevIdentity): Promise<string | null> {
+  const data = await adoGet<{
+    authenticatedUser?: { id?: string; providerDisplayName?: string; properties?: { Account?: { $value?: string } } };
+  }>(`https://dev.azure.com/${org}/_apis/connectionData?api-version=7.0-preview`, pat);
+  const me = data.authenticatedUser;
+  if (!me?.id) return null;
+  const account = me.properties?.Account?.$value ?? "";
+  const display = me.providerDisplayName ?? "";
+  return isSamePerson(account, display, identity) ? me.id : null;
+}
+
+type RawWiqlResult = { workItems?: { id: number }[] };
+
+async function wiqlIds(org: string, pat: string, query: string): Promise<string[]> {
+  const data = await adoSend<RawWiqlResult>(
+    `https://dev.azure.com/${org}/_apis/wit/wiql?${API}`,
+    "POST",
+    { query },
+    "application/json",
+    pat
+  );
+  return (data.workItems ?? []).map((w) => String(w.id));
+}
+
+type RawActivityComment = {
+  id?: number;
+  createdDate?: string;
+  createdBy?: { uniqueName?: string; displayName?: string };
+  mentions?: { targetId?: string }[];
+};
+
+/**
+ * Comments that landed on the developer's work — or named them — since `since`.
+ *
+ * The shape of this is a watermark, and that is the whole point. Reading every
+ * ticket's comments on a timer costs one round-trip per ticket forever; asking
+ * "which work items changed at all" costs **two**, whatever the sprint holds,
+ * and on a quiet interval the answer is none and nothing else is read.
+ *
+ * The two queries are different questions and both are needed. `AssignedTo`
+ * finds new comments on the developer's own tickets. `System.History CONTAINS`
+ * finds the ones that named them on somebody *else's* ticket — the case an
+ * assignment filter cannot see, and the reason a mention is worth a
+ * notification at all.
+ *
+ * Comments the developer wrote themselves are dropped: they were there.
+ */
+export async function listRecentTicketActivity(since: string, identity: DevIdentity): Promise<TicketActivity[]> {
+  const { org, pat } = await loadCreds();
+  const day = since.slice(0, 10);
+  const mine = identity.email
+    ? `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedDate] >= '${day}' AND [System.AssignedTo] = '${identity.email.replace(/'/g, "''")}'`
+    : "";
+  const named = identity.name
+    ? `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedDate] >= '${day}' AND [System.History] CONTAINS '${identity.name.replace(/'/g, "''")}'`
+    : "";
+
+  const [myIdentityId, mineIds, namedIds] = await Promise.all([
+    authenticatedIdentityId(org, pat, identity).catch(() => null),
+    mine ? wiqlIds(org, pat, mine) : Promise.resolve([]),
+    named ? wiqlIds(org, pat, named) : Promise.resolve([]),
+  ]);
+
+  const ids = [...new Set([...mineIds, ...namedIds])].slice(0, ACTIVITY_ITEM_CAP);
+  if (!ids.length) return [];
+
+  // The comments endpoint is project-scoped and nothing upstream carries the
+  // project: a WIQL result names only ids, and the connection's own project is
+  // the wrong answer anyway — a mention can land on a work item in a project
+  // this connection was never pointed at. One batch read settles all of them.
+  const batch = await adoGet<{ value?: { id: number; fields?: Record<string, string> }[] }>(
+    `https://dev.azure.com/${org}/_apis/wit/workitems?ids=${ids.join(",")}&fields=System.TeamProject&${API}`,
+    pat
+  );
+  const projectOf = new Map(
+    (batch.value ?? []).map((w) => [String(w.id), w.fields?.["System.TeamProject"] ?? ""])
+  );
+
+  const cutoff = Date.parse(since);
+  const perItem = await Promise.allSettled(
+    ids.map(async (id) => {
+      const project = projectOf.get(id);
+      // A work item the batch could not place is one this token cannot read.
+      // Asking for its comments would build `.../org//_apis/...`, which Azure
+      // DevOps answers with a sign-in page rather than a 404.
+      if (!project) return [];
+      const url =
+        `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_apis/wit/workItems/${id}` +
+        `/comments?api-version=7.0-preview.3&$top=${ACTIVITY_COMMENT_TOP}&order=desc`;
+      const data = await adoGet<{ comments?: RawActivityComment[] }>(url, pat);
+      const out: TicketActivity[] = [];
+      for (const c of data.comments ?? []) {
+        if (!c.id || !c.createdDate) continue;
+        if (Date.parse(c.createdDate) <= cutoff) continue;
+        if (isSamePerson(c.createdBy?.uniqueName ?? "", c.createdBy?.displayName ?? "", identity)) continue;
+        out.push({
+          ticketId: id,
+          commentId: String(c.id),
+          at: c.createdDate,
+          authorName: c.createdBy?.displayName ?? "",
+          // Without a trustworthy identity GUID this stays false, so such a
+          // comment is reported as an ordinary one rather than as a mention.
+          mentionsMe: myIdentityId ? (c.mentions ?? []).some((m) => m.targetId === myIdentityId) : false,
+        });
+      }
+      return out;
+    })
+  );
+
+  // A work item that cannot be read — deleted, or in a project this token does
+  // not reach — costs its own notification, not the whole poll.
+  return perItem.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 }

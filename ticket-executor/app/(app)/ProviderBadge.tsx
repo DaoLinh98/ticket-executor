@@ -2,15 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import SprintPicker from "../SprintPicker";
-import { connectionLabel, providerMeta, type ProviderId } from "@/lib/providers";
-import { FONT } from "@/lib/ui";
+import { connectionLabel, type ProviderId } from "@/lib/providers";
 import { CONNECTION_CHANGED_EVENT } from "../connectionEvents";
 
 type Connection = { id: string; label: string; org: string; isActive: boolean };
 
-// Shared "which tracker am I driving" marker, rendered at the end of every
-// page header: the organization currently connected, and the provider it
-// belongs to. The picker is the app-wide organization switch — one POST
+// Shared organization marker, rendered at the end of every page header: the
+// organization currently connected. The picker is the app-wide switch — one POST
 // re-points every credential consumer (`resolveCredential()`), and the event it
 // fires is what makes the open page reload its data as that organization.
 const orgLeading = (
@@ -66,7 +64,8 @@ export default function ProviderBadge({ provider }: { provider?: ProviderId }) {
   };
 
   if (!id) return null;
-  // Picker first, provider last: "CONNECTING · …" closes every page header.
+  // Just the organization switch: the provider marker itself lives in the
+  // Sidebar (ProviderTag), so it is stated once instead of on every header.
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: "0 0 auto" }}>
       {active && (
@@ -79,12 +78,6 @@ export default function ProviderBadge({ provider }: { provider?: ProviderId }) {
           align="right"
         />
       )}
-      <span
-        title="Connected work-tracking provider"
-        style={{ flex: "0 0 auto", whiteSpace: "nowrap", fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}
-      >
-        CONNECTING · {providerMeta(id).short}
-      </span>
     </div>
   );
 }
