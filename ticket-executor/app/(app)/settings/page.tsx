@@ -13,11 +13,12 @@ import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
-  animatedBackground: true, clickEffects: true, autoImplement: true, autoResolveCodeReview: true,
+  animatedBackground: true, clickEffects: true, ringAnimation: true, autoImplement: true, autoResolveCodeReview: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
   manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
   evaluateBeforePublish: false,
@@ -269,6 +270,7 @@ export default function SettingsPage() {
           detail: {
             animatedBackground: data.settings.animatedBackground,
             clickEffects: data.settings.clickEffects,
+            ringAnimation: data.settings.ringAnimation,
           },
         })
       );
@@ -545,6 +547,13 @@ export default function SettingsPage() {
         onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, clickEffects: !s.clickEffects })); }}
         desc={<>On: a bolt strikes where you click, and every spinner (the buttons of a running ticket) keeps striking itself while it spins.<br />Off: no bolts at all — clicks and running buttons stay still.</>}
       />
+      <div style={divider} />
+      <ToggleRow
+        label="Border glow"
+        on={settings.ringAnimation}
+        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, ringAnimation: !s.ringAnimation })); }}
+        desc="On: the light sweeps around the border of every button, tab and panel. Off: those borders paint as a flat line."
+      />
     </div>
   );
 
@@ -560,6 +569,7 @@ export default function SettingsPage() {
       <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Settings" kicker="D-AGENT · CONFIGURATION" icon={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>} />
         <div style={{ flex: 1 }} />
+        <NotificationCenter />
         <ProviderBadge provider={pm.id} />
       </header>
 

@@ -8,7 +8,10 @@ import type { CountEntry, DashboardMetrics, SkillConsistency } from "@/lib/execu
 import { COLORS, FONT, card, pill, ringBorder, tintedCard } from "@/lib/ui";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import NotificationCenter from "../NotificationCenter";
+import PageToolbar from "../PageToolbar";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import { usePagePrefs } from "../../pagePrefs";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -251,20 +254,47 @@ export default function DashboardPage() {
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const { prefs, ready: prefsReady, save: savePrefs } = usePagePrefs<{
+    provider: string;
+    project: string;
+    rangeLabel: string;
+  }>("dashboard", { provider: "", project: "", rangeLabel: "" });
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [rangeLabel, setRangeLabel] = useState("");
   // Bumped when the header switches organization. The server scopes these
   // metrics to the active connection, so the same query string is a different
   // question after a switch — and the project filter is another organization's
-  // list, so it goes back to All.
+  // list, so it comes back from that organization's own remembered filters.
   const [orgEpoch, setOrgEpoch] = useState(0);
 
   useEffect(() => {
-    const onChanged = () => { setProject(""); setOrgEpoch((n) => n + 1); };
+    const onChanged = () => { setOrgEpoch((n) => n + 1); };
     window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
   }, []);
+
+  // The filters this organization was last looking at. Applied before the first
+  // fetch so the dashboard is not queried twice for two different questions.
+  useEffect(() => {
+    if (!prefsReady) return;
+    setProvider(prefs.provider);
+    setProject(prefs.project);
+    setRangeLabel(prefs.rangeLabel);
+  }, [prefsReady, prefs]);
+
+  useEffect(() => {
+    if (!prefsReady) return;
+    savePrefs({ provider, project, rangeLabel });
+  }, [prefsReady, provider, project, rangeLabel, savePrefs]);
+
+  // A remembered filter that this organization has no runs for would show an
+  // empty dashboard and look broken. Drop it back to All instead.
+  useEffect(() => {
+    if (!data) return;
+    if (project && !data.filters.projects.includes(project)) setProject("");
+    if (provider && !data.filters.providers.includes(provider)) setProvider("");
+  }, [data, project, provider]);
 
   const query = useCallback(() => {
     const qs = new URLSearchParams();
@@ -290,13 +320,15 @@ export default function DashboardPage() {
   }, [query]);
 
   useEffect(() => {
+    if (!prefsReady) return;
     void load();
-  }, [load, orgEpoch]);
+  }, [prefsReady, load, orgEpoch]);
 
   // The funnel talks to the provider (one or two round-trips per PR), so it is
   // fetched on its own and merged in when it lands — a slow or unreachable
   // provider must never hold up the rest of the dashboard.
   useEffect(() => {
+    if (!prefsReady) return;
     let cancelled = false;
     setFunnel(null);
     void (async () => {
@@ -311,7 +343,7 @@ export default function DashboardPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [query, orgEpoch]);
+  }, [prefsReady, query, orgEpoch]);
 
   // Same rounded-panel-with-spinning-ring treatment as the log panel in ExecutionTab —
   // shape:"none" keeps the ring's animated conic-gradient background while letting us
@@ -347,10 +379,15 @@ export default function DashboardPage() {
 
   return (
     <div style={{ position: "relative", height: "100vh", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
-      {/* zIndex above the metric grid: the filter dropdowns open downwards over it. */}
       <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Run Metrics" kicker="D-AGENT · ANALYTICS" icon={<path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />} />
         <div style={{ flex: 1 }} />
+        <NotificationCenter />
+        <ProviderBadge />
+      </header>
+
+      {/* This page's own filters — what the metrics below are counted over. */}
+      <PageToolbar>
         <div style={{ width: "170px" }}>
           <SelectMenu variant="filter" alwaysGlow value={rangeLabel} onChange={setRangeLabel} options={Object.keys(RANGES)} allLabel="Range: All time" ariaLabel="Filter by time range" />
         </div>
@@ -360,8 +397,7 @@ export default function DashboardPage() {
         <div style={{ width: "210px" }}>
           <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
-        <ProviderBadge />
-      </header>
+      </PageToolbar>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
         <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>

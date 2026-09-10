@@ -72,6 +72,8 @@ export type SettingsView = {
   animatedBackground: boolean;
   /** Fire the lightning-bolt effect on clicks and from every mounted spinner. */
   clickEffects: boolean;
+  /** Sweep the energy ring around every ringBorder() edge. Off = flat borders. */
+  ringAnimation: boolean;
   autoImplement: boolean;
   autoResolveCodeReview: boolean;
   scope: "team" | "personal";

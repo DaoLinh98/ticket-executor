@@ -21,17 +21,16 @@ import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
-import {
-  buildNotifications, markAllRead, markRead,
-  type AppNotification, type AutomationSource, type PullRequestSource, type ReadMap, type RunEventSource, type TicketActivitySource,
-} from "@/lib/notifications";
+import type { RunEventSource } from "@/lib/notifications";
+import { useNotifications } from "./(app)/NotificationsProvider";
 import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
+import { usePagePrefs } from "./pagePrefs";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
 import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
-import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
+import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
 import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
 
@@ -39,10 +38,10 @@ import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSk
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
 // in ./ticket-executor/*.
 
-// How often the bell re-asks its sources. Minutes rather than seconds: the
-// review half costs one provider round-trip per candidate ticket, and a
-// reviewer's comment is not a real-time event. The moments the answer genuinely
-// changes — a run publishing a PR, a fix-review run finishing — call
+// How often the board-scoped review poll re-asks. Minutes rather than seconds:
+// it costs one provider round-trip per candidate ticket, and a reviewer's
+// comment is not a real-time event. The moments the answer genuinely changes —
+// a run publishing a PR, a fix-review run finishing — call
 // refreshNotifications() directly instead of waiting for the tick.
 const NOTIFY_POLL_MS = 120_000;
 
@@ -52,16 +51,22 @@ const NOTIFY_POLL_MS = 120_000;
 // wrong is paid at the provider, one round-trip per ticket.
 const NOTIFY_MIN_GAP_MS = 20_000;
 
-// Where the bell's read state lives. A different key from the review-only bell's
-// `reviewReadMap` on purpose: those entries were keyed by ticket id alone, which
-// is exactly the collision `notificationKey()` exists to fix, so the old map is
-// left behind rather than migrated into a shape it cannot express.
-const NOTIFY_READ_KEY = "notificationsRead";
+// The tabs a notification is allowed to land on — the same set
+// `NotificationTab` names, validated here because it arrives as a URL string.
+const ROUTE_TABS: TabId[] = ["overview", "plan", "execution", "result", "resolve-review"];
 
 // Observed run outcomes are session state with nothing to expire them, and a tab
 // left open for a day of batch runs would accumulate every one. The oldest are
 // also the least worth showing.
 const RUN_EVENT_CAP = 50;
+
+// The two answers the plan filter offers. Full sentences rather than "Planned" /
+// "Unplanned" because the filter row shows the chosen value on its own, and
+// "Unplanned" alone reads as a property of the ticket rather than of this
+// sprint's plan.
+const PLANNED_YES = "In the sprint plan";
+const PLANNED_NO = "Not in the plan";
+const PLANNED_OPTIONS = [PLANNED_YES, PLANNED_NO];
 
 // One place that turns the API's RunView into the UI's ExecView. This used to be
 // written out three times (open a past run / stream update / rehydrate), which is
@@ -107,7 +112,24 @@ function iterationPathFor(options: IterationOption[], name: string): string {
 }
 
 export default function TicketExecutor() {
+  // Which project, sprint and view this organization was last looking at.
+  // Restored before the first provider call so the screen opens on the work in
+  // progress instead of the first project's current iteration.
+  const { prefs, ready: prefsReady, save: savePrefs } = usePagePrefs<{
+    project: string;
+    sprint: string;
+    scope: string;
+    ticket: string;
+  }>("ticket-execution", { project: "", sprint: "", scope: "sprint", ticket: "" });
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  const [orgEpoch, setOrgEpoch] = useState(0);
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  // Tickets the bell sent the developer to that this board does not contain —
+  // released work, or a ticket in another project. Held here as well as in
+  // `tickets` so a board reload keeps showing the ticket being looked at
+  // instead of dropping it back to the first row of the list.
+  const offBoardRef = useRef<Map<string, Ticket>>(new Map());
   const [loadError, setLoadError] = useState<string>("");
   const [ticketsNotice, setTicketsNotice] = useState<string>("");
   const [sprintLabel, setSprintLabel] = useState<string>("");
@@ -144,6 +166,12 @@ export default function TicketExecutor() {
   const [fStatus, setFStatus] = useState("");
   const [fType, setFType] = useState("");
   const [fAssignee, setFAssignee] = useState("");
+  const [fPlanned, setFPlanned] = useState("");
+  // Queue position per ticket id, for the tickets this sprint's plan carries.
+  // Read-only here — My Sprint owns the plan; this screen only needs to answer
+  // "is this one already scheduled, and where in the order", so a ticket is not
+  // picked up by hand while the scheduler is holding a slot for it.
+  const [plannedOrder, setPlannedOrder] = useState<Record<string, number>>({});
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -163,6 +191,7 @@ export default function TicketExecutor() {
   const [settings, setSettings] = useState<SettingsView>({
     provider: "azure-devops",
     clickEffects: true,
+    ringAnimation: true,
     org: "",
     pat: "",
     hasPat: false,
@@ -191,15 +220,6 @@ export default function TicketExecutor() {
   // The last poll could not reach the provider. The bell keeps showing what it
   // last knew and says so, rather than rendering an outage as "all clear".
   const [reviewDegraded, setReviewDegraded] = useState(false);
-  // What the scheduler did while nobody was watching — one database read, no
-  // provider round-trip (see /api/notifications).
-  const [automation, setAutomation] = useState<AutomationSource[]>([]);
-  // Pull requests that concern the developer, already narrowed server-side —
-  // one provider round-trip whatever the board holds.
-  const [pullRequests, setPullRequests] = useState<PullRequestSource[]>([]);
-  // Comments that landed on the developer's work. Server-side this is the one
-  // incremental source; it arrives here as a rolling window like the rest.
-  const [ticketActivity, setTicketActivity] = useState<TicketActivitySource[]>([]);
   // Terminal run outcomes this session actually watched happen. Kept as observed
   // events rather than derived from `execs`, because a run that succeeded last
   // week is not news — see `fromRunEvents`.
@@ -207,9 +227,6 @@ export default function TicketExecutor() {
   // skill → the node list its graph walks, so the progress timeline can be drawn
   // before a run exists. Fetched once; the graphs are static code on the server.
   const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; effects: string }[]>>({});
-  const [notifRead, setNotifRead] = useState<ReadMap>({});
-  const [bellOpen, setBellOpen] = useState(false);
-  const bellRef = useRef<HTMLDivElement>(null);
   // Mirror of selectedId for use inside stable callbacks (SSE handlers) without
   // re-memoizing them on every selection change.
   const selectedIdRef = useRef(selectedId);
@@ -220,6 +237,10 @@ export default function TicketExecutor() {
   const [planBusy, setPlanBusy] = useState<Record<string, "approve" | "revise" | "cancel" | undefined>>({});
 
   const { fireBoltFromEvent } = useBoltsContext();
+  // The bell itself lives in the shared shell. This screen is only the source
+  // of the parts no other page can answer for: the board-scoped review poll,
+  // the runs this session is watching, and the ticket titles it has loaded.
+  const { setLocalSources, refresh: refreshShared } = useNotifications();
   const logRef = useRef<HTMLDivElement>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -236,10 +257,21 @@ export default function TicketExecutor() {
   const detailFetchedRef = useRef<Set<string>>(new Set());
 
   const searchParams = useSearchParams();
+  const ticketsRef = useRef(tickets);
+  ticketsRef.current = tickets;
+  // The query params, read through refs: the bell pushes `?ticket=&tab=` onto
+  // this same route, and a workspace loader that depended on `searchParams`
+  // would reload the whole screen — projects, sprints, tickets — every time a
+  // notification was clicked.
+  const urlProjectRef = useRef("");
+  urlProjectRef.current = searchParams.get("project") ?? "";
+  // The ticket the bell sent us to, while it is still being fetched. A board
+  // load landing in that window must not reset the selection to its first row.
+  const routeTicketRef = useRef("");
 
   // ---- data load ----
   // Fetch the ticket list for a given provider/project (and optional sprint override) and refresh the header sprint.
-  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean; scope?: TicketScope }) => {
+  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean; scope?: TicketScope; preferTicket?: string }) => {
     // The caller's scope wins over the ref: a switch calls this in the same tick
     // it sets the new scope, and reading state here would load the old view.
     // Everything else — mount, a project switch — means "the view I am on".
@@ -261,9 +293,22 @@ export default function TicketExecutor() {
       else if (data.truncated) setTicketsNotice(`Showing the first ${(data.tickets ?? []).length} work items — this ${SCOPE_LABEL[viewScope].toLowerCase()} has more.`);
       setSprintLabel(typeof data.sprint === "string" ? data.sprint : "");
       const list: Ticket[] = data.tickets ?? [];
+      const merged = [...list, ...[...offBoardRef.current.values()].filter((x) => !list.some((t) => t.id === x.id))];
       detailFetchedRef.current.clear();
-      setTickets(list);
-      setSelectedId((prev) => (list.some((t) => t.id === prev) ? prev : list[0]?.id ?? ""));
+      setTickets(merged);
+      // The ticket the screen was last on, when this board still has it. Only
+      // the initial load passes one: switching project, sprint or view is a
+      // request for a different list, and landing on a row from the previous
+      // one would be answering a question that was not asked.
+      const preferred = opts?.preferTicket && list.some((t) => t.id === opts.preferTicket) ? opts.preferTicket : "";
+      // `prev` is empty on the first load, and so is the route ref — comparing
+      // them without that guard held the selection at nothing instead of
+      // falling through to the first row.
+      setSelectedId((prev) =>
+        merged.some((t) => t.id === prev) || (prev !== "" && prev === routeTicketRef.current)
+          ? prev
+          : preferred || list[0]?.id || ""
+      );
       if (opts?.notify) {
         if (data.error) showToast(data.error, 8000, "error");
         else if (data.notice) showToast(data.notice, 8000, "error");
@@ -301,7 +346,7 @@ export default function TicketExecutor() {
 
   // Populate the sprint picker for a project (Azure DevOps only) and default-select
   // ADO's current iteration. Returns the resolved current-sprint name.
-  const loadSprintOptions = useCallback(async (provider: ProviderId, project: string): Promise<string> => {
+  const loadSprintOptions = useCallback(async (provider: ProviderId, project: string, preferred?: string): Promise<string> => {
     if (provider !== "azure-devops" || !project) {
       setSprintOptions([]);
       sprintOptionsRef.current = [];
@@ -327,8 +372,12 @@ export default function TicketExecutor() {
       if (why && scopeRef.current === "sprint") showToast(`Sprints could not be loaded — ${why}`, 9000, "error");
       const current = typeof data.current === "string" ? data.current : "";
       setCurrentSprint(current);
-      setSelectedSprint(current);
-      return current;
+      // A remembered sprint only survives if this project still has it — a
+      // sprint name from another project would send the provider a path it
+      // cannot resolve.
+      const chosen = preferred && list.some((i) => i.name === preferred) ? preferred : current;
+      setSelectedSprint(chosen);
+      return chosen;
     } catch (e) {
       setSprintOptions([]);
       sprintOptionsRef.current = [];
@@ -379,22 +428,124 @@ export default function TicketExecutor() {
       /* ignore — fall back to default provider */
     }
     const list = await loadProjectOptions(provider);
-    const urlProject = searchParams.get("project") ?? "";
-    const project =
-      urlProject && list.some((p) => p.name === urlProject) ? urlProject : list[0]?.name ?? "";
+    const urlProject = urlProjectRef.current;
+    const remembered = prefsRef.current;
+    // An explicit `?project=` beats what the screen was last on; a remembered
+    // project only counts while this organization still has it.
+    const project = urlProject && list.some((p) => p.name === urlProject)
+      ? urlProject
+      : remembered.project && list.some((p) => p.name === remembered.project)
+        ? remembered.project
+        : list[0]?.name ?? "";
     setSelectedProject(project);
-    const current = await loadSprintOptions(provider, project);
-    await reloadTickets(provider, project, current || undefined);
-  }, [loadProjectOptions, loadSprintOptions, reloadTickets, searchParams]);
+    const viewScope = (TICKET_SCOPES as readonly string[]).includes(remembered.scope)
+      ? (remembered.scope as TicketScope)
+      : "sprint";
+    setScope(viewScope);
+    scopeRef.current = viewScope;
+    const sprint = await loadSprintOptions(provider, project, remembered.sprint);
+    await reloadTickets(provider, project, viewScope === "sprint" ? sprint || undefined : undefined, {
+      scope: viewScope,
+      preferTicket: remembered.ticket,
+    });
+  }, [loadProjectOptions, loadSprintOptions, reloadTickets]);
 
+  // The sprint's plan, for the "Planned" filter and the queue badge.
+  //
+  // Only in the sprint view: a plan is keyed by an iteration, so a backlog or a
+  // board has no plan to be in and badging those rows would claim otherwise.
+  // A plan that does not exist yet is an empty map, not an error — most projects
+  // never have one, and this screen works exactly as it did before without it.
   useEffect(() => {
-    const onConnectionChanged = () => { void loadWorkspace(); };
+    const sprint = selectedSprint || sprintLabel;
+    if (scope !== "sprint" || !selectedProject || !sprint) {
+      setPlannedOrder({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams({ provider: settings.provider, project: selectedProject, sprint });
+        const r = await fetch(`/api/my-sprint/plan?${qs.toString()}`);
+        const d = await r.json();
+        if (cancelled) return;
+        const items: { ticketId: string; implementOrder: number }[] = d?.plan?.items ?? [];
+        setPlannedOrder(Object.fromEntries(items.map((i) => [String(i.ticketId), i.implementOrder])));
+      } catch {
+        if (!cancelled) setPlannedOrder({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scope, selectedProject, selectedSprint, sprintLabel, settings.provider]);
+
+  // Put a ticket the current board does not contain on screen. The bell's
+  // destination is a ticket id, and the board it lands on is bounded by an
+  // iteration, a backlog or an open-state board — released work is in none of
+  // them, which is why clicking such a notification used to select an id the
+  // detail pane could not resolve and appear to do nothing.
+  const ensureTicket = useCallback(async (id: string) => {
+    if (!id) return;
+    if (ticketsRef.current.some((t) => t.id === id)) return;
+    if (offBoardRef.current.has(id)) return;
+    try {
+      const r = await fetch(`/api/tickets/${encodeURIComponent(id)}`);
+      const data = await r.json();
+      const ticket: Ticket | null = data.ticket ?? null;
+      if (!ticket) {
+        routeTicketRef.current = "";
+        showToast(`#${id} could not be loaded from the provider`, 8000, "error");
+        return;
+      }
+      offBoardRef.current.set(ticket.id, ticket);
+      setTickets((list) => (list.some((t) => t.id === ticket.id) ? list : [...list, ticket]));
+    } catch {
+      routeTicketRef.current = "";
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showToast is declared later but stable (empty-dep useCallback)
+  }, []);
+
+  // `?ticket=&tab=` is how every page's bell reaches this screen, including
+  // from this screen itself. `at` is a nonce the bell adds so clicking the same
+  // notification twice re-lands on its tab rather than being a no-op URL.
+  const routeTicket = searchParams.get("ticket") ?? "";
+  const routeTab = searchParams.get("tab") ?? "";
+  const routeAt = searchParams.get("at") ?? "";
+  useEffect(() => {
+    if (!routeTicket) return;
+    routeTicketRef.current = routeTicket;
+    setSelectedId(routeTicket);
+    if (ROUTE_TABS.includes(routeTab as TabId)) setTab(routeTab as TabId);
+    void ensureTicket(routeTicket);
+  }, [routeTicket, routeTab, routeAt, ensureTicket]);
+
+  // Bumped rather than reloading here directly: `usePagePrefs` re-hydrates to
+  // the new organization's remembered controls on the same event, and the
+  // workspace load has to read those, not the outgoing organization's.
+  useEffect(() => {
+    const onConnectionChanged = () => { setOrgEpoch((n) => n + 1); };
     window.addEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
     return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onConnectionChanged);
-  }, [loadWorkspace]);
+  }, []);
 
   useEffect(() => {
+    if (!prefsReady) return;
     void loadWorkspace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- orgEpoch is the trigger, not an input
+  }, [prefsReady, orgEpoch, loadWorkspace]);
+
+  // Remember what the screen is on. Gated on a resolved project so the empty
+  // state of a still-loading screen never overwrites the stored choice.
+  useEffect(() => {
+    if (!prefsReady || !selectedProject) return;
+    // An empty selection is a board still loading, not a deselection — writing
+    // it would forget the ticket a moment before the reload re-picks it.
+    savePrefs({
+      project: selectedProject, sprint: selectedSprint, scope,
+      ...(selectedId ? { ticket: selectedId } : {}),
+    });
+  }, [prefsReady, selectedProject, selectedSprint, scope, selectedId, savePrefs]);
+
+  useEffect(() => {
     (async () => {
       try {
         const r = await fetch("/api/skills");
@@ -421,7 +572,7 @@ export default function TicketExecutor() {
       Object.values(pollTimers.current).forEach(clearInterval);
       Object.values(sseConnections.current).forEach((es) => es.close());
     };
-  }, [loadWorkspace]);
+  }, []);
 
   // ---- execution history ----
   const loadHistory = useCallback(async (ticketId: string) => {
@@ -555,32 +706,7 @@ export default function TicketExecutor() {
     }
   }, []);
 
-  // Load the bell's read/unread bookkeeping (persisted across reloads).
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(NOTIFY_READ_KEY);
-      if (raw) setNotifRead(JSON.parse(raw));
-    } catch {
-      /* ignore corrupt storage */
-    }
-  }, []);
-
-  const persistRead = useCallback((next: ReadMap): ReadMap => {
-    try {
-      localStorage.setItem(NOTIFY_READ_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore quota errors */
-    }
-    return next;
-  }, []);
-
-  // Mark one notification read at its current fingerprint — so the same ticket
-  // saying something new becomes unread again.
-  const markNotificationRead = useCallback((n: AppNotification) => {
-    setNotifRead((prev) => persistRead(markRead(prev, n, new Date().toISOString())));
-  }, [persistRead]);
-
-  // Poll the bell's two fetched sources on one timer.
+  // Poll the board-scoped review source.
   //
   // The review half is what costs money, because it costs the provider one
   // round-trip *per ticket asked about*. Three things bound it:
@@ -590,10 +716,6 @@ export default function TicketExecutor() {
   //  - the interval is minutes, not seconds — a review comment is not a
   //    real-time event, and `refreshNotifications` is called directly at the
   //    moments the answer actually changes (a run publishing, a fix landing).
-  //
-  // The automation half is one database query and rides the same tick rather
-  // than adding a second timer — two timers over one dropdown is two schedules
-  // to reason about for no gain.
   const reviewPollIds = useMemo(() => {
     const ids = tickets.map((tk) => tk.id);
     // The same "effective status" getStatus() computes — spelled out because
@@ -618,7 +740,7 @@ export default function TicketExecutor() {
   reviewPollRef.current = { ...reviewPollIds, provider: settings.provider };
   const reviewFetchedAt = useRef(0);
 
-  const refreshNotifications = useCallback(async (opts?: { force?: boolean }) => {
+  const refreshNotifications = useCallback(async (opts?: { force?: boolean; shared?: boolean }) => {
     const { ids, reviewable, provider } = reviewPollRef.current;
     // A floor on the rate, independent of whatever caused the call. The interval
     // is the schedule; this is what stops a re-render storm, a remount or a
@@ -651,27 +773,16 @@ export default function TicketExecutor() {
       }
     };
 
-    // Scoped by identity server-side, so it is asked whatever board is on
-    // screen: the scheduler works a plan while the developer looks elsewhere.
-    // A failure here leaves the last known events alone and is not reported as
-    // degraded — that flag is the review half's claim about the provider.
-    const scheduler = async () => {
-      try {
-        const r = await fetch(`/api/notifications?provider=${encodeURIComponent(provider)}`);
-        const data = await r.json();
-        if (Array.isArray(data.automation)) setAutomation(data.automation);
-        if (Array.isArray(data.pullRequests)) setPullRequests(data.pullRequests);
-        if (Array.isArray(data.ticketActivity)) setTicketActivity(data.ticketActivity);
-      } catch {
-        /* keep what was last known */
-      }
-    };
-
-    await Promise.all([reviews(), scheduler()]);
-    // Deliberately no dependencies: every parameter is read from a ref above, so
-    // this function's identity never changes and the interval below is never
-    // torn down by a re-render.
-  }, []);
+    // The identity-scoped half (automation, pull requests, comments, plan
+    // reviews) belongs to the shared bell and runs on its own timer wherever it
+    // is rendered. It is nudged from here only at the moments this screen knows
+    // its answer just changed — a run publishing a pull request — and never on
+    // this timer, which would poll it a second time from one page.
+    await Promise.all([reviews(), ...(opts?.shared ? [refreshShared({ force: true })] : [])]);
+    // Deliberately only the provider's stable refresh in the dependencies: every
+    // other parameter is read from a ref above, so this function's identity
+    // never changes and the interval below is never torn down by a re-render.
+  }, [refreshShared]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -696,16 +807,6 @@ export default function TicketExecutor() {
     // `reviewPollIds.ids` is a string, so this restarts only when the board
     // genuinely changes — a reload that returns the same tickets does not.
   }, [reviewPollIds.ids, refreshNotifications]);
-
-  // Close the bell dropdown on outside click.
-  useEffect(() => {
-    if (!bellOpen) return;
-    const onDoc = (e: globalThis.MouseEvent) => {
-      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [bellOpen]);
 
   // Open a past run (from DB) in the viewer.
   const openRun = useCallback(async (ticketId: string, execId: string, e?: MouseEvent) => {
@@ -1032,7 +1133,7 @@ export default function TicketExecutor() {
       // poll, a fix-review run resolved threads. Ask now rather than leaving the
       // notification up to two minutes stale; `force` because this is a known
       // change, not a re-render that merely might be one.
-      void refreshNotifications({ force: true });
+      void refreshNotifications({ force: true, shared: true });
       // Free this ticket's batch-queue slot (no-op if it wasn't batch-started)
       // and let the next queued ticket, if any, take its place.
       if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
@@ -1400,41 +1501,43 @@ export default function TicketExecutor() {
   // ---- derived ----
   const execStatusOf = (id: string): UiRunState => execs[id]?.state ?? "none";
   const activeCount = Object.values(execs).filter((e) => e.state === "running" || e.state === "waiting").length;
-  // Every source the bell speaks for, merged by the one module that owns the
-  // rule. Waiting runs are read off current state because a parked plan is a
-  // standing condition; the rest are events.
-  const notifications = useMemo(
+  // Waiting runs are read off current state because a parked plan is a standing
+  // condition; the rest are events.
+  const waitingRuns = useMemo(
     () =>
-      buildNotifications({
-        reviews: reviewSummary,
-        pullRequests,
-        ticketActivity,
-        waitingRuns: Object.entries(execs)
-          .filter(([, ex]) => ex.state === "waiting" && ex.runId)
-          .map(([ticketId, ex]) => ({ ticketId, runId: ex.runId as string })),
-        runEvents,
-        automation,
-      }),
-    [reviewSummary, pullRequests, ticketActivity, execs, runEvents, automation]
+      Object.entries(execs)
+        .filter(([, ex]) => ex.state === "waiting" && ex.runId)
+        .map(([ticketId, ex]) => ({ ticketId, runId: ex.runId as string })),
+    [execs]
   );
-  const ticketTitleOf = useCallback(
-    (id: string) => tickets.find((t) => t.id === id)?.title ?? "",
-    [tickets]
-  );
-
+  const ticketTitles = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const t of tickets) out[t.id] = t.title;
+    return out;
+  }, [tickets]);
+  useEffect(() => {
+    setLocalSources({ reviews: reviewSummary, waitingRuns, runEvents, degraded: reviewDegraded, titles: ticketTitles });
+  }, [setLocalSources, reviewSummary, waitingRuns, runEvents, reviewDegraded, ticketTitles]);
   const q = search.trim().toLowerCase();
   const statusOptions = Array.from(new Set(tickets.map((x) => getStatus(x)).filter(Boolean)));
   const typeOptions = Array.from(new Set(tickets.map((x) => x.type).filter(Boolean)));
   const assigneeOptions = Array.from(new Set(tickets.map((x) => x.assignee).filter(Boolean)));
   const filtered = tickets.filter((t) => {
+    // The row the detail pane is showing always stays in the list. A ticket
+    // reached from a notification is usually off the board the filters were
+    // written for, and hiding it left the rail describing one ticket while the
+    // panel next to it described another.
+    if (t.id === selectedId) return true;
     if (q && !(t.id + " " + t.title + " " + t.assignee + " " + t.project).toLowerCase().includes(q)) return false;
     if (fStatus && getStatus(t) !== fStatus) return false;
     if (fType && t.type !== fType) return false;
     if (fAssignee && t.assignee !== fAssignee) return false;
+    if (fPlanned === PLANNED_YES && !(t.id in plannedOrder)) return false;
+    if (fPlanned === PLANNED_NO && t.id in plannedOrder) return false;
     return true;
   });
-  const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0);
-  const clearFilters = () => { setFStatus(""); setFType(""); setFAssignee(""); };
+  const activeFilters = (fStatus ? 1 : 0) + (fType ? 1 : 0) + (fAssignee ? 1 : 0) + (fPlanned ? 1 : 0);
+  const clearFilters = () => { setFStatus(""); setFType(""); setFAssignee(""); setFPlanned(""); };
 
   const t = tickets.find((x) => x.id === selectedId);
   const effStatus = t ? getStatus(t) : "";
@@ -1678,31 +1781,6 @@ export default function TicketExecutor() {
         selectedProject={selectedProject}
         onSelectProject={onSelectProject}
         activeCount={activeCount}
-        bellRef={bellRef}
-        bellOpen={bellOpen}
-        onToggleBell={(e) => { fireBoltFromEvent(e); setBellOpen((o) => !o); }}
-        notifications={notifications}
-        notificationsRead={notifRead}
-        notificationsDegraded={reviewDegraded}
-        titleOf={ticketTitleOf}
-        onOpenNotification={(n, e) => {
-          markNotificationRead(n);
-          // A pull request waiting on the developer's review belongs to
-          // somebody else's work item — there is no ticket of theirs to select,
-          // so the provider's own page is the destination.
-          if (!n.ticketId) {
-            if (n.href) window.open(n.href, "_blank", "noopener");
-            setBellOpen(false);
-            return;
-          }
-          selectTicket(n.ticketId, e);
-          // The notification's own kind decides the destination — a review
-          // comment opens Resolve Review, everything else lands where that kind
-          // is actually answered.
-          setTab(n.tab);
-          setBellOpen(false);
-        }}
-        onMarkAllNotificationsRead={() => setNotifRead((prev) => persistRead(markAllRead(prev, notifications, new Date().toISOString())))}
       />
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
@@ -1725,9 +1803,13 @@ export default function TicketExecutor() {
           setFType={setFType}
           fAssignee={fAssignee}
           setFAssignee={setFAssignee}
+          fPlanned={fPlanned}
+          setFPlanned={setFPlanned}
           statusOptions={statusOptions}
           typeOptions={typeOptions}
           assigneeOptions={assigneeOptions}
+          plannedOptions={PLANNED_OPTIONS}
+          plannedOrder={plannedOrder}
           multiTicketMode={settings.multiTicketMode}
           selectMode={selectMode}
           onToggleSelectMode={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}

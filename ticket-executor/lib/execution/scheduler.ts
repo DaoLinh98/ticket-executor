@@ -253,7 +253,15 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // lock on the same door, because the row is written by one process and read by
   // another two minutes at a time.
   const next = await prisma.plannedTicket.findFirst({
-    where: { planId: plan.id, implementState: "pending", blocked: false, claim: "mine" },
+    where: {
+      planId: plan.id,
+      implementState: "pending",
+      claim: "mine",
+      // Triage's verdict, unless the developer has overridden it. The override
+      // is a deliberate human act recorded on the row (`unblockedByUser`), which
+      // is the only thing that may outrank a blocker triage found.
+      OR: [{ blocked: false }, { unblockedByUser: true }],
+    },
     orderBy: { implementOrder: "asc" },
   });
   if (!next) return false;
@@ -262,7 +270,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // than every two minutes, which is what the `today` marker in the detail is
   // for — a log nobody can read is not evidence.
   const blockedCount = await prisma.plannedTicket.count({
-    where: { planId: plan.id, implementState: "pending", blocked: true },
+    where: { planId: plan.id, implementState: "pending", blocked: true, unblockedByUser: false },
   });
 
   // The root repo the project was last run with. The scheduler must not invent
@@ -311,6 +319,11 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
     reason: "queue",
     detail:
       `Queue position ${next.implementOrder}, release day ${next.releaseDay || "unscheduled"}` +
+      // A ticket triage said was not ready, started anyway on a human's say-so,
+      // is the one line in this log somebody will want to find later.
+      (next.blocked && next.unblockedByUser
+        ? ". Triage marked this one as needing clarification; you overrode that."
+        : "") +
       (blockedCount ? `. ${blockedCount} ticket(s) skipped, waiting on clarification.` : "") +
       ` (${today})`,
   });

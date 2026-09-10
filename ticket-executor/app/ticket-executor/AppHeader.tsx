@@ -1,14 +1,14 @@
 "use client";
 
-import type { MouseEvent, RefObject } from "react";
+import type { MouseEvent } from "react";
 import SprintPicker, { type IterationOption } from "../SprintPicker";
 import ProviderBadge from "../(app)/ProviderBadge";
 import PageHeading from "../(app)/PageHeading";
 import type { ProviderMeta } from "@/lib/providers";
-import type { AppNotification, ReadMap } from "@/lib/notifications";
 import { FONT, ringBorder, tabStyle } from "@/lib/ui";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
-import NotificationBell from "./NotificationBell";
+import NotificationCenter from "../(app)/NotificationCenter";
+import PageToolbar from "../(app)/PageToolbar";
 
 type Props = {
   pm: ProviderMeta;
@@ -25,17 +25,6 @@ type Props = {
   selectedProject: string;
   onSelectProject: (value: string, e: { clientX: number; clientY: number }) => void;
   activeCount: number;
-  bellRef: RefObject<HTMLDivElement | null>;
-  bellOpen: boolean;
-  onToggleBell: (e: MouseEvent) => void;
-  notifications: AppNotification[];
-  notificationsRead: ReadMap;
-  /** The last poll could not reach the provider — the list below is the last
-   *  known one, not a current "nothing to see". */
-  notificationsDegraded: boolean;
-  titleOf: (ticketId: string) => string;
-  onOpenNotification: (n: AppNotification, e: MouseEvent) => void;
-  onMarkAllNotificationsRead: () => void;
 };
 
 // Project picker leading icon (a small grid/folder), distinct from the sprint
@@ -46,57 +35,53 @@ const projectLeading = (
   </svg>
 );
 
-// Top bar (Ticket Execution): brand, project + sprint pickers, active-run
-// counter and the notification bell. Cross-page nav / Settings / Logout live in
-// the shared Sidebar.
+// Top bar (Ticket Execution) plus this page's control strip. The header carries
+// only what is true on every page — the page's identity, the bell, the connected
+// organization; the project, view and sprint pickers and the active-run counter
+// are this screen's own and live on the toolbar below it. Cross-page nav /
+// Settings / Logout live in the shared Sidebar.
 export default function AppHeader({
   pm, scope, onScopeChange, sprintLabel, sprintOptions, selectedSprint, currentSprint, onSprintChange,
   projectOptions, selectedProject, onSelectProject, activeCount,
-  bellRef, bellOpen, onToggleBell, notifications, notificationsRead, notificationsDegraded,
-  titleOf, onOpenNotification, onMarkAllNotificationsRead,
 }: Props) {
   return (
-    <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 5 }}>
-      <PageHeading title="Ticket Execution" kicker="D-AGENT · RUNS" icon={<path d="M8 5l8 7-8 7" />} />
-      <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
-      {/* Which view of the project's work. Segmented rather than a fourth
-          dropdown: three fixed choices that change what the whole screen is
-          showing should be visible at a glance, not one click deep. */}
-      <div role="tablist" aria-label="Ticket view" style={{ display: "flex", alignItems: "center", gap: "2px", marginLeft: "8px" }}>
-        {TICKET_SCOPES.map((s) => (
-          <button
-            key={s}
-            role="tab"
-            aria-selected={s === scope}
-            onClick={(e) => onScopeChange(s, e)}
-            style={tabStyle({ active: s === scope })}
-          >
-            {SCOPE_LABEL[s]}
-          </button>
-        ))}
-      </div>
-      {/* Only the sprint view is bounded by an iteration. Hidden rather than
-          disabled off it: a sprint name beside a backlog is a claim about what
-          the list is, and it would be the wrong one. */}
-      {scope === "sprint" && (
-        <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} currentName={currentSprint} onSelect={onSprintChange} />
-      )}
-      <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
-        <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
-      </div>
-      <NotificationBell
-        bellRef={bellRef}
-        open={bellOpen}
-        onToggle={onToggleBell}
-        notifications={notifications}
-        read={notificationsRead}
-        degraded={notificationsDegraded}
-        titleOf={titleOf}
-        onOpen={onOpenNotification}
-        onMarkAllRead={onMarkAllNotificationsRead}
-      />
-      <ProviderBadge provider={pm.id} />
-    </header>
+    <>
+      <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 30 }}>
+        <PageHeading title="Ticket Execution" kicker="D-AGENT · RUNS" icon={<path d="M8 5l8 7-8 7" />} />
+        <div style={{ flex: 1 }} />
+        <NotificationCenter />
+        <ProviderBadge provider={pm.id} />
+      </header>
+
+      <PageToolbar>
+        <SprintPicker label={selectedProject} options={projectOptions} value={selectedProject} onSelect={onSelectProject} leading={projectLeading} />
+        {/* Which view of the project's work. Segmented rather than a fourth
+            dropdown: three fixed choices that change what the whole screen is
+            showing should be visible at a glance, not one click deep. */}
+        <div role="tablist" aria-label="Ticket view" style={{ display: "flex", alignItems: "center", gap: "2px", marginLeft: "8px" }}>
+          {TICKET_SCOPES.map((s) => (
+            <button
+              key={s}
+              role="tab"
+              aria-selected={s === scope}
+              onClick={(e) => onScopeChange(s, e)}
+              style={tabStyle({ active: s === scope })}
+            >
+              {SCOPE_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        {/* Only the sprint view is bounded by an iteration. Hidden rather than
+            disabled off it: a sprint name beside a backlog is a claim about what
+            the list is, and it would be the wrong one. */}
+        {scope === "sprint" && (
+          <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} currentName={currentSprint} onSelect={onSprintChange} />
+        )}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
+          <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
+        </div>
+      </PageToolbar>
+    </>
   );
 }

@@ -7,6 +7,7 @@ import { COLORS, FONT, ringBorder, tintedCard } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 type Project = { id: string; name: string; description?: string };
@@ -59,6 +60,7 @@ export default function ProjectsPage() {
       <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Projects" kicker="D-AGENT · WORKSPACE" icon={<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />} />
         <div style={{ flex: 1 }} />
+        <NotificationCenter />
         <ProviderBadge />
       </header>
 

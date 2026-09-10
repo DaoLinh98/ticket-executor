@@ -8,6 +8,7 @@ import {
   releasePlannedTicket,
   setPlanAutomation,
   setPlanStatus,
+  setTicketUnblocked,
   tickNow,
   type TriageResult,
 } from "@/lib/executionStore";
@@ -102,13 +103,25 @@ export async function POST(req: Request) {
   return NextResponse.json({ plan, usedTriage: !!triage, widened: loaded.widened });
 }
 
-// PATCH /api/my-sprint/plan — activate, park, or change what the plan automates.
+// PATCH /api/my-sprint/plan — activate, park, or change what the plan automates,
+// and override triage's verdict on one ticket ({ item, unblocked }).
 //
 // Activation is the line between a draft and something that spends money and
 // writes to the tracker, so it is its own explicit action rather than a side
 // effect of building a plan.
 export async function PATCH(req: Request) {
   const body = await req.json().catch(() => ({}));
+
+  // Overriding triage on one ticket, rather than changing the plan. Handled
+  // first and returned from, because it is addressed by planned-ticket id and
+  // every branch below expects a plan id — running both off one `id` field
+  // would make the route's contract depend on which keys happen to be present.
+  if (typeof body.item === "string" && body.item && typeof body.unblocked === "boolean") {
+    const updated = await setTicketUnblocked(body.item, body.unblocked);
+    if (!updated) return NextResponse.json({ error: "No such planned ticket." }, { status: 404 });
+    return NextResponse.json({ plan: await planById(updated.planId) });
+  }
+
   const id = String(body.id ?? "");
   if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
 

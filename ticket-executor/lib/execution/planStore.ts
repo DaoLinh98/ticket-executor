@@ -180,6 +180,11 @@ export async function savePlan(
         claim: t.claim,
         assigneeNow: t.assigneeNow,
       },
+      // `unblockedByUser` is deliberately absent from both create and update.
+      // Every other field here is recomputed from the newest triage, which is
+      // the point of a rebuild; the override is not triage's to recompute. It
+      // stays on the row until the developer clears it, and the default on
+      // create is already false.
       update: {
         title: t.title,
         implementOrder: t.implementOrder,
@@ -227,6 +232,38 @@ export async function setPlanAutomation(
   patch: { autoImplement?: boolean; autoRelease?: boolean; reviewers?: string[] }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
+}
+
+/**
+ * Override — or withdraw the override on — triage's "needs clarification".
+ *
+ * Written through a function rather than from the route so the audit row is not
+ * optional: letting a ticket triage refused run unattended is exactly the kind
+ * of decision that has to be answerable a fortnight later, and a flag with no
+ * event behind it answers nothing.
+ *
+ * Returns null when the row is gone, which the caller reports as a 404 rather
+ * than pretending the write happened.
+ */
+export async function setTicketUnblocked(plannedId: string, unblocked: boolean) {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
+  if (!item) return null;
+
+  const updated = await prisma.plannedTicket.update({
+    where: { id: plannedId },
+    data: { unblockedByUser: unblocked },
+  });
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "implement",
+    outcome: "skipped",
+    reason: unblocked ? "unblocked-by-user" : "reblocked-by-user",
+    detail: unblocked
+      ? "Triage said this ticket needs clarification. You marked it ready to run anyway."
+      : "The override was withdrawn — this ticket waits for clarification again.",
+  });
+  return updated;
 }
 
 // ---- the audit log ----

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useRef } from "react";
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
 import type { Ticket, UiRunState } from "@/lib/types";
@@ -53,9 +54,15 @@ type Props = {
   setFType: Dispatch<SetStateAction<string>>;
   fAssignee: string;
   setFAssignee: Dispatch<SetStateAction<string>>;
+  fPlanned: string;
+  setFPlanned: Dispatch<SetStateAction<string>>;
   statusOptions: string[];
   typeOptions: string[];
   assigneeOptions: string[];
+  plannedOptions: string[];
+  /** Queue position per ticket id for the tickets this sprint's plan carries.
+   *  Empty outside the sprint view, and for a sprint with no plan. */
+  plannedOrder: Record<string, number>;
   multiTicketMode: boolean;
   selectMode: boolean;
   onToggleSelectMode: () => void;
@@ -74,13 +81,24 @@ type Props = {
 export default function TicketSidebar({
   tickets, filtered, scope, loading, loadError, ticketsNotice,
   search, setSearch, filtersOpen, setFiltersOpen, activeFilters, clearFilters,
-  fStatus, setFStatus, fType, setFType, fAssignee, setFAssignee,
-  statusOptions, typeOptions, assigneeOptions,
+  fStatus, setFStatus, fType, setFType, fAssignee, setFAssignee, fPlanned, setFPlanned,
+  statusOptions, typeOptions, assigneeOptions, plannedOptions, plannedOrder,
   multiTicketMode, selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
   queuedIds, onRunSelected, selectedId, execStatusOf, getStatus, onSelectTicket,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   const q = search.trim().toLowerCase();
+
+  // Bring the selected row into view. A callback ref rather than an effect on
+  // `selectedId`, because a notification selects its ticket before the board it
+  // sits in has loaded — the row mounts after any effect would have run, and
+  // the rail was left scrolled to somebody else's ticket.
+  const scrolledFor = useRef("");
+  const selectedRowRef = useCallback((node: HTMLButtonElement | null) => {
+    if (!node || scrolledFor.current === selectedId) return;
+    scrolledFor.current = selectedId;
+    node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedId]);
 
   // One ticket row. Extracted so the board view can render the same row inside
   // its column groups — the row is identical in every view; only what wraps it
@@ -109,6 +127,7 @@ export default function TicketSidebar({
     return (
       <button
         key={tk.id}
+        ref={sel ? selectedRowRef : undefined}
         onClick={(e) => {
           if (selectMode) {
             fireBoltFromEvent(e);
@@ -129,6 +148,23 @@ export default function TicketSidebar({
           )}
           <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, color: "var(--accent)" }}>#{tk.id}</span>
           <span style={typeBadge(tk.type)}>{tk.type}</span>
+          {/* Queue position, so "already planned" is visible without opening the
+              filter — and so the order the scheduler will work in is readable
+              from the same list a human picks a ticket out of. A planned ticket
+              with no position (already in review, or handed off) shows the mark
+              without a number rather than a misleading "0". */}
+          {tk.id in plannedOrder && (
+            <span
+              title={
+                plannedOrder[tk.id]
+                  ? `In the sprint plan — queue position ${plannedOrder[tk.id]}`
+                  : "In the sprint plan"
+              }
+              style={pill({ color: COLORS.indigo, size: "xs", weight: 700 })}
+            >
+              {plannedOrder[tk.id] ? `PLAN ${plannedOrder[tk.id]}` : "PLAN"}
+            </span>
+          )}
           <div style={{ flex: 1 }} />
           {queued ? (
             <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.1)", border: `color-mix(in srgb, ${COLORS.warning} 33%, transparent)`, size: "xs", weight: 700 })}>Queued</span>
@@ -201,13 +237,20 @@ export default function TicketSidebar({
           )}
         </div>
         {!selectMode && filtersOpen && (
-          <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
+          /* Four filters no longer fit the rail on one line, so the row wraps
+             into pairs rather than squeezing every menu down to a width that
+             shows none of its value. The plan filter is offered only where a
+             plan exists — see `plannedOrder`. */
+          <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
             {([
               { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
               { v: fType, set: setFType, label: "Type", opts: typeOptions },
               { v: fAssignee, set: setFAssignee, label: "Assignee", opts: assigneeOptions },
+              ...(Object.keys(plannedOrder).length
+                ? [{ v: fPlanned, set: setFPlanned, label: "Plan", opts: plannedOptions }]
+                : []),
             ] as const).map((f) => (
-              <div key={f.label} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+              <div key={f.label} style={{ position: "relative", flex: "1 1 44%", minWidth: 0 }}>
                 <SelectMenu
                   value={f.v}
                   onChange={f.set}

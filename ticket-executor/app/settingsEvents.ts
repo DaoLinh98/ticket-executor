@@ -11,4 +11,5 @@ export const SETTINGS_UPDATED_EVENT = "te:settings-updated";
 export type SettingsUpdatedDetail = {
   animatedBackground?: boolean;
   clickEffects?: boolean;
+  ringAnimation?: boolean;
 };

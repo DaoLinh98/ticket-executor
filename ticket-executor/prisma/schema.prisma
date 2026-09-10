@@ -19,6 +19,11 @@ model Setting {
   // into every mounted spinner (running buttons). false → both are suppressed;
   // the effect layer stays mounted but never emits a bolt.
   clickEffects   Boolean  @default(true)
+  // true (default) → the spinning conic-gradient "energy ring" sweeps around
+  // every button/tab/panel border (lib/ui.ts ringBorder). false → the same
+  // borders paint as a flat line: the app sets --te-ring-image globally, which
+  // is the override hook ringBorder already reads.
+  ringAnimation  Boolean  @default(true)
   // Auto-implementation mode. true → the original one-shot flow (implement-ticket-v2,
   // runs to a PR without stopping). false → the two-phase plan-review flow
   // (implement-ticket-v3, parks for plan approval before touching code).
@@ -511,6 +516,19 @@ model PlannedTicket {
   // Triage said a person has to answer something first. Planned and counted, but
   // never eligible for an automatic run.
   blocked        Boolean    @default(false)
+  // The developer overrode `blocked` and let this ticket run anyway.
+  //
+  // A separate column rather than clearing `blocked`, because the two are
+  // different facts and both have to survive: `blocked` is what triage found,
+  // and every rebuild recomputes it from the newest triage, so an override
+  // written into it would be erased by the next "Build plan". This one is never
+  // touched by a rebuild — the developer said it once, about a ticket, and it
+  // holds until they say otherwise.
+  //
+  // It exists because "needs clarification" is not always "cannot start": the
+  // question is often one the codebase already answers, and waiting for a BA to
+  // confirm what the repo makes obvious is a day lost for nothing.
+  unblockedByUser Boolean   @default(false)
   // Where the developer's claim on this ticket stands — see `lib/sprintClaim.ts`.
   // mine | handed-off | dropped. The row outlives the assignment that created
   // it: a ticket moved to QA under somebody else's name is still part of the

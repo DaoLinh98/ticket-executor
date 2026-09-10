@@ -4,8 +4,73 @@ import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
 import { markdownToHtml, sanitizeHtml } from "./richText";
 import type { TicketScope } from "./ticketScope";
+import { cached, invalidatePrefix } from "./redis";
 
 const API = "api-version=7.0";
+
+/**
+ * How long a cached provider answer stays good, in seconds.
+ *
+ * Only the stable, slow lookups are in here. Tickets, pull requests and review
+ * threads are deliberately absent: those are the reads the app performs right
+ * after writing to the provider, and serving a stale one would show the user
+ * their own change not having happened. Every entry below describes something a
+ * person changes at project-setup pace, not at click pace, and the whole
+ * namespace is dropped when the active organization switches.
+ */
+const TTL = {
+  projects: 600,
+  iterations: 300,
+  workItemTypeStates: 3600,
+  repositoryProject: 3600,
+  identity: 3600,
+  // Everything below moves at click pace rather than setup pace, so it is held
+  // only long enough to cover navigating between pages — and every write this
+  // app makes drops the affected keys outright (`invalidateWorkItems` /
+  // `invalidatePullRequests`), so a change the user just made is never served
+  // from here. What the TTL bounds is a change made by *somebody else*.
+  tickets: 30,
+  workItem: 30,
+  workItemDetail: 300,
+  comments: 60,
+  review: 45,
+  prOutcome: 120,
+  commits: 60,
+  // A commit's own diff cannot change; only the list of commits can.
+  commitFiles: 86_400,
+  prDraft: 15,
+  activePullRequests: 60,
+} as const;
+
+/** Every key this module writes lives under it, so one prefix scan clears all. */
+export const ADO_CACHE_PREFIX = "ado:";
+
+/**
+ * Drop the cached work-item reads for one organization.
+ *
+ * Called after this app changes a work item. Without it the ticket list, the
+ * ticket itself and its comments would keep serving the state from before the
+ * write for a whole TTL — which is the app showing the user their own change
+ * not having happened, the one failure mode a cache in front of a tracker must
+ * not have.
+ */
+async function invalidateWorkItems(org: string): Promise<void> {
+  await Promise.all([
+    invalidatePrefix(`${ADO_CACHE_PREFIX}tickets:${org}:`),
+    invalidatePrefix(`${ADO_CACHE_PREFIX}workItem:${org}:`),
+    invalidatePrefix(`${ADO_CACHE_PREFIX}comments:${org}:`),
+  ]);
+}
+
+/** The same, for the pull-request reads, after publishing one or adding reviewers. */
+async function invalidatePullRequests(org: string): Promise<void> {
+  await Promise.all([
+    invalidatePrefix(`${ADO_CACHE_PREFIX}review:${org}:`),
+    invalidatePrefix(`${ADO_CACHE_PREFIX}prOutcome:${org}:`),
+    invalidatePrefix(`${ADO_CACHE_PREFIX}prDraft:${org}:`),
+    invalidatePrefix(`${ADO_CACHE_PREFIX}activePrs:${org}`),
+  ]);
+}
 
 // Org / project / PAT are per-provider DB-backed credentials (Settings modal),
 // not env vars. Resolved into a per-call `Creds` context at the top of every
@@ -215,11 +280,13 @@ type RawProject = { id: string; name: string; description?: string };
 /** All projects in the configured organization (org-level, no project segment). */
 export async function listProjects(): Promise<ProjectInfo[]> {
   const { org, pat } = await loadCreds();
-  const url = `https://dev.azure.com/${org}/_apis/projects?${API}`;
-  const data = await adoGet<{ value: RawProject[] }>(url, pat);
-  return data.value
-    .map((p) => ({ id: p.id, name: p.name, description: p.description }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return cached(`${ADO_CACHE_PREFIX}projects:${org}`, TTL.projects, async () => {
+    const url = `https://dev.azure.com/${org}/_apis/projects?${API}`;
+    const data = await adoGet<{ value: RawProject[] }>(url, pat);
+    return data.value
+      .map((p) => ({ id: p.id, name: p.name, description: p.description }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
 }
 
 export type IterationInfo = {
@@ -237,46 +304,35 @@ type RawIteration = {
 };
 
 /**
- * Short-lived memo for the iteration list.
+ * Iterations for the project's default team (used to resolve the current sprint
+ * and to populate the sprint picker).
  *
- * Every ticket load resolves its sprint through `listIterations`, and the sprint
- * picker asks for the same list in the same tick — so one page load paid two
- * round-trips for an answer that changes when someone creates a sprint, which is
- * not something that happens between two clicks. The entry holds the in-flight
- * promise rather than its result, so concurrent callers share one request
- * instead of racing to fill the same slot.
+ * Cached because every ticket load resolves its sprint through here and the
+ * sprint picker asks for the same list in the same tick — one page load paid two
+ * round-trips for an answer that only changes when someone creates a sprint,
+ * which is not something that happens between two clicks. `cached()` also
+ * single-flights those two callers into one request.
  *
  * Keyed by org + project: switching organization or project is a different
- * question, not a stale answer to this one. A rejected fetch is evicted so the
- * next caller retries rather than inheriting the failure for a whole TTL.
+ * question, not a stale answer to this one.
  */
-const ITERATIONS_TTL_MS = 60_000;
-const iterationsCache = new Map<string, { at: number; value: Promise<IterationInfo[]> }>();
-
-/** Iterations for the project's default team (used to resolve the current sprint and to populate the sprint picker). */
 export async function listIterations(project: string): Promise<IterationInfo[]> {
   const { org, pat, project: proj } = await loadCreds(project);
-  const key = `${org}::${proj}`;
-  const hit = iterationsCache.get(key);
-  if (hit && Date.now() - hit.at < ITERATIONS_TTL_MS) return hit.value;
-
-  // No team segment: ADO falls back to the project's default team, so the user
-  // only has to configure the project URL.
-  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
-    proj
-  )}/_apis/work/teamsettings/iterations?${API}`;
-  const value = adoGet<{ value: RawIteration[] }>(url, pat).then((data) =>
-    data.value.map((i) => ({
+  return cached(`${ADO_CACHE_PREFIX}iterations:${org}:${proj}`, TTL.iterations, async () => {
+    // No team segment: ADO falls back to the project's default team, so the user
+    // only has to configure the project URL.
+    const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+      proj
+    )}/_apis/work/teamsettings/iterations?${API}`;
+    const data = await adoGet<{ value: RawIteration[] }>(url, pat);
+    return data.value.map((i) => ({
       id: i.id,
       name: i.name,
       timeFrame: i.attributes?.timeFrame,
       startDate: i.attributes?.startDate,
       finishDate: i.attributes?.finishDate,
-    }))
-  );
-  value.catch(() => iterationsCache.delete(key));
-  iterationsCache.set(key, { at: Date.now(), value });
-  return value;
+    }));
+  });
 }
 
 /** Resolve which iteration to load: an explicit override name, else ADO's current iteration. */
@@ -432,24 +488,27 @@ export async function getScopedTickets(
   scope: TicketScope,
   sprintOverride?: string
 ): Promise<{ tickets: Ticket[]; sprintName: string; truncated: boolean }> {
-  if (scope === "sprint") {
-    const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
-    return { tickets, sprintName, truncated: false };
-  }
   const creds = await loadCreds(project);
   const { org, pat, project: proj } = creds;
-  const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
-  const res = await adoSend<{ workItems?: { id: number }[] }>(
-    wiqlUrl,
-    "POST",
-    { query: wiqlFor(proj, scope) },
-    "application/json",
-    pat
-  );
-  const found = (res.workItems ?? []).map((w) => w.id);
-  const ids = found.slice(0, MAX_TICKETS);
-  // Neither view is an iteration, so there is no sprint name to claim.
-  return { tickets: await fetchWorkItems(creds, ids), sprintName: "", truncated: found.length > ids.length };
+  const key = `${ADO_CACHE_PREFIX}tickets:${org}:scoped:${proj}:${scope}:${sprintOverride ?? ""}`;
+  return cached(key, TTL.tickets, async () => {
+    if (scope === "sprint") {
+      const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
+      return { tickets, sprintName, truncated: false };
+    }
+    const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
+    const res = await adoSend<{ workItems?: { id: number }[] }>(
+      wiqlUrl,
+      "POST",
+      { query: wiqlFor(proj, scope) },
+      "application/json",
+      pat
+    );
+    const found = (res.workItems ?? []).map((w) => w.id);
+    const ids = found.slice(0, MAX_TICKETS);
+    // Neither view is an iteration, so there is no sprint name to claim.
+    return { tickets: await fetchWorkItems(creds, ids), sprintName: "", truncated: found.length > ids.length };
+  });
 }
 
 /**
@@ -486,24 +545,29 @@ export async function getMyOpenWorkItems(
 
   const creds = await loadCreds(project);
   const { org, pat, project: proj } = creds;
-  const query =
-    `SELECT [System.Id] FROM WorkItems WHERE ` +
-    `[System.TeamProject] = '${wiqlQuoted(proj)}' AND ` +
-    `[System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
-    `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")}) ` +
-    `ORDER BY [System.Id] DESC`;
+  // The identity is part of the key: the same project answers this differently
+  // for each developer, and one connection can be several people over time.
+  const key = `${ADO_CACHE_PREFIX}tickets:${org}:mine:${proj}:${who.join("|")}`;
+  return cached(key, TTL.tickets, async () => {
+    const query =
+      `SELECT [System.Id] FROM WorkItems WHERE ` +
+      `[System.TeamProject] = '${wiqlQuoted(proj)}' AND ` +
+      `[System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
+      `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")}) ` +
+      `ORDER BY [System.Id] DESC`;
 
-  const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
-  const res = await adoSend<{ workItems?: { id: number }[] }>(
-    wiqlUrl,
-    "POST",
-    { query },
-    "application/json",
-    pat
-  );
-  const found = (res.workItems ?? []).map((w) => w.id);
-  const ids = found.slice(0, MAX_TICKETS);
-  return { tickets: await fetchWorkItems(creds, ids), truncated: found.length > ids.length };
+    const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
+    const res = await adoSend<{ workItems?: { id: number }[] }>(
+      wiqlUrl,
+      "POST",
+      { query },
+      "application/json",
+      pat
+    );
+    const found = (res.workItems ?? []).map((w) => w.id);
+    const ids = found.slice(0, MAX_TICKETS);
+    return { tickets: await fetchWorkItems(creds, ids), truncated: found.length > ids.length };
+  });
 }
 
 /** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to
@@ -531,19 +595,39 @@ async function getSprintTickets(
   return { tickets: await fetchWorkItems(creds, ids), sprintName: iteration.name };
 }
 
+/**
+ * One work item, in the UI's `Ticket` shape.
+ *
+ * The list queries are all bounded — by iteration, by backlog, by open state —
+ * so a ticket the developer is sent to from a notification is routinely in none
+ * of them: released work leaves the board, and a plan the scheduler worked may
+ * belong to another project entirely. This reads that one item directly.
+ */
+export async function getWorkItemTicket(id: string): Promise<Ticket | null> {
+  const creds = await loadCreds();
+  const numeric = Number(id);
+  if (!Number.isFinite(numeric)) return null;
+  return cached(`${ADO_CACHE_PREFIX}workItem:${creds.org}:${numeric}`, TTL.workItem, async () => {
+    const [ticket] = await fetchWorkItems(creds, [numeric]);
+    return ticket ?? null;
+  });
+}
+
 /** The rich-text half of one work item — the fields `TICKET_FIELDS` leaves out.
  *  Read when a ticket is opened rather than for every row of a list. */
 export async function getWorkItemDetail(id: string): Promise<{ description: string; criteria: string }> {
   const { org, pat } = await loadCreds();
-  const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
-    id
-  )}?fields=${TICKET_DETAIL_FIELDS}&${API}`;
-  const data = await adoGet<{ fields?: Record<string, unknown> }>(url, pat);
-  const f = data.fields ?? {};
-  return {
-    description: htmlToRich((f["System.Description"] as string) ?? ""),
-    criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
-  };
+  return cached(`${ADO_CACHE_PREFIX}workItem:${org}:detail:${id}`, TTL.workItemDetail, async () => {
+    const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
+      id
+    )}?fields=${TICKET_DETAIL_FIELDS}&${API}`;
+    const data = await adoGet<{ fields?: Record<string, unknown> }>(url, pat);
+    const f = data.fields ?? {};
+    return {
+      description: htmlToRich((f["System.Description"] as string) ?? ""),
+      criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
+    };
+  });
 }
 
 type RawWorkItemState = { name: string };
@@ -551,11 +635,17 @@ type RawWorkItemState = { name: string };
 /** Real workflow states for a work item type (e.g. "Bug", "User Story"), as configured by this project's process template — not a hard-coded guess. */
 export async function getWorkItemTypeStates(project: string, type: string): Promise<string[]> {
   const { org, pat, project: proj } = await loadCreds(project);
-  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
-    proj
-  )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
-  const data = await adoGet<{ value: RawWorkItemState[] }>(url, pat);
-  return data.value.map((s) => s.name);
+  return cached(
+    `${ADO_CACHE_PREFIX}states:${org}:${proj}:${type}`,
+    TTL.workItemTypeStates,
+    async () => {
+      const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+        proj
+      )}/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1-preview.1`;
+      const data = await adoGet<{ value: RawWorkItemState[] }>(url, pat);
+      return data.value.map((s) => s.name);
+    }
+  );
 }
 
 /** Write the work item's State field back to Azure DevOps. */
@@ -574,6 +664,7 @@ export async function updateWorkItemState(id: string, state: string): Promise<st
     "application/json-patch+json",
     pat
   );
+  await invalidateWorkItems(org);
   return updated.fields?.["System.State"] || state;
 }
 
@@ -650,18 +741,20 @@ function shortDate(iso?: string): string {
 /** Fetch the discussion comments for a single work item, oldest first. */
 export async function getWorkItemComments(project: string, id: string): Promise<TicketComment[]> {
   const { org, pat, project: proj } = await loadCreds(project);
-  // Comments live behind a preview API version.
-  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
-    proj
-  )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
-  const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
-  return (data.comments ?? [])
-    .map((c) => ({
-      author: c.createdBy?.displayName ?? "Unknown",
-      date: shortDate(c.createdDate),
-      text: htmlToText(c.text ?? ""),
-    }))
-    .filter((c) => c.text.length > 0);
+  return cached(`${ADO_CACHE_PREFIX}comments:${org}:${proj}:${id}`, TTL.comments, async () => {
+    // Comments live behind a preview API version.
+    const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+      proj
+    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
+    const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
+    return (data.comments ?? [])
+      .map((c) => ({
+        author: c.createdBy?.displayName ?? "Unknown",
+        date: shortDate(c.createdDate),
+        text: htmlToText(c.text ?? ""),
+      }))
+      .filter((c) => c.text.length > 0);
+  });
 }
 
 // ---- Pull request review (Resolve Review tab) ----
@@ -685,55 +778,70 @@ function repoBaseUrl(org: string, ref: { repositoryId: string; project?: string 
 
 /** The repo's own project name, if the ref resolves to an accessible repo. */
 async function resolveRepositoryProject(org: string, pat: string, ref: { repositoryId: string; project?: string }): Promise<string | null> {
-  const res = await fetch(`${repoBaseUrl(org, ref)}?${API}`, { headers: authHeader(pat), cache: "no-store" });
-  if (!res.ok) return null;
-  const repo = (await res.json()) as { project?: { name?: string } };
-  return repo.project?.name ?? ref.project ?? null;
+  return cached(
+    `${ADO_CACHE_PREFIX}repoProject:${org}:${ref.project ?? ""}:${ref.repositoryId}`,
+    TTL.repositoryProject,
+    async () => {
+      const res = await fetch(`${repoBaseUrl(org, ref)}?${API}`, { headers: authHeader(pat), cache: "no-store" });
+      if (!res.ok) return null;
+      const repo = (await res.json()) as { project?: { name?: string } };
+      return repo.project?.name ?? ref.project ?? null;
+    }
+  );
 }
 
 /**
- * Resolve the PR linked to a work item via its "Pull Request" artifact link
- * relation. ADO only creates that relation when the PR was explicitly linked
- * (e.g. `AB#<id>` in the PR description) — a PR opened by the execution
- * engine isn't guaranteed to have it. When it's missing, fall back to
- * parsing the repo/PR id out of the PR URL recorded on the ticket's most
- * recent execution.
+ * Resolve the PR to read for a work item.
  *
- * Each candidate ref is verified against the repositories API before use,
- * preferring the artifact link but falling through to the recorded PR URL
- * when it doesn't resolve — the artifact link's repository id can go stale
- * (repo renamed/recreated, or the id belongs to a repo the current PAT can't
- * see), which otherwise 404s every review/commit call for the ticket. The
- * fallback candidate also carries the project parsed out of its own URL
- * (rather than the globally configured PROJECT), since the ticket's repo may
- * not live in the project Settings happens to be connected to.
+ * The URL recorded on the ticket's most recent execution wins. A work item
+ * accumulates one "Pull Request" artifact link per PR ever linked to it and
+ * abandoning a PR never removes its link, so the relations list is a history,
+ * not an answer — reading it first showed an abandoned PR's branch, commits and
+ * threads for a ticket whose current PR is newer. Remaining artifact links are
+ * tried newest PR id first, and only matter when nothing was recorded (a PR a
+ * human opened) or when the recorded repo no longer resolves.
+ *
+ * Each candidate ref is verified against the repositories API before use — a
+ * repository id can go stale (repo renamed/recreated, or the id belongs to a
+ * repo the current PAT can't see), which otherwise 404s every review/commit
+ * call for the ticket. The recorded candidate also carries the project parsed
+ * out of its own URL (rather than the globally configured PROJECT), since the
+ * ticket's repo may not live in the project Settings happens to be connected to.
  */
 async function getLinkedPullRequestRef(creds: Creds, ticketId: string, fallbackPrUrl?: string | null): Promise<PrRef | null> {
   const { org, pat, project } = creds;
+  const recorded = refFromRecordedPrUrl(fallbackPrUrl, project);
+  if (recorded) {
+    const resolved = await resolveRepositoryProject(org, pat, recorded);
+    if (resolved) return { ...recorded, project: resolved };
+  }
   const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(
     ticketId
   )}?$expand=relations&${API}`;
   const data = await adoGet<{ relations?: ArtifactRelation[] }>(url, pat);
-  const candidates: PrRef[] = [];
+  const linked: PrRef[] = [];
   for (const r of data.relations ?? []) {
     if (r.rel !== "ArtifactLink" || !r.url) continue;
     const m = r.url.match(/vstfs:\/\/\/Git\/PullRequestId\/[^%]+%2F([^%]+)%2F(\d+)/i);
-    if (m) candidates.push({ repositoryId: m[1], prId: m[2] });
+    if (m && m[2] !== recorded?.prId) linked.push({ repositoryId: m[1], prId: m[2] });
   }
-  if (fallbackPrUrl) {
-    const withProject = fallbackPrUrl.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
-    if (withProject) {
-      candidates.push({ repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) });
-    } else {
-      const m = fallbackPrUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
-      if (m) candidates.push({ repositoryId: decodeURIComponent(m[1]), prId: m[2], project });
-    }
-  }
-  for (const ref of candidates) {
+  linked.sort((a, b) => Number(b.prId) - Number(a.prId));
+  for (const ref of linked) {
     const resolved = await resolveRepositoryProject(org, pat, ref);
     if (resolved) return { ...ref, project: resolved };
   }
   return null;
+}
+
+/** The repo/PR id named by a PR URL an execution recorded, if it is one. */
+function refFromRecordedPrUrl(prUrl: string | null | undefined, project: string): PrRef | null {
+  if (!prUrl) return null;
+  const withProject = prUrl.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  if (withProject) {
+    return { repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) };
+  }
+  const bare = prUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
+  return bare ? { repositoryId: decodeURIComponent(bare[1]), prId: bare[2], project } : null;
 }
 
 /** The ref named by a recorded PR URL, verified by reading the PR itself.
@@ -745,13 +853,7 @@ async function getLinkedPullRequestRef(creds: Creds, ticketId: string, fallbackP
 async function quickPullRequest(creds: Creds, prUrl?: string | null): Promise<{ ref: PrRef; raw: RawPullRequest } | null> {
   if (!prUrl) return null;
   const { org, pat, project } = creds;
-  const withProject = prUrl.match(/dev\.azure\.com\/[^/]+\/([^/]+)\/_git\/([^/]+)\/pullrequest\/(\d+)/i);
-  const bare = withProject ? null : prUrl.match(/_git\/([^/]+)\/pullrequest\/(\d+)/i);
-  const ref: PrRef | null = withProject
-    ? { repositoryId: decodeURIComponent(withProject[2]), prId: withProject[3], project: decodeSegment(withProject[1]) }
-    : bare
-      ? { repositoryId: decodeURIComponent(bare[1]), prId: bare[2], project }
-      : null;
+  const ref = refFromRecordedPrUrl(prUrl, project);
   if (!ref) return null;
   try {
     return { ref, raw: await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat) };
@@ -835,6 +937,14 @@ export async function getPullRequestReview(
 ): Promise<ReviewData> {
   const creds = await loadCreds();
   const { org, pat, project } = creds;
+  // Keyed on the ticket plus the URL the caller offered, because those two are
+  // what decide which pull request gets read. `fast` is not in the key: it
+  // changes how the PR is found, never which one — the board poll and the
+  // Resolve Review tab must not hold two answers about the same review.
+  return cached(
+    `${ADO_CACHE_PREFIX}review:${org}:${ticketId}:${fallbackPrUrl ?? ""}`,
+    TTL.review,
+    async () => {
   const quick = opts?.fast ? await quickPullRequest(creds, fallbackPrUrl) : null;
   const ref = quick?.ref ?? (await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl));
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
@@ -871,6 +981,8 @@ export async function getPullRequestReview(
   }
 
   return { pr, comments, unresolvedCount: comments.filter((c) => c.status === "open").length };
+    }
+  );
 }
 
 // ---- Dashboard delivery funnel ----
@@ -907,7 +1019,11 @@ export async function getPullRequestOutcomes(prUrls: string[]): Promise<(PrOutco
   const CHUNK = 6; // keep ADO happy; these run against one org with one PAT
   const out: (PrOutcome | null)[] = [];
   for (let i = 0; i < prUrls.length; i += CHUNK) {
-    const batch = prUrls.slice(i, i + CHUNK).map(async (url): Promise<PrOutcome | null> => {
+    // Keyed per pull request rather than per batch: the funnel asks about
+    // overlapping sets as the range filter changes, and a batch-shaped key
+    // would miss on every one of them.
+    const batch = prUrls.slice(i, i + CHUNK).map((url): Promise<PrOutcome | null> =>
+      cached(`${ADO_CACHE_PREFIX}prOutcome:${org}:${url}`, TTL.prOutcome, async () => {
       const ref = refFromPrUrl(url);
       if (!ref) return null;
       try {
@@ -926,7 +1042,8 @@ export async function getPullRequestOutcomes(prUrls: string[]): Promise<(PrOutco
       } catch {
         return null;
       }
-    });
+      })
+    );
     out.push(...(await Promise.all(batch)));
   }
   return out;
@@ -947,6 +1064,7 @@ export async function getPullRequestCommits(ticketId: string, fallbackPrUrl?: st
   const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
   if (!ref) return [];
 
+  return cached(`${ADO_CACHE_PREFIX}commits:${org}:${ref.repositoryId}:${ref.prId}`, TTL.commits, async () => {
   const data = await adoGet<{ value?: RawCommitRef[] }>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}/commits?${API}`, pat);
   return (data.value ?? []).map((c) => ({
     sha: c.commitId,
@@ -956,6 +1074,7 @@ export async function getPullRequestCommits(ticketId: string, fallbackPrUrl?: st
     date: c.author?.date ?? "",
     url: `https://dev.azure.com/${org}/${encodeURIComponent(ref.project ?? project)}/_git/${ref.repositoryId}/commit/${c.commitId}`,
   }));
+  });
 }
 
 type RawCommitChange = { item?: { path?: string; isFolder?: boolean }; changeType?: string };
@@ -992,6 +1111,10 @@ export async function getCommitFileChanges(ticketId: string, sha: string, fallba
   const ref = await getLinkedPullRequestRef(creds, ticketId, fallbackPrUrl);
   if (!ref) return [];
 
+  // Held for a day rather than a minute: a commit's own file changes cannot be
+  // rewritten in place — a different diff is a different sha, and therefore a
+  // different key. Only the *list* of commits moves, and that is `commits:`.
+  return cached(`${ADO_CACHE_PREFIX}commitFiles:${org}:${ref.repositoryId}:${sha}`, TTL.commitFiles, async () => {
   const [changesData, detail] = await Promise.all([
     adoGet<{ changes?: RawCommitChange[] }>(`${repoBaseUrl(org, ref)}/commits/${sha}/changes?${API}`, pat),
     adoGet<RawCommitDetail>(`${repoBaseUrl(org, ref)}/commits/${sha}?${API}`, pat),
@@ -1011,6 +1134,7 @@ export async function getCommitFileChanges(ticketId: string, sha: string, fallba
     results.push({ path, changeType, diff, additions, deletions });
   }
   return results;
+  });
 }
 
 // ---- release: taking a finished pull request out of draft ----
@@ -1029,9 +1153,14 @@ export async function getCommitFileChanges(ticketId: string, sha: string, fallba
  *  which the caller must not confuse with "already published". */
 export async function isPullRequestDraft(prUrl: string): Promise<boolean | null> {
   const creds = await loadCreds();
-  const found = await quickPullRequest(creds, prUrl);
-  if (!found) return null;
-  return !!(found.raw as { isDraft?: boolean }).isDraft;
+  // The shortest TTL in the table: this gates a release, and the answer flips
+  // exactly once per pull request. `publishPullRequest` drops the key itself,
+  // so the window only ever covers somebody publishing outside the app.
+  return cached(`${ADO_CACHE_PREFIX}prDraft:${creds.org}:${prUrl}`, TTL.prDraft, async () => {
+    const found = await quickPullRequest(creds, prUrl);
+    if (!found) return null;
+    return !!(found.raw as { isDraft?: boolean }).isDraft;
+  });
 }
 
 /**
@@ -1056,6 +1185,7 @@ export async function publishPullRequest(prUrl: string): Promise<{ ok: boolean; 
     "application/json",
     creds.pat
   );
+  await invalidatePullRequests(creds.org);
   return { ok: true, detail: "Draft published." };
 }
 
@@ -1073,19 +1203,28 @@ type RawIdentity = { id?: string; providerDisplayName?: string; properties?: { A
  * reviewer is a message, not a reason to hide finished work.
  */
 async function resolveIdentityId(org: string, pat: string, query: string): Promise<string | null> {
-  const host = org.replace(/^https:\/\/dev\.azure\.com\//i, "https://vssps.dev.azure.com/").replace(/\/+$/, "");
-  const url = `${host}/_apis/identities?searchFilter=General&filterValue=${encodeURIComponent(query)}&${API}`;
-  try {
-    const res = await adoGet<{ value?: RawIdentity[] }>(url, pat);
-    const rows = res.value ?? [];
-    const wanted = query.trim().toLowerCase();
-    const exact = rows.find(
-      (r) => (r.properties?.Account?.$value ?? "").toLowerCase() === wanted
-    );
-    return (exact ?? rows[0])?.id ?? null;
-  } catch {
-    return null;
-  }
+  const url = `https://vssps.dev.azure.com/${org}/_apis/identities?searchFilter=General&filterValue=${encodeURIComponent(
+    query
+  )}&${API}`;
+  // A miss is cached as null too: an unresolvable reviewer is asked for on every
+  // release attempt, and re-asking vssps each time only slows the retry down.
+  return cached(
+    `${ADO_CACHE_PREFIX}identity:${org}:${query.trim().toLowerCase()}`,
+    TTL.identity,
+    async () => {
+      try {
+        const res = await adoGet<{ value?: RawIdentity[] }>(url, pat);
+        const rows = res.value ?? [];
+        const wanted = query.trim().toLowerCase();
+        const exact = rows.find(
+          (r) => (r.properties?.Account?.$value ?? "").toLowerCase() === wanted
+        );
+        return (exact ?? rows[0])?.id ?? null;
+      } catch {
+        return null;
+      }
+    }
+  );
 }
 
 /**
@@ -1126,6 +1265,7 @@ export async function addPullRequestReviewers(
       unresolved.push(who);
     }
   }
+  if (added.length) await invalidatePullRequests(creds.org);
   return {
     ok: unresolved.length === 0,
     added,
@@ -1188,6 +1328,7 @@ function reviewerEmail(raw: RawInboxReviewer): string {
  */
 export async function listActivePullRequests(): Promise<PullRequestBrief[]> {
   const { org, pat } = await loadCreds();
+  return cached(`${ADO_CACHE_PREFIX}activePrs:${org}`, TTL.activePullRequests, async () => {
   const out: PullRequestBrief[] = [];
   for (let skip = 0; skip < PR_SCAN_CAP; skip += PR_PAGE) {
     const url =
@@ -1217,6 +1358,7 @@ export async function listActivePullRequests(): Promise<PullRequestBrief[]> {
     if (rows.length < PR_PAGE) break;
   }
   return out;
+  });
 }
 
 // ---- Recent work-item activity (notification bell) ----

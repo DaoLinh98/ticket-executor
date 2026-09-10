@@ -53,7 +53,7 @@ type Filter = "action" | "all";
 export default function NotificationBell({
   bellRef, open, onToggle, notifications, read, degraded, titleOf, onOpen, onMarkAllRead,
 }: Props) {
-  const [filter, setFilter] = useState<Filter>("action");
+  const [filter, setFilter] = useState<Filter>("all");
 
   const badge = actionCount(notifications, read);
   const shown = filter === "action" ? notifications.filter((n) => n.severity === "action") : notifications;
@@ -73,9 +73,9 @@ export default function NotificationBell({
       </button>
       {open && (
         <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
-          {/* Two views, not a per-kind filter list. The badge counts actions, so
-              the panel opens on exactly what the badge is talking about; "All"
-              is where the record of what the app did on your behalf lives. */}
+          {/* Two views, not a per-kind filter list. The panel opens on "All" —
+              the whole record of what the app did on your behalf; "Needs you"
+              narrows it to exactly what the badge is counting. */}
           <div style={{ display: "flex", alignItems: "center", gap: "4px", padding: "2px 3px 7px", marginBottom: "3px", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
             <button onClick={() => setFilter("action")} style={tabStyle({ active: filter === "action" })}>Needs you</button>
             <button onClick={() => setFilter("all")} style={tabStyle({ active: filter === "all" })}>All</button>

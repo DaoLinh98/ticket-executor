@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hasIdentity, isMyPullRequest, myVoteOn, type DevIdentity } from "@/lib/identity";
-import type { PullRequestSource } from "@/lib/notifications";
+import type { PullRequestSource, ReviewSource } from "@/lib/notifications";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
-import { loadPullRequestInbox, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
+import { loadPullRequestInbox, loadReviewsSummary, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
 import type { ProviderId } from "@/lib/providers";
 import type { PullRequestBrief, TicketActivity } from "@/lib/types";
 
@@ -131,6 +131,45 @@ async function pullRequestSources(provider: ProviderId, identity: DevIdentity): 
 }
 
 /**
+ * Unresolved review comments on the pull requests the scheduler opened.
+ *
+ * The board-scoped review poll already asks this question, but only about the
+ * tickets on screen. A plan's ticket is not necessarily one of them — the
+ * scheduler works the plan while the developer looks at another sprint — so a
+ * pull request this app opened and released could collect review comments that
+ * the bell never mentioned. Scoped by **identity and active plan**, exactly as
+ * the automation source above is, for the same reason.
+ *
+ * Only planned tickets that already have a pull request are asked about, so
+ * this costs the provider two calls per released ticket, not one per ticket in
+ * the plan. Overlap with the board poll is expected and harmless: both produce
+ * the same `pr.review-comment` key, and the client merges them.
+ */
+async function planReviewSources(provider: ProviderId, org: string, identity: DevIdentity): Promise<ReviewSource[]> {
+  const planned = await prisma.plannedTicket.findMany({
+    where: {
+      prUrl: { not: "" },
+      plan: { provider, org, identityEmail: identity.email, status: "active" },
+    },
+    select: { ticketId: true, prUrl: true },
+  });
+  if (!planned.length) return [];
+
+  try {
+    const { reviews } = await loadReviewsSummary(
+      provider,
+      planned.map((p) => p.ticketId),
+      new Map(planned.map((p) => [p.ticketId, p.prUrl]))
+    );
+    return reviews;
+  } catch {
+    // Same claim as the other sources make when a provider refuses: nothing
+    // known, rather than "nothing open".
+    return [];
+  }
+}
+
+/**
  * What the scheduler did, out of the plans belonging to this developer.
  *
  * Scoped by **identity**, not by the project or sprint the page happens to be
@@ -182,14 +221,15 @@ export async function GET(req: Request) {
   // an unscoped read here would hand this developer the whole team's automation
   // and every pull request in the organization.
   if (!hasIdentity(identity)) {
-    return NextResponse.json({ automation: [], pullRequests: [], ticketActivity: [] });
+    return NextResponse.json({ automation: [], pullRequests: [], ticketActivity: [], reviews: [] });
   }
 
-  const [automation, pullRequests, ticketActivity] = await Promise.all([
+  const [automation, pullRequests, ticketActivity, reviews] = await Promise.all([
     automationSources(provider, org, identity),
     pullRequestSources(provider, identity),
     ticketActivitySources(provider, org, identity),
+    planReviewSources(provider, org, identity),
   ]);
 
-  return NextResponse.json({ automation, pullRequests, ticketActivity });
+  return NextResponse.json({ automation, pullRequests, ticketActivity, reviews });
 }

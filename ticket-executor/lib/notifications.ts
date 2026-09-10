@@ -324,6 +324,17 @@ export type AutomationSource = {
  * about the plan needing a human, not a fault in the automation.
  */
 export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
+  // When each ticket's automatic implement was last reported as over. A
+  // "started" older than that is a run that has since finished or failed, and
+  // announcing it as under way sends the developer to a dead execution log.
+  const concludedAt = new Map<string, number>();
+  for (const e of rows) {
+    const terminal = e.action === "abort" || (e.action === "implement" && (e.outcome === "done" || e.outcome === "failed"));
+    if (!terminal) continue;
+    const at = Date.parse(e.createdAt);
+    if (Number.isNaN(at)) continue;
+    concludedAt.set(e.ticketId, Math.max(at, concludedAt.get(e.ticketId) ?? 0));
+  }
   const out: AppNotification[] = [];
   for (const e of rows) {
     if (e.outcome === "skipped") continue;
@@ -353,6 +364,8 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
       continue;
     }
     if (e.action === "implement" && e.outcome === "started") {
+      const startedAt = Date.parse(e.createdAt);
+      if (!Number.isNaN(startedAt) && startedAt <= (concludedAt.get(e.ticketId) ?? -1)) continue;
       out.push({ ...base, kind: "scheduler.started", severity: "info", summary: "Automation started implementing this ticket", tab: "execution" });
     }
   }
