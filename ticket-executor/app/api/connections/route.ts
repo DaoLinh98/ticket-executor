@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { clearMcpProbe } from "@/lib/mcp";
+import { ADO_CACHE_PREFIX } from "@/lib/ado";
+import { invalidatePrefix } from "@/lib/redis";
 import { normalizeProvider } from "@/lib/tickets";
 import { deleteConnection, listConnections, saveConnection } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
@@ -38,6 +40,9 @@ export async function POST(req: Request) {
   // The generated MCP config is built from this credential, so a cached "MCP is
   // fine" verdict no longer describes the setup a run would get.
   clearMcpProbe();
+  // The cached provider answers describe the organization we are no longer
+  // acting as — a stale project list is what would otherwise survive the switch.
+  await invalidatePrefix(ADO_CACHE_PREFIX);
   return NextResponse.json({ connections: await listConnections(provider), connection: conn });
 }
 
@@ -50,5 +55,8 @@ export async function DELETE(req: Request) {
   const removed = await deleteConnection(id);
   if (!removed) return NextResponse.json({ error: "Connection not found." }, { status: 404 });
   clearMcpProbe();
+  // The cached provider answers describe the organization we are no longer
+  // acting as — a stale project list is what would otherwise survive the switch.
+  await invalidatePrefix(ADO_CACHE_PREFIX);
   return NextResponse.json({ connections: await listConnections(provider) });
 }

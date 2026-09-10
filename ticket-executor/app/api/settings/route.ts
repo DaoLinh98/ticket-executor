@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { clearMcpProbe } from "@/lib/mcp";
 import { normalizeProvider } from "@/lib/tickets";
 import { activeConnection, type ConnectionView } from "@/lib/providerCredentials";
-import { getOrCreateSetting } from "@/lib/settings";
+import { getOrCreateSetting, invalidateSetting } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,7 @@ function publicSettings(s: SettingRow, cred: ConnectionView | null) {
     personalAccount: s.personalAccount,
     animatedBackground: s.animatedBackground,
     clickEffects: s.clickEffects,
+    ringAnimation: s.ringAnimation,
     autoImplement: s.autoImplement,
     autoResolveCodeReview: s.autoResolveCodeReview,
     multiTicketMode: s.multiTicketMode,
@@ -68,6 +69,8 @@ export async function POST(req: Request) {
     data.animatedBackground = body.animatedBackground;
   if (typeof body.clickEffects === "boolean")
     data.clickEffects = body.clickEffects;
+  if (typeof body.ringAnimation === "boolean")
+    data.ringAnimation = body.ringAnimation;
   if (typeof body.autoImplement === "boolean")
     data.autoImplement = body.autoImplement;
   if (typeof body.autoResolveCodeReview === "boolean")
@@ -98,6 +101,10 @@ export async function POST(req: Request) {
     create: { id: "default", ...data },
     update: data,
   });
+  // The only writer of this row, so this is the only place the cached copy can
+  // go stale — every reader in the app (routes, runner, scheduler) resolves it
+  // through `getOrCreateSetting()`.
+  await invalidateSetting();
 
   // Credentials are not written here: an organization is a row of its own now,
   // created and switched through /api/connections. This route only ever reports

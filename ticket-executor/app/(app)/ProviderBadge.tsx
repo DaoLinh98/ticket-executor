@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import SprintPicker from "../SprintPicker";
 import { connectionLabel, type ProviderId } from "@/lib/providers";
 import { CONNECTION_CHANGED_EVENT } from "../connectionEvents";
+import { rememberActiveConnection } from "../pagePrefs";
 
 type Connection = { id: string; label: string; org: string; isActive: boolean };
 
@@ -41,6 +42,13 @@ export default function ProviderBadge({ provider }: { provider?: ProviderId }) {
   }, [load]);
 
   const active = connections.find((c) => c.isActive) ?? connections[0] ?? null;
+
+  // Page preferences are stored per organization, and a page reads that scope
+  // before its first fetch resolves — so the id has to be on disk, not only in
+  // the event that announces a switch.
+  useEffect(() => {
+    if (active) rememberActiveConnection(active.id);
+  }, [active]);
 
   const onSelect = async (name: string) => {
     const next = connections.find((c) => connectionLabel(c) === name);

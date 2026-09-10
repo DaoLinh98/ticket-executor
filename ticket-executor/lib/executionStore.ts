@@ -56,6 +56,7 @@ export {
   rebuildPlan,
   setPlanAutomation,
   setPlanStatus,
+  setTicketUnblocked,
   type PlanKey,
 } from "./execution/planStore";
 export {

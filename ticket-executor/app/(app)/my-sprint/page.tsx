@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SelectMenu from "../../SelectMenu";
 import { useBoltsContext } from "../../BoltsContext";
@@ -19,7 +20,10 @@ import {
 import ProviderBadge from "../ProviderBadge";
 import TriageReport from "./TriageReport";
 import PageHeading from "../PageHeading";
+import NotificationCenter from "../NotificationCenter";
+import PageToolbar from "../PageToolbar";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import { usePagePrefs } from "../../pagePrefs";
 import type { Claim } from "@/lib/sprintClaim";
 import type { Lane, PlanConfig, SprintPlanResult } from "@/lib/sprintPlan";
 import type { Ticket } from "@/lib/types";
@@ -73,6 +77,7 @@ type PlannedRow = {
   estimateHours: number;
   releaseDay: string;
   blocked: boolean;
+  unblockedByUser: boolean;
   implementState: string;
   runId: string;
   prUrl: string;
@@ -167,6 +172,25 @@ const IMPLEMENT_STATE: Record<string, { color: string; label: string }> = {
   skipped: { color: COLORS.faint, label: "Skipped" },
 };
 
+/**
+ * What the State column says about one row.
+ *
+ * Release is not a value of `implementState` — the engine stops at
+ * "implemented" and `releasePlannedTicket()` records what it did in its own
+ * three columns — so reading `implementState` alone leaves a released ticket
+ * labelled "Draft PR" forever, next to a pull request that is no longer a draft.
+ *
+ * The release columns therefore come first, and the partial case gets its own
+ * label rather than being rounded to one of the two ends: a pull request that
+ * was published but whose work item never moved is a real state somebody has to
+ * finish by hand, and calling it either "Draft PR" or "Released" hides that.
+ */
+function stateOf(t: PlannedRow): { color: string; label: string } {
+  if (t.releasedAt) return { color: COLORS.success, label: "Released" };
+  if (t.prPublished) return { color: COLORS.warning, label: "In review" };
+  return IMPLEMENT_STATE[t.implementState] ?? IMPLEMENT_STATE.pending;
+}
+
 const hours = (h: number) => (Math.round(h * 10) / 10).toString() + "h";
 
 /** "Mon 07 Sep" — the weekday is the part a release calendar is read for. */
@@ -176,7 +200,9 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" });
 }
 
-const GRID = "44px 1fr 66px 74px 120px 108px 128px";
+// The triage column carries the override control next to its verdict, so it is
+// the one that has to fit two things rather than one.
+const GRID = "44px 1fr 60px 68px 132px 106px 104px 176px";
 
 /**
  * Where a ticket actually lives, when that is not the iteration on screen.
@@ -197,13 +223,19 @@ function originLabel(iterationPath: string | undefined, sprint: string): string 
 }
 
 export default function MySprintPage() {
+  const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
+  // On by default: an assigned ticket the iteration does not contain is the
+  // normal case, so the narrow view is the one worth opting into.
+  const { prefs, ready: prefsReady, save: savePrefs } = usePagePrefs<{
+    project: string;
+    sprint: string;
+    includeWider: boolean;
+  }>("my-sprint", { project: "", sprint: "", includeWider: true });
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState("");
   const [sprints, setSprints] = useState<string[]>([]);
   const [sprint, setSprint] = useState("");
-  // On by default: an assigned ticket the iteration does not contain is the
-  // normal case, so the narrow view is the one worth opting into.
   const [includeWider, setIncludeWider] = useState(true);
   const [data, setData] = useState<MySprint | null>(null);
   const [triage, setTriage] = useState<TriageRow | null>(null);
@@ -228,7 +260,8 @@ export default function MySprintPage() {
       const d = await r.json();
       const names: string[] = Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : [];
       setProjects(names);
-      setProject((cur) => cur || names[0] || "");
+      // A remembered project only survives if this organization still has it.
+      setProject((cur) => (cur && names.includes(cur) ? cur : names[0] || ""));
     } catch {
       setProjects([]);
     }
@@ -239,8 +272,9 @@ export default function MySprintPage() {
     try {
       const r = await fetch("/api/sprints?project=" + encodeURIComponent(proj));
       const d = await r.json();
-      setSprints(Array.isArray(d.sprints) ? d.sprints.map((s: { name: string }) => s.name) : []);
-      setSprint((cur) => cur || d.current || "");
+      const names: string[] = Array.isArray(d.sprints) ? d.sprints.map((s: { name: string }) => s.name) : [];
+      setSprints(names);
+      setSprint((cur) => (cur && names.includes(cur) ? cur : d.current || ""));
     } catch {
       setSprints([]);
     }
@@ -283,12 +317,31 @@ export default function MySprintPage() {
     return () => { live = false; };
   }, [project]);
 
-  useEffect(() => { loadProjects(); }, [loadProjects]);
-  useEffect(() => { loadSprints(project); }, [project, loadSprints]);
-  useEffect(() => { load(project, sprint, includeWider); }, [project, sprint, includeWider, load]);
-
+  // Nothing loads until the remembered controls are in hand: starting on the
+  // first project and switching to the remembered one a moment later is two
+  // round-trips for one answer, and it is the flicker this page had.
   useEffect(() => {
-    const onChanged = () => { setProject(""); setSprint(""); loadProjects(); };
+    if (!prefsReady) return;
+    setProject(prefs.project);
+    setSprint(prefs.sprint);
+    setIncludeWider(prefs.includeWider);
+  }, [prefsReady, prefs]);
+
+  useEffect(() => { if (prefsReady) loadProjects(); }, [prefsReady, loadProjects]);
+  useEffect(() => { if (prefsReady) loadSprints(project); }, [prefsReady, project, loadSprints]);
+  useEffect(() => { if (prefsReady) load(project, sprint, includeWider); }, [prefsReady, project, sprint, includeWider, load]);
+
+  // Remember what is on screen, but never a value the page has not resolved yet
+  // — writing the empty project of a still-loading page would erase the choice.
+  useEffect(() => {
+    if (!prefsReady || !project) return;
+    savePrefs({ project, sprint, includeWider });
+  }, [prefsReady, project, sprint, includeWider, savePrefs]);
+
+  // A different organization: `usePagePrefs` re-hydrates to that organization's
+  // remembered project, and the seeding effect above applies it.
+  useEffect(() => {
+    const onChanged = () => { loadProjects(); };
     window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
   }, [loadProjects]);
@@ -309,6 +362,24 @@ export default function MySprintPage() {
     }, 5000);
     return () => { if (triagePoll.current) clearInterval(triagePoll.current); };
   }, [triage?.status, triage?.id]);
+
+  // A run outlives the request that started it exactly the way triage does, so
+  // a plan holding a running ticket is re-read until it stops — that is what
+  // keeps the "implementing now" label and the State column live.
+  const anyRunning = (stored?.items ?? []).some((t) => t.implementState === "running");
+  useEffect(() => {
+    if (!anyRunning || !project) return;
+    const qs = new URLSearchParams({ project, wider: includeWider ? "1" : "0" });
+    if (sprint) qs.set("sprint", sprint);
+    const id = setInterval(async () => {
+      try {
+        const d = await fetch("/api/my-sprint/plan?" + qs.toString()).then((r) => r.json());
+        if (d.plan) setStored(d.plan);
+        if (Array.isArray(d.events)) setEvents(d.events);
+      } catch { /* the next tick tries again */ }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [anyRunning, project, sprint, includeWider]);
 
   const post = async (url: string, body: unknown, method = "POST") => {
     const r = await fetch(url, {
@@ -368,6 +439,19 @@ export default function MySprintPage() {
       setStored(d.plan);
     });
 
+  // Override triage on one ticket. Addressed by planned-ticket id, so it does
+  // not go through `patchPlan` — that one always sends the plan id.
+  const setUnblocked = (plannedId: string, unblocked: boolean) =>
+    act("unblock-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { item: plannedId, unblocked }, "PATCH");
+      setStored(d.plan);
+      setMessage(
+        unblocked
+          ? "Marked ready to run — the scheduler will pick it up despite the clarification flag."
+          : "Back to waiting on clarification."
+      );
+    });
+
   const releaseNow = (plannedId: string) =>
     act("release-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { release: plannedId }, "PUT");
@@ -388,6 +472,16 @@ export default function MySprintPage() {
       await load(project, sprint, includeWider);
     });
 
+  // The one destination for "what is this ticket doing?" — the same screen and
+  // the same two parameters the bell pushes, so a row and a notification land
+  // in the same place.
+  const openExecution = (ticketId: string, tab: "execution" | "result") =>
+    router.push(
+      `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` +
+        (project ? `&project=${encodeURIComponent(project)}` : "") +
+        `&at=${Date.now()}`
+    );
+
   const summary = data?.plan?.summary ?? null;
   const verdict = summary ? VERDICT[summary.verdict] : null;
   const triaged = new Map<string, TriagedTicket>(
@@ -401,10 +495,12 @@ export default function MySprintPage() {
       : (data?.plan?.tickets ?? []).map((t) => ({
           id: "", ticketId: t.ticketId, title: t.title, implementOrder: t.implementOrder,
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
-          blocked: t.blocked, implementState: "pending", runId: "", prUrl: "",
+          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
           prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
         }));
+
+  const runningRows = rows.filter((t) => t.implementState === "running");
 
   const tile = (label: string, value: string, sub?: string) => (
     <div style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -424,7 +520,13 @@ export default function MySprintPage() {
     <button
       onClick={(e) => { fireBoltFromEvent(e); onClick(); }}
       disabled={disabled || busy === key}
-      style={{ ...ctaButtonStyle(variant, { height: "30px", cornerPx: 7 }), cursor: disabled || busy === key ? "default" : "pointer" }}
+      style={{
+        ...ctaButtonStyle(variant, { height: "30px", cornerPx: 7 }),
+        flex: "0 0 auto",
+        whiteSpace: "nowrap",
+        padding: "0 11px",
+        cursor: disabled || busy === key ? "default" : "pointer",
+      }}
     >
       {busy === key && <LoadingRing size={13} />}
       {label}
@@ -436,6 +538,12 @@ export default function MySprintPage() {
       <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="My Sprint" kicker="D-AGENT · SPRINT PLAN" icon={<><path d="M8 2v4M16 2v4M3 10h18" /><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>} />
         <div style={{ flex: 1 }} />
+        <NotificationCenter />
+        <ProviderBadge />
+      </header>
+
+      {/* Which sprint this page is about, and how wide it looks for the work. */}
+      <PageToolbar>
         <div style={{ minWidth: "180px" }}>
           <SelectMenu value={project} onChange={(v) => { setProject(v); setSprint(""); }} options={projects} ariaLabel="Project" />
         </div>
@@ -450,8 +558,7 @@ export default function MySprintPage() {
         >
           Board &amp; backlog {includeWider ? "ON" : "OFF"}
         </button>
-        <ProviderBadge />
-      </header>
+      </PageToolbar>
 
       <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
         <div style={{ maxWidth: "1160px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -503,6 +610,27 @@ export default function MySprintPage() {
                   {data?.identity?.name ? " · " + data.identity.name : ""}
                 </span>
               </div>
+
+              {/* Which ticket the agent has its hands on right now. The State
+                  column says it per row, but the row is one of many and the
+                  answer to "what is running?" should not have to be scanned
+                  for. */}
+              {runningRows.length > 0 && (
+                <div style={{ ...tintedCard("accent"), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                  <LoadingRing size={18} />
+                  <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 700 }}>
+                    IMPLEMENTING NOW
+                  </span>
+                  {runningRows.map((t) => (
+                    <span key={t.ticketId} style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: FONT.base, color: COLORS.textMuted, fontWeight: 600 }}>
+                        #{t.ticketId} · {t.title}
+                      </span>
+                      {button("Watch run", "outline", () => openExecution(t.ticketId, "execution"), "watch-" + t.ticketId)}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "14px" }}>
                 {/* Scope first, and it is the sprint's headline for a reason: it is
@@ -681,8 +809,8 @@ export default function MySprintPage() {
                 </span>
                 <div style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
                   <div style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
-                    {["#", "TICKET", "PTS", "EST.", "TRIAGE", "RELEASE", "STATE"].map((h) => (
-                      <span key={h} style={sectionCaption()}>{h}</span>
+                    {["#", "TICKET", "PTS", "EST.", "TRIAGE", "RELEASE", "STATE", "ACTIONS"].map((h) => (
+                      <span key={h} style={{ ...sectionCaption(), ...(h === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{h}</span>
                     ))}
                   </div>
                   {rows.length === 0 ? (
@@ -702,8 +830,11 @@ export default function MySprintPage() {
                       const assigneeNow = t.assigneeNow || claimed?.assigneeNow || "";
                       const tri = triaged.get(t.ticketId);
                       const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
-                      const state = IMPLEMENT_STATE[t.implementState] ?? IMPLEMENT_STATE.pending;
+                      const state = stateOf(t);
                       const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
+                      // Only a ticket triage stopped, still the developer's, and
+                      // still waiting to start, has an override worth offering.
+                      const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
                       return (
                         <div
                           key={t.ticketId}
@@ -762,7 +893,7 @@ export default function MySprintPage() {
                             )}
                           </span>
                           <span style={{ fontSize: FONT.base, color: COLORS.textMuted }}>{t.estimateHours ? hours(t.estimateHours) : "—"}</span>
-                          <span>
+                          <span style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                             {claim !== "mine" ? (
                               // The live status belongs to whoever holds the
                               // ticket now, and a row rebuilt from the plan has
@@ -785,9 +916,29 @@ export default function MySprintPage() {
                           <span style={{ fontSize: FONT.base, fontWeight: 600, color: t.releasedAt ? COLORS.success : t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted }}>
                             {t.releasedAt ? "released" : dayLabel(t.releaseDay)}
                           </span>
-                          <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
+                            {/* The spinner is the State column's live half: a
+                                pill alone cannot say whether "Running" is this
+                                second's truth or a stale row. */}
+                            {t.implementState === "running" && <LoadingRing size={13} />}
                             <span style={pill({ color: state.color, size: "xs", weight: 700 })}>{state.label}</span>
-                            {due && t.id && button("Release", "outline", () => releaseNow(t.id), "release-" + t.id)}
+                          </span>
+                          {/* Every action a row offers, in one column at the end
+                              of it. Kept out of the pill columns because a
+                              button beside a verdict reads as part of it, and
+                              because a wrapping button pushes the row it is in
+                              out of line with every other row. */}
+                          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "7px", flexWrap: "nowrap" }}>
+                            {canOverride &&
+                              (t.unblockedByUser
+                                ? button("Overridden", "success", () => setUnblocked(t.id, false), "unblock-" + t.id)
+                                : button("Force ready", "outline", () => setUnblocked(t.id, true), "unblock-" + t.id))}
+                            {t.implementState === "running"
+                              ? button("Watch", "outline", () => openExecution(t.ticketId, "execution"), "watch-row-" + t.ticketId)
+                              : t.runId
+                                ? button("Result", "ghost", () => openExecution(t.ticketId, "result"), "result-" + t.ticketId)
+                                : null}
+                            {due && t.id && button("Release", "primary", () => releaseNow(t.id), "release-" + t.id)}
                           </span>
                         </div>
                       );

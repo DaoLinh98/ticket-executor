@@ -10,6 +10,7 @@ import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, pill, tinte
 import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/preflight";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
+import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 
 // Section order + copy. Each group answers one question a new dev has.
@@ -122,6 +123,7 @@ export default function SystemCheckPage() {
       <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="System Check" kicker="D-AGENT · DIAGNOSTICS" icon={<><path d="M9 11l3 3L22 4" /><path d="M21 12a9 9 0 1 1-6.2-8.56" /></>} />
         <div style={{ flex: 1 }} />
+        <NotificationCenter />
         <ProviderBadge />
       </header>
 

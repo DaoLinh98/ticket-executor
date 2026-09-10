@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { cached, DB_CACHE_PREFIX } from "../redis";
 import type { FileChange, LogLine, RunState } from "../types";
 import { asLogLines, fmtDuration, safeParseJson } from "./format";
 import { graphById, graphForSkill } from "./graph/graphs";
@@ -420,6 +421,31 @@ export async function dashboardMetrics(filter?: {
   orgProvider?: string;
   project?: string;
   /** Lookback window in days; 0 or undefined = all time. */
+  days?: number;
+}): Promise<DashboardMetrics> {
+  // The one Prisma read in the app worth caching: it scans the whole Run table
+  // plus a groupBy over Step, and it answers a reporting question — nobody
+  // opens the dashboard to confirm a write they made a second ago. Everything
+  // else this module exports (a run, its steps, a ticket's history) is live
+  // execution state that the UI polls, and caching that would freeze the screen.
+  //
+  // TTL only, with no invalidation hook: runs are written from a dozen places
+  // in the engine, and a minute-old aggregate is the honest cost of not
+  // threading a cache-drop through all of them.
+  const key = `${DB_CACHE_PREFIX}dashboard:${JSON.stringify([
+    filter?.provider ?? "", filter?.org ?? "", filter?.orgProvider ?? "",
+    filter?.project ?? "", filter?.days ?? 0,
+  ])}`;
+  return cached(key, DASHBOARD_TTL, () => computeDashboardMetrics(filter));
+}
+
+const DASHBOARD_TTL = 60;
+
+async function computeDashboardMetrics(filter?: {
+  provider?: string;
+  org?: string;
+  orgProvider?: string;
+  project?: string;
   days?: number;
 }): Promise<DashboardMetrics> {
   const days = filter?.days && filter.days > 0 ? filter.days : 0;

@@ -51,6 +51,88 @@ function carryRepoContext(rootRepo: string, worktree: string): string[] {
 }
 
 
+/** The branch a new ticket's work should start from.
+ *
+ *  `origin/HEAD` is the remote's own answer and the only one that is right for a
+ *  repo whose default is not called `main`. The local fallbacks are for a clone
+ *  that never had the symbolic ref set. */
+function defaultBranchOf(rootRepo: string): string {
+  try {
+    const ref = execSync(`git -C "${rootRepo}" symbolic-ref --short refs/remotes/origin/HEAD`, {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+    const name = ref.replace(/^origin\//, "");
+    if (name) return name;
+  } catch {
+    /* no origin/HEAD — fall through to the local names below */
+  }
+  for (const name of ["main", "master"]) {
+    try {
+      execSync(`git -C "${rootRepo}" rev-parse --verify --quiet "refs/heads/${name}"`, { stdio: "ignore" });
+      return name;
+    } catch {
+      /* not this one */
+    }
+  }
+  return "";
+}
+
+/**
+ * Put rootRepo back on its default branch before a single-ticket run starts.
+ *
+ * Without this the tree is still on the *previous* ticket's branch when the next
+ * run begins, so the new branch is cut from that tip and its pull request
+ * carries the earlier ticket's commits. Worktree mode never had the problem —
+ * every run gets a tree detached at HEAD of its own — which is exactly why the
+ * gap only shows up when multi-ticket mode is off.
+ *
+ * Nothing here is forced. No `-f`, no stash, no reset: a checkout that would
+ * overwrite the developer's own uncommitted work is refused by git, and that
+ * refusal is reported as a failed run rather than worked around. Untracked and
+ * ignored files — which is what CLAUDE.md / KNOWLEDGE.md / .claude are in a
+ * client repo — are untouched by a checkout, so the run keeps its guidance.
+ *
+ * The fast-forward pull is best-effort: a stale base costs a rebase later, a
+ * network failure must not cost the run.
+ */
+function returnToDefaultBranch(rootRepo: string): { ok: boolean; detail: string } {
+  const branch = defaultBranchOf(rootRepo);
+  if (!branch) return { ok: true, detail: "No default branch could be identified — left the tree as it was." };
+
+  let current = "";
+  try {
+    current = execSync(`git -C "${rootRepo}" rev-parse --abbrev-ref HEAD`).toString().trim();
+  } catch {
+    return { ok: true, detail: "Not a git repository — nothing to reset." };
+  }
+
+  if (current !== branch) {
+    try {
+      execSync(`git -C "${rootRepo}" checkout "${branch}"`, { stdio: ["ignore", "ignore", "pipe"] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        ok: false,
+        detail:
+          `Could not switch ${rootRepo} from "${current}" to "${branch}": ${msg}\n` +
+          `Your uncommitted changes would have been overwritten, so nothing was touched. ` +
+          `Commit, stash or revert them and start the run again.`,
+      };
+    }
+  }
+
+  let pulled = "";
+  try {
+    execSync(`git -C "${rootRepo}" pull --ff-only`, { stdio: ["ignore", "ignore", "pipe"] });
+    pulled = ", up to date with origin";
+  } catch {
+    pulled = ", could not fast-forward from origin — using the local tip";
+  }
+  return { ok: true, detail: `Base branch "${branch}"${pulled}` };
+}
+
 // The run writes two things into the developer's repo that must never reach a
 // commit: the plan-gate contract (`.te/`) and the isolated worktrees
 // (`.te-worktrees/`). Ignoring them is done here rather than left to the skill:
@@ -355,6 +437,20 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   excludeTeArtifacts(rootRepo);
   applyGitIdentity(rootRepo, setting?.gitUserName ?? "", setting?.gitUserEmail ?? "");
 
+  // Single-ticket mode branches from whatever rootRepo is currently on, so the
+  // tree has to be back on the default branch *before* baseSha is read — the
+  // previous ticket left it on its own feature branch. Worktree mode does not
+  // need this and must not have it: an isolated run may legitimately start from
+  // a tree the developer has parked somewhere.
+  if (!isolate) {
+    const reset = returnToDefaultBranch(rootRepo);
+    if (!reset.ok) {
+      await finish(live, "failed", reset.detail);
+      return { ok: true, runId: row.id };
+    }
+    live.logLines.push({ text: `● ${reset.detail}`, kind: "step" });
+  }
+
   try {
     live.ctx.baseSha = execSync(`git -C "${rootRepo}" rev-parse HEAD`).toString().trim();
   } catch {
@@ -368,6 +464,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     // detached — the skill's own "create a branch" step creates the one real
     // branch, from inside this worktree.
     try {
+      console.log(`Setting up isolated worktree for run ${row.id}`);
       const wt = path.join(rootRepo, ".te-worktrees", `${project}-${row.id}`);
       execSync(`git -C "${rootRepo}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
       live.ctx.cwd = wt;
@@ -385,6 +482,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       return { ok: true, runId: row.id };
     }
   }
+  console.log(`Using working directory: ${live.ctx.cwd}`);
 
   // Start from a clean scratch directory. A previous run in this same tree (or a
   // crash that skipped the cleanup at the end) can leave `.te/plan.md` behind, and

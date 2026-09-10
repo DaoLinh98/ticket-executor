@@ -15,6 +15,7 @@ import { homedir } from "os";
 import path from "path";
 import { prisma } from "./prisma";
 import { parseAdoUrl } from "./ado";
+import { redisConfigured, redisPing } from "./redis";
 import { resolveCredential } from "./providerCredentials";
 import {
   MANAGED_PACKAGES,
@@ -202,6 +203,23 @@ async function environmentChecks(deep: boolean): Promise<Check[]> {
           fix: "Install Git and make sure it is on PATH — every run branches, commits and pushes.",
         }
   );
+
+  // --- redis (optional read cache in front of the provider) ---
+  if (!redisConfigured()) {
+    checks.push({
+      id: "redis", group: "environment", label: "Redis cache", level: "warning",
+      status: "warn", message: "REDIS_URL is unset — every provider read goes to Azure DevOps.",
+      fix: "Optional. Run `docker run -d --name te-redis -p 6379:6379 redis:7-alpine` and set REDIS_URL in .env (see .env.example).",
+    });
+  } else {
+    const ping = await redisPing();
+    checks.push({
+      id: "redis", group: "environment", label: "Redis cache", level: "warning",
+      status: ping.ok ? "pass" : "warn",
+      message: ping.ok ? ping.detail : `REDIS_URL is set but unreachable — ${ping.detail}`,
+      fix: ping.ok ? undefined : "Start the Redis container, or clear REDIS_URL to stop trying. The app works either way; reads just are not cached.",
+    });
+  }
 
   // --- optional env guardrails ---
   checks.push(

@@ -2,7 +2,7 @@ import type { CommitFile, CommitSummary, PullRequestBrief, Ticket, TicketActivit
 import {
   adoCreds, getScopedTickets, getMyOpenWorkItems, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
-  getWorkItemState, listIterations, getWorkItemDetail, listActivePullRequests, listRecentTicketActivity,
+  getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
   type ProjectInfo,
 } from "./ado";
 import {
@@ -175,6 +175,21 @@ export async function loadProjects(provider: ProviderId): Promise<ProjectLoadRes
     default:
       return { projects: [], connected: false, notice: `${labelFor(provider)} does not expose a project list yet.` };
   }
+}
+
+/**
+ * One ticket by id, outside any list.
+ *
+ * The three scoped queries are each bounded — an iteration, the unscheduled
+ * backlog, the project's open board — so a ticket a notification points at is
+ * routinely in none of them. Released work has left the board, and the
+ * scheduler's plan may belong to a project the developer is not looking at.
+ * Only Azure DevOps is wired; GitHub issues arrive with their list.
+ */
+export async function loadTicket(provider: ProviderId, id: string): Promise<Ticket | null> {
+  if (provider !== "azure-devops") return null;
+  if (!(await adoCreds())) return null;
+  return getWorkItemTicket(id);
 }
 
 /**

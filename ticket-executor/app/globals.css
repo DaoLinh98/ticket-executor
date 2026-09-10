@@ -149,6 +149,13 @@ input{font-family:inherit;}
 @property --angle{syntax:'<angle>';initial-value:0deg;inherits:false;}
 @keyframes spinAngle{to{--angle:360deg;}}
 
+/* Appearance setting "Border glow" = off. ringBorder() paints its border-box
+   layer through var(--te-ring-image, <conic>), so overriding that one variable
+   at the root turns every ring in the app — buttons, tabs, pills, panels — into
+   a flat border without touching a single call site. The spin keeps running on
+   --angle; nothing reads it while this is set. */
+html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border),var(--te-btn-outline-border));}
+
 /* markdown (Result tab, Plan tab) — inherits prototype palette */
 .md-body{font-size:14.5px;line-height:1.75;color:#C7CCD8;}
 .md-body>*:first-child{margin-top:0;}

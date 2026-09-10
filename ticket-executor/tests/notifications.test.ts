@@ -169,6 +169,30 @@ test("a failed scheduler action is actionable and names the action", () => {
   assert.equal(n.summary.includes("provider-error"), true);
 });
 
+test("a start the run has already finished under is not reported as under way", () => {
+  const list = fromAutomation([
+    automation({ id: "b", outcome: "failed", reason: "run-failed", createdAt: "2026-09-06T09:30:00Z" }),
+    automation({ id: "a", outcome: "started", createdAt: "2026-09-06T09:00:00Z" }),
+  ]);
+  assert.deepEqual(list.map((n) => n.kind), ["scheduler.failed"]);
+});
+
+test("a restart after a failed run is reported again", () => {
+  const list = fromAutomation([
+    automation({ id: "c", outcome: "started", createdAt: "2026-09-06T10:00:00Z" }),
+    automation({ id: "b", outcome: "failed", reason: "run-failed", createdAt: "2026-09-06T09:30:00Z" }),
+  ]);
+  assert.deepEqual(list.map((n) => n.kind), ["scheduler.started", "scheduler.failed"]);
+});
+
+test("another ticket's conclusion does not silence a running one", () => {
+  const list = fromAutomation([
+    automation({ id: "b", ticketId: "202", outcome: "failed", createdAt: "2026-09-06T09:30:00Z" }),
+    automation({ id: "a", outcome: "started", createdAt: "2026-09-06T09:00:00Z" }),
+  ]);
+  assert.equal(list.filter((n) => n.kind === "scheduler.started").length, 1);
+});
+
 test("an unrecognised scheduler outcome is dropped rather than guessed at", () => {
   assert.deepEqual(fromAutomation([automation({ outcome: "done", action: "implement" })]), []);
 });
