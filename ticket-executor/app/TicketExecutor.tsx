@@ -95,6 +95,14 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
   };
 }
 
+// `waiting` is two different situations, and only one of them is asking the
+// developer for anything. A run parked at a plan gate wants a decision; a run
+// parked on the Claude account's usage limit wants nothing at all and continues
+// by itself. Told apart by `endReason`, which the harness already owns — the
+// alternative is the UI guessing from the absence of a plan.
+const isRateLimited = (e?: ExecView) => e?.state === "waiting" && e.endReason === "rate-limited";
+const isAwaitingReview = (e?: ExecView) => e?.state === "waiting" && e.endReason !== "rate-limited";
+
 /**
  * A picked sprint *name* as the value a ticket load should actually send.
  *
@@ -587,11 +595,10 @@ export default function TicketExecutor() {
   }, []);
 
   // Lazily load a ticket's discussion comments when it becomes selected.
-  const loadComments = useCallback(async (ticketId: string, provider: ProviderId, project: string) => {
+  const loadComments = useCallback(async (ticketId: string, provider: ProviderId) => {
     if (!ticketId || comments[ticketId]) return;
     try {
       const qs = new URLSearchParams({ provider });
-      if (project) qs.set("project", project);
       const r = await fetch(`/api/tickets/${ticketId}/comments?${qs.toString()}`);
       const data = await r.json();
       setComments((c) => ({ ...c, [ticketId]: data.comments ?? [] }));
@@ -615,8 +622,8 @@ export default function TicketExecutor() {
   }, []);
 
   useEffect(() => {
-    if (selectedId) loadComments(selectedId, settings.provider, selectedProject);
-  }, [selectedId, settings.provider, selectedProject, loadComments]);
+    if (selectedId) loadComments(selectedId, settings.provider);
+  }, [selectedId, settings.provider, loadComments]);
 
   // Lazily load a ticket's description and acceptance criteria when it becomes
   // selected. They are not in the list payload — see TICKET_FIELDS in
@@ -817,7 +824,11 @@ export default function TicketExecutor() {
       const run = data.run;
       if (!run) return;
       setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId]) }));
-      setTab(run.state === "succeeded" ? "result" : run.state === "waiting" ? "plan" : "execution");
+      setTab(
+        run.state === "succeeded" ? "result"
+          : run.state === "waiting" && run.endReason !== "rate-limited" ? "plan"
+            : "execution"
+      );
     } catch {
       /* ignore */
     }
@@ -1077,15 +1088,24 @@ export default function TicketExecutor() {
       const state = run.state as RunState;
       setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId]) }));
 
-      // Plan gate: the run parked itself with no live process. Stop the stream,
-      // free any batch slot, surface the plan for review — but run none of the
-      // completion side effects (status sync, PR toast, history reload).
+      // Parked: no live process either way, so the stream stops and the batch
+      // slot is freed — but *why* it parked decides what the developer is told.
+      // None of the completion side effects run (status sync, PR toast, history
+      // reload): the run is not over.
       if (state === "waiting") {
         stopTracking(runId);
         try { window.__reactor?.setMode("idle"); } catch { }
-        if (ticketId === selectedIdRef.current) setTab("plan");
-        showToast(`#${ticketId} — plan ready for review`);
-        notify("Ticket Executor", `#${ticketId} plan is ready for your review`);
+        const limited = run.endReason === "rate-limited";
+        if (limited) {
+          // Nothing is asked of anybody here, so the plan tab is not opened and
+          // no desktop notification is raised: the scheduler continues this run
+          // in the session it was cut off in when the quota resets.
+          showToast(`#${ticketId} — usage limit reached; the run continues when it resets`);
+        } else {
+          if (ticketId === selectedIdRef.current) setTab("plan");
+          showToast(`#${ticketId} — plan ready for review`);
+          notify("Ticket Executor", `#${ticketId} plan is ready for your review`);
+        }
         if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
         return true;
       }
@@ -1506,7 +1526,7 @@ export default function TicketExecutor() {
   const waitingRuns = useMemo(
     () =>
       Object.entries(execs)
-        .filter(([, ex]) => ex.state === "waiting" && ex.runId)
+        .filter(([, ex]) => isAwaitingReview(ex) && ex.runId)
         .map(([ticketId, ex]) => ({ ticketId, runId: ex.runId as string })),
     [execs]
   );
@@ -1551,7 +1571,7 @@ export default function TicketExecutor() {
   // was a second, quieter copy of "hard-code what the engine already reports":
   // rename the node, or add a second gate, and the tab would vanish.
   const hasGate = !!ex?.nodes?.some((n) => n.kind === "gate");
-  const planEnabled = !!ex?.planMarkdown || st === "waiting" || (hasGate && st === "running");
+  const planEnabled = !!ex?.planMarkdown || isAwaitingReview(ex) || (hasGate && st === "running");
   const planBusyForSel = t ? planBusy[t.id] : undefined;
 
   // Single-ticket mode: only one run at a time. Find any other ticket currently
@@ -1574,6 +1594,16 @@ export default function TicketExecutor() {
       playIcon: false,
       onClick: cancelImplement,
       style: ctaButtonStyle("warning"),
+    };
+  else if (isRateLimited(ex))
+    // Deliberately not a retry button. The run is holding a session and a
+    // worktree it is going to continue in; starting a second one would abandon
+    // both and duplicate the work — and the admission rule would refuse it
+    // anyway until the quota is back.
+    action = {
+      label: "Waiting for usage limit", spinner: true, playIcon: false,
+      onClick: (e) => { fireBoltFromEvent(e); setTab("execution"); },
+      style: ctaButtonStyle("ghost"),
     };
   else if (st === "waiting")
     action = {
@@ -1856,7 +1886,7 @@ export default function TicketExecutor() {
                 tabStyle={tabStyle}
                 execEnabled={execEnabled}
                 planEnabled={planEnabled}
-                planNeedsReview={st === "waiting"}
+                planNeedsReview={isAwaitingReview(ex)}
                 resultEnabled={resultEnabled}
                 unresolvedCount={ticketReview.unresolvedCount}
                 action={action}
@@ -1910,7 +1940,7 @@ export default function TicketExecutor() {
                 {tab === "plan" && ex && (
                   <PlanTab
                     plan={ex.planMarkdown ?? ""}
-                    awaiting={st === "waiting"}
+                    awaiting={isAwaitingReview(ex)}
                     busy={!!planBusyForSel}
                     busyAction={planBusyForSel}
                     onApprove={(plan) => resolvePlan(t.id, "approve", plan)}

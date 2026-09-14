@@ -32,6 +32,9 @@ export async function saveRun(live: LiveRun) {
       visits: live.ctx.visits as unknown as Prisma.InputJsonValue,
       parkedAt: live.parkedAt ? new Date(live.parkedAt) : null,
       humanWaitMs: live.humanWaitMs,
+      resumeAt: live.resumeAt ? new Date(live.resumeAt) : null,
+      limitWaitMs: live.limitWaitMs,
+      limitParks: live.limitParks,
       resumedAfterRestart: live.resumedAfterRestart,
       endedAt: live.endedAt ? new Date(live.endedAt) : null,
     },
@@ -69,7 +72,10 @@ export async function openStep(live: LiveRun, node: Node): Promise<{ id: string;
 
 export async function closeStep(
   stepId: string,
-  status: "succeeded" | "failed",
+  // `abandoned` is neither: the attempt was stopped by something that is not a
+  // verdict on it — a server restart, or the account's usage limit — and the
+  // node it belongs to is going to be entered again.
+  status: "succeeded" | "failed" | "abandoned",
   r: NodeResult,
   logs: LogLine[],
   durationMs: number

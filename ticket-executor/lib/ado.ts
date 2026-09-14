@@ -2,7 +2,7 @@ import type { Ticket, TicketComment, TicketActivity, ReviewData, ReviewComment, 
 import { isSamePerson, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
-import { markdownToHtml, sanitizeHtml } from "./richText";
+import { hasContent, markdownToHtml, sanitizeHtml } from "./richText";
 import type { TicketScope } from "./ticketScope";
 import { cached, invalidatePrefix } from "./redis";
 
@@ -739,8 +739,29 @@ function shortDate(iso?: string): string {
 }
 
 /** Fetch the discussion comments for a single work item, oldest first. */
-export async function getWorkItemComments(project: string, id: string): Promise<TicketComment[]> {
-  const { org, pat, project: proj } = await loadCreds(project);
+/**
+ * The work item's own team project.
+ *
+ * Comments are the one work-item read Azure DevOps scopes to a project — every
+ * other read in this module addresses the item org-wide by id. The project the
+ * caller has is the UI's project filter, which is empty until the user picks one
+ * and, when set, is the *area path's* last segment rather than the team project.
+ * Either way the comments URL came out wrong and the request 404'd, so the
+ * Overview tab showed no discussion on tickets that have one. Read the item's
+ * `System.TeamProject` instead of trusting what was passed in.
+ */
+async function workItemProject(org: string, pat: string, id: string): Promise<string> {
+  return cached(`${ADO_CACHE_PREFIX}workItem:${org}:project:${id}`, TTL.workItemDetail, async () => {
+    const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(id)}?fields=System.TeamProject&${API}`;
+    const data = await adoGet<{ fields?: { "System.TeamProject"?: string } }>(url, pat);
+    return data.fields?.["System.TeamProject"] ?? "";
+  });
+}
+
+export async function getWorkItemComments(id: string): Promise<TicketComment[]> {
+  const { org, pat } = await loadCreds();
+  const proj = await workItemProject(org, pat, id);
+  if (!proj) return [];
   return cached(`${ADO_CACHE_PREFIX}comments:${org}:${proj}:${id}`, TTL.comments, async () => {
     // Comments live behind a preview API version.
     const url = `https://dev.azure.com/${org}/${encodeURIComponent(
@@ -751,9 +772,13 @@ export async function getWorkItemComments(project: string, id: string): Promise<
       .map((c) => ({
         author: c.createdBy?.displayName ?? "Unknown",
         date: shortDate(c.createdDate),
-        text: htmlToText(c.text ?? ""),
+        // Kept as rich text for the same reason Description is: a discussion
+        // comment is routinely a pasted screenshot, a list or a link, and
+        // flattening it to plain text left an image-only comment as the empty
+        // string — which the filter below then dropped altogether.
+        text: htmlToRich(c.text ?? ""),
       }))
-      .filter((c) => c.text.length > 0);
+      .filter((c) => hasContent(c.text));
   });
 }
 

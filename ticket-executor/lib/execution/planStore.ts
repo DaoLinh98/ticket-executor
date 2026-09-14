@@ -11,6 +11,7 @@ import type { DevIdentity } from "../identity";
 import { claimSprint, type ClaimedTicket, type Remembered } from "../sprintClaim";
 import {
   buildPlan,
+  retryDenial,
   type PlanConfig,
   type PlanInput,
   type SprintPlanResult,
@@ -229,7 +230,7 @@ export async function setPlanStatus(id: string, status: "draft" | "active" | "ar
 
 export async function setPlanAutomation(
   id: string,
-  patch: { autoImplement?: boolean; autoRelease?: boolean; reviewers?: string[] }
+  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; reviewers?: string[] }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
 }
@@ -274,7 +275,7 @@ export async function setTicketUnblocked(plannedId: string, unblocked: boolean) 
 export async function logAutomation(e: {
   planId?: string;
   ticketId?: string;
-  action: "implement" | "release" | "abort";
+  action: "implement" | "release" | "review" | "abort";
   outcome: "started" | "done" | "skipped" | "failed";
   reason?: string;
   detail?: string;
@@ -301,4 +302,49 @@ export async function recentAutomation(planId: string, take = 50) {
     orderBy: { createdAt: "desc" },
     take,
   });
+}
+
+/**
+ * Put one stopped ticket back in the implement queue.
+ *
+ * The manual half of the queue, and the counterpart to `releasePlannedTicket()`
+ * and `startReviewRun()`: it does not spawn anything. It clears the row back to
+ * `pending` and lets the scheduler pick it up on its own terms, so a retried
+ * ticket goes through exactly the same admission, claim and concurrency checks
+ * as one that was never tried — a second starter here would be the second
+ * admission path invariant 3 forbids.
+ *
+ * `runId` is cleared with it. Left pointing at the failed run, `reconcileImplement()`
+ * would read that run's finished state on the next tick and mark the row failed
+ * again before the new one had started.
+ */
+export async function retryPlannedTicket(
+  plannedId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+
+  const denial = retryDenial({
+    implementState: item.implementState,
+    prUrl: item.prUrl,
+    claim: item.claim,
+  });
+  if (denial) return { ok: false, error: denial };
+
+  await prisma.plannedTicket.update({
+    where: { id: plannedId },
+    data: { implementState: "pending", runId: "" },
+  });
+  // Logged like every other decision, including this one's refusals above: a row
+  // that silently changed state between two ticks is one nobody can explain the
+  // morning after.
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "implement",
+    outcome: "skipped",
+    reason: "retry-by-user",
+    detail: `Requeued by hand after "${item.implementState}". The scheduler picks it up on its next pass.`,
+  });
+  return { ok: true };
 }

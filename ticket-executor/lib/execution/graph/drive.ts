@@ -7,7 +7,7 @@ import { execNode, releaseMcp } from "./exec";
 import { recordLessons } from "../knowledgeStore";
 import { closeStep, openStep, saveArtifact, saveRun, saveTransition } from "./persist";
 import { clearRunArtifacts, isReviewSkill, readPlanFile } from "./graphs";
-import { END, FAIL, type Graph, type LiveRun, type NodeResult, type Target } from "./types";
+import { END, FAIL, type Graph, type LiveRun, type Node, type NodeResult, type Target } from "./types";
 
 // A backstop, not a policy. Cycles are legitimate (revise the plan, fix what an
 // evaluator found), but a graph that has moved 40 times is looping, and a runaway
@@ -23,6 +23,14 @@ const MAX_HOPS = 40;
 // it. It exists so the Transition history still answers "why did this run leave
 // the node it was on", which for a cancelled run it previously could not.
 const CANCELLED = "CANCELLED";
+
+// How many times one run may be parked by an account limit before it is failed
+// for a person to look at. A ceiling rather than an endless wait, for the same
+// reason MAX_HOPS exists: a quota that keeps running out on the same node is not
+// a run that is about to finish, and a run parked forever holds a worktree, a
+// branch and its ticket's slot while looking like work in progress. Three is one
+// park per reset window in a working day.
+const MAX_LIMIT_PARKS = 3;
 
 // ---- termination ----
 
@@ -71,11 +79,11 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
   live.endReason = endReason;
   live.endedAt = Date.now();
   // A run killed while parked never resumes, so fold its outstanding wait in here
-  // rather than losing it.
-  if (live.parkedAt) {
-    live.humanWaitMs += Math.max(0, Date.now() - live.parkedAt);
-    live.parkedAt = null;
-  }
+  // rather than losing it — into whichever bucket it actually belongs to. Waiting
+  // for a reviewer and waiting for a quota are two different facts about a run,
+  // and the dashboard's "human wait" would say the machine was waiting on a
+  // person for hours nobody was ever asked about.
+  bankParkedTime(live);
   live.logLines.push(
     state === "succeeded"
       ? { text: `✔ Completed in ${fmtDuration(live.endedAt - live.startedAt)}`, kind: "done" }
@@ -95,16 +103,99 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
   releaseMcp(live);
 }
 
+/** Close whatever park the run is sitting in, into the bucket that park belongs
+ *  to. `resumeAt` is what tells them apart — only a limit park has one. */
+export function bankParkedTime(live: LiveRun) {
+  if (!live.parkedAt) return;
+  const waited = Math.max(0, Date.now() - live.parkedAt);
+  if (live.resumeAt) live.limitWaitMs += waited;
+  else live.humanWaitMs += waited;
+  live.parkedAt = null;
+  live.resumeAt = null;
+}
+
+/**
+ * Park because the account this machine is logged in as ran out of quota
+ * mid-node, until it comes back.
+ *
+ * The run is deliberately **not** failed. Every other failure in the harness is
+ * a statement about the work — the tests did not pass, the branch was not
+ * pushed, the contract was not honoured — and this one is a statement about the
+ * bill: the same node, on the same tree, would have succeeded ten minutes
+ * earlier. Failing it would throw away a worktree with uncommitted work in it,
+ * mark the ticket failed, and take it out of the scheduler's queue for good.
+ *
+ * Nothing here removes the worktree and nothing clears `.te/`: the node is going
+ * to be re-entered in the session it was cut off in, and both are what it
+ * continues from.
+ */
+async function parkForLimit(live: LiveRun, node: Node, resetAt: Date) {
+  // Give back what entering the node cost. Both counters were spent on an
+  // attempt that produced nothing, and the node is going to be entered again —
+  // leaving them spent would let a spent quota burn a bounded cycle's budget
+  // (`visits.fix` against MAX_FIX_ATTEMPTS) without a single fix being tried,
+  // and walk a long run towards MAX_HOPS one outage at a time.
+  live.ctx.visits[node.id] = Math.max(0, (live.ctx.visits[node.id] ?? 1) - 1);
+  live.hops = Math.max(0, live.hops - 1);
+
+  live.state = "waiting";
+  live.currentNodeId = node.id;
+  live.parkedAt = Date.now();
+  live.resumeAt = resetAt.getTime();
+  live.limitParks += 1;
+  live.endReason = "rate-limited";
+  live.errorMessage =
+    `The Claude account hit its usage limit during "${node.label}". ` +
+    `The run holds here and continues by itself at ${resetAt.toLocaleString()}.`;
+  live.logLines.push({ text: `⏸ ${live.errorMessage}`, kind: "step" });
+  await saveRun(live);
+  // The limit belongs to the account, not to this run: every other ticket would
+  // hit it too, and the scheduler's next tick is two minutes away. Starting more
+  // work before the reset buys nothing but another dead run — which is exactly
+  // how one spent quota produced two failed tickets before this existed.
+  await pauseUntil(resetAt);
+}
+
+/** Hold every *new* run until the account's quota is back. Read by
+ *  admissionDenial(), so a scheduled run and a button press are refused by the
+ *  same rule, before the spawn. Never moved backwards: a later reset wins. */
+async function pauseUntil(at: Date) {
+  try {
+    const row = await prisma.setting.findUnique({ where: { id: "default" }, select: { agentPausedUntil: true } });
+    if (row?.agentPausedUntil && row.agentPausedUntil >= at) return;
+    await prisma.setting.upsert({
+      where: { id: "default" },
+      create: { id: "default", agentPausedUntil: at },
+      update: { agentPausedUntil: at },
+    });
+  } catch {
+    /* the park itself is what protects this run; the pause only protects the next */
+  }
+}
+
+/** Lift whatever `.te/plan.md` currently holds into a durable Artifact row.
+ *
+ *  `.te/` is one run's drafting surface — excluded from git, cleared by
+ *  clearRunArtifacts(), and deleted outright with an isolated run's worktree — so
+ *  the Artifact row is the only copy that outlives the run. The gated flow calls
+ *  this when it parks, because that is when a person is about to read the plan;
+ *  the one-shot flow calls it when its node ends, because it never parks and
+ *  would otherwise finish with nothing to show for what it decided to do.
+ *
+ *  saveArtifact() skips a body identical to the latest version, so calling this
+ *  on a node that did not touch the file costs one read and writes nothing. */
+async function capturePlan(live: LiveRun) {
+  const plan = readPlanFile(live.ctx.cwd);
+  if (plan) await saveArtifact(live.id, "plan", plan, "agent");
+}
+
 /** Park at a gate: no child process is alive, and the run waits for
  *  resolveGate() to supply the human's decision. */
 async function park(live: LiveRun, nodeId: string, artifactKind: string) {
   live.state = "waiting";
   live.currentNodeId = nodeId;
   live.parkedAt = Date.now();
-  if (artifactKind === "plan") {
-    const plan = readPlanFile(live.ctx.cwd);
-    if (plan) await saveArtifact(live.id, "plan", plan, "agent");
-  }
+  if (artifactKind === "plan") await capturePlan(live);
   live.logLines.push({ text: "⏸ Waiting for your review", kind: "step" });
   await saveRun(live);
 }
@@ -197,12 +288,46 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       const t0 = Date.now();
       const result = await execNode(live, node);
       const logs = live.logLines.slice(step.logStart);
-      await closeStep(step.id, result.ok ? "succeeded" : "failed", result, logs, Date.now() - t0);
+      // An account limit is not a verdict on the attempt, so the attempt is not
+      // recorded as one: `abandoned` is the same status a step interrupted by a
+      // server restart gets, and for the same reason — it was stopped, not judged.
+      const limited = !live.cancelled && !result.ok && !!result.limitResetAt;
+      await closeStep(
+        step.id,
+        result.ok ? "succeeded" : limited ? "abandoned" : "failed",
+        result,
+        logs,
+        Date.now() - t0
+      );
 
       if (live.cancelled) {
         await abort(live, node.id);
         return;
       }
+
+      // Before the reducer and before the edge: a limited turn produced no
+      // output, so there is nothing to write into a channel and nothing for an
+      // edge to route on. The node is not left behind — the run comes back to
+      // this same node when the quota does.
+      if (limited) {
+        if (live.limitParks >= MAX_LIMIT_PARKS) {
+          await finish(
+            live,
+            "failed",
+            `The account's usage limit interrupted this run ${live.limitParks} times at "${node.label}". ` +
+              `It is not retried again automatically — check the account's quota, then start it once more.`,
+            "rate-limited"
+          );
+        } else {
+          await parkForLimit(live, node, result.limitResetAt!);
+        }
+        return;
+      }
+
+      // Before the reducer, and deliberately not conditional on `result.ok`: a
+      // node that failed its verification still planned something, and that plan
+      // is the most useful thing a person can read about why it failed.
+      if (node.kind === "agent" && node.artifact === "plan") await capturePlan(live);
 
       // The reducer: a node writes only its own channel, never another's.
       live.ctx.channels[node.id] = result.data;
@@ -259,10 +384,7 @@ export async function resolveGate(
   const nodeId = live.currentNodeId;
   // The run is leaving the gate either way — bank the time it spent waiting on
   // this reviewer before it starts computing again.
-  if (live.parkedAt) {
-    live.humanWaitMs += Math.max(0, Date.now() - live.parkedAt);
-    live.parkedAt = null;
-  }
+  bankParkedTime(live);
 
   const result: NodeResult = {
     ok: action !== "cancel",

@@ -25,6 +25,12 @@ export type AdmissionFacts = {
   isolate: boolean;
   /** Setting.concurrentRuns — the ceiling on runs in flight at once. */
   cap: number;
+  /** Setting.agentPausedUntil — the instant the Claude account's usage limit is
+   *  expected to reset, written by whichever run hit it. Null = not paused. */
+  pausedUntil: Date | null;
+  /** Passed in rather than read from the clock, so the rule stays a pure
+   *  function of its facts and the test does not have to wait for one. */
+  now: Date;
 };
 
 export type AdmissionDenial = { message: string; status: number; blocked: string };
@@ -51,6 +57,25 @@ export function admissionDenial(f: AdmissionFacts): AdmissionDenial | null {
       message: `Ticket #${f.otherTicketId} is currently running. Multi-ticket mode is off — finish or cancel it first.`,
       status: 409,
       blocked: "single-ticket-mode",
+    };
+  }
+  // The Claude account is out of quota, and every run on this machine spends the
+  // same one. Placed after the two ticket-specific rules and before the cap: a
+  // duplicate or a busy working tree is something the caller can act on right
+  // now, while this and the cap are both "the machine cannot take it yet" — and
+  // of those two, the quota is the one that outlasts the other.
+  //
+  // Refusing here rather than letting the spawn happen is the whole point. A run
+  // started against a spent account reaches its first node, pays for the turn and
+  // dies: that is exactly how one afternoon's limit turned into two failed
+  // tickets and $0.38 of nothing.
+  if (f.pausedUntil && f.pausedUntil > f.now) {
+    return {
+      message:
+        `The Claude account has hit its usage limit. Runs resume automatically at ` +
+        `${f.pausedUntil.toLocaleString()} — anything parked continues where it stopped.`,
+      status: 429,
+      blocked: "rate-limited",
     };
   }
   // The concurrency ceiling. Until this existed it lived *only* in the Ticket

@@ -70,6 +70,15 @@ model Setting {
   // than leaving it alone. See `applyGitIdentity()` in lib/execution/runner.ts.
   gitUserName    String   @default("")
   gitUserEmail   String   @default("")
+  // No new run may start before this instant. Written by the harness, not by a
+  // person: the Claude account is shared by every run on this machine, so the
+  // moment one turn reports a spent quota, every other ticket would spend a
+  // spawn to be told the same thing. Null (or past) is the normal state.
+  //
+  // It is deliberately a refusal in `admissionDenial()` rather than a check in
+  // the scheduler — a limit applies to a button press exactly as it applies to a
+  // scheduled run, and a second gate would be a second place to drift.
+  agentPausedUntil DateTime?
   updatedAt      DateTime @updatedAt
 }
 
@@ -196,6 +205,19 @@ model Run {
   // hadn't answered" stay separable across however many gate rounds happen.
   parkedAt     DateTime?
   humanWaitMs  Int       @default(0)
+  // Set while the run waits for the Claude account's usage limit to reset, and
+  // cleared on resume. Three columns rather than reusing the gate's two, because
+  // a gate waits for a person and this waits for a clock:
+  //   resumeAt    — when the sweep may re-enter the node. Null for a gate park,
+  //                 which is how the two are told apart when the wait is banked.
+  //   limitWaitMs — the elapsed time, kept out of humanWaitMs so the dashboard's
+  //                 "human wait" stays a fact about the team and not about a bill.
+  //   limitParks  — how many times this run has been cut off. The ceiling
+  //                 (MAX_LIMIT_PARKS) that stops a run parking against a quota
+  //                 that never recovers.
+  resumeAt     DateTime?
+  limitWaitMs  Int       @default(0)
+  limitParks   Int       @default(0)
   // Set when the run had to be rebuilt from this row because the in-process
   // state was lost (server restart) — a session a bare terminal would have dropped.
   resumedAfterRestart Boolean @default(false)
@@ -208,6 +230,8 @@ model Run {
 
   @@index([ticketId])
   @@index([startedAt])
+  // The sweep that wakes limit-parked runs asks this on every scheduler tick.
+  @@index([resumeAt])
 }
 
 // One *attempt* at one node. A node re-entered by a cycle (or resumed after a
@@ -479,6 +503,12 @@ model SprintPlan {
   // button on what reaches their reviewer sets exactly that.
   autoImplement Boolean  @default(false)
   autoRelease   Boolean  @default(false)
+  // The third half, and it is a third for the same reason release is a second:
+  // resolving a review writes on a pull request a reviewer is already reading —
+  // replies and resolved threads, under the developer's name. Somebody happy to
+  // let the agent work overnight is not automatically happy to let it answer
+  // their reviewer, so it gets its own switch rather than riding on autoRelease.
+  autoResolveReview Boolean @default(false)
   // Reviewers every pull request from this plan is assigned when it is released.
   // Held per plan rather than per ticket: the team a sprint is delivered to is
   // the same team all fortnight.
@@ -546,12 +576,43 @@ model PlannedTicket {
   statusMoved    Boolean    @default(false)
   releasedAt     DateTime?
   releaseError   String     @default("")
+  // ---- code review: the third lane, and it runs after release ----
+  //
+  // Beside implementState rather than folded into it. They are facts about
+  // different moments: a released ticket whose review is being resolved is
+  // still released, and rounding two lanes into one column is exactly what left
+  // a released ticket labelled "Draft PR" until stateOf() was split.
+  //
+  //   idle         nothing seen yet, or nothing to do
+  //   detected     open comments found, waiting for a slot
+  //   running      a fix-code-review run is in flight
+  //   resolved     the run finished; threads may still be open on purpose
+  //   failed       the run did not finish
+  //   needs-human  the round ceiling was reached — a person has to look
+  reviewState     String    @default("idle")
+  reviewRunId     String    @default("")
+  // Open threads at the last scan, and how the last run answered them.
+  openComments    Int       @default(0)
+  threadsReplied  Int       @default(0)
+  threadsResolved Int       @default(0)
+  // The watermark that stops the loop. The skill deliberately leaves threads it
+  // judged invalid or architectural OPEN, with a reply — so "unresolved > 0" is
+  // a normal end state, not a trigger. Only a comment newer than this, written
+  // by somebody other than us, is new work.
+  lastCommentAt   String    @default("")
+  // How many times this ticket has been round the fix loop. A ceiling, because
+  // three rounds without closure means the finding is architectural, and a
+  // fourth round will not close it either.
+  reviewRounds    Int       @default(0)
+  reviewedAt      DateTime?
+  reviewError     String    @default("")
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
   @@unique([planId, ticketId])
   @@index([releaseDay])
   @@index([claim])
+  @@index([reviewState])
 }
 
 // Every decision the scheduler made, including the ones to do nothing.

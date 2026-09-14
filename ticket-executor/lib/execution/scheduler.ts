@@ -21,15 +21,16 @@
 //      An automation whose refusals are invisible cannot be debugged the morning
 //      after — see `AutomationEvent`.
 
-import { hasIdentity } from "../identity";
+import { hasIdentity, isSamePerson } from "../identity";
 import { claimSprint } from "../sprintClaim";
 import { deliverablesOnly, isoDay } from "../sprintPlan";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
-import { loadMySprintTickets, normalizeProvider } from "../tickets";
+import { loadMySprintTickets, loadReviewsSummary, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
 import { dueForRelease, releasePlannedTicket } from "./release";
-import { cancelRun, startRun } from "./runner";
+import { reviewVerdict } from "./reviewTrigger";
+import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
  *  faster than a Claude turn finishes, and a tighter loop would only add
@@ -40,16 +41,46 @@ const TICK_MS = 120_000;
  *  string, so it is greppable next to the one `startRun()` uses. */
 const TICK_LOCK = 918_273_641;
 
+/** How many times one ticket may go round the fix-review loop.
+ *
+ *  Three, because the loop's failure mode is not a wrong fix but an unfixable
+ *  finding: the skill classifies architectural and policy findings as "needs a
+ *  human decision" and leaves those threads open on purpose. A fourth round
+ *  would re-read the same threads and reach the same conclusion, at full price.
+ *  Hitting the ceiling is a state (`needs-human`), not a failure. */
+const MAX_REVIEW_ROUNDS = 3;
+
+/** How long after a review run finishes before its ticket may be looked at
+ *  again. The run has just pushed commits and written replies; the provider
+ *  needs a moment to settle, and re-reading inside that window mostly returns
+ *  the run's own writes. */
+const REVIEW_COOLDOWN_MS = 10 * 60_000;
+
+/** How often one plan's released tickets are polled for new review comments.
+ *
+ *  Longer than the tick, because this is the only part of the scheduler whose
+ *  cost scales with the size of the sprint: a released ticket stays a candidate
+ *  for the rest of the sprint, so without a floor a five-ticket sprint would pay
+ *  five provider reads every two minutes forever. Held in memory rather than on
+ *  the row because it is a cost control, not a fact about the ticket — losing it
+ *  to a restart costs one extra scan. */
+const REVIEW_SCAN_MS = 6 * 60_000;
+const lastReviewScan = new Map<string, number>();
+
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
 export type TickReport = {
   plans: number;
   implementStarted: number;
+  /** Runs started to answer a reviewer on an already-published pull request. */
+  reviewStarted: number;
   released: number;
   skipped: number;
   /** Runs stopped because the ticket stopped being the developer's. */
   aborted: number;
+  /** Runs continued after the Claude account's usage limit reset. */
+  resumed: number;
 };
 
 /**
@@ -60,7 +91,7 @@ export type TickReport = {
  * nobody can check.
  */
 export async function tick(now = new Date()): Promise<TickReport> {
-  const report: TickReport = { plans: 0, implementStarted: 0, released: 0, skipped: 0, aborted: 0 };
+  const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, resumed: 0 };
   // A non-blocking lock: if another process holds it, this tick simply does not
   // happen. Waiting would only queue up ticks behind a slow one.
   const [{ locked }] = await prisma.$queryRaw<{ locked: boolean }[]>`
@@ -69,6 +100,12 @@ export async function tick(now = new Date()): Promise<TickReport> {
   if (!locked) return report;
 
   try {
+    // Before the plans, and outside the loop: a run parked on a spent quota
+    // belongs to whatever plan started it, and the account it is waiting on is
+    // the machine's, not the sprint's. It is also the cheapest work in the
+    // tick — one indexed read that normally returns nothing.
+    report.resumed = await resumeRateLimitedRuns(now);
+
     const plans = await prisma.sprintPlan.findMany({ where: { status: "active" } });
     report.plans = plans.length;
     const today = isoDay(now);
@@ -85,6 +122,12 @@ export async function tick(now = new Date()): Promise<TickReport> {
           if (outcome.ok) report.released += 1;
           else report.skipped += 1;
         }
+      }
+      // Before the queue, not after it. An open review comment is work somebody
+      // is already waiting on, while the next ticket in the queue is work nobody
+      // has seen yet — and both compete for the same concurrency slot.
+      if (plan.autoResolveReview) {
+        if (await resolveNextReview(plan)) report.reviewStarted += 1;
       }
       if (plan.autoImplement) {
         const started = await startNextTicket(plan, today);
@@ -331,6 +374,221 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
 }
 
 /**
+ * Answer one reviewer, if a reviewer has said something new.
+ *
+ * Shaped like `startNextTicket` on purpose: pick one row, go through
+ * `startRun()`, write down what happened. The question it has to answer first is
+ * the harder half. Whether there is work here cannot be read off the row at all,
+ * and the obvious way to read it off the provider is wrong.
+ *
+ * **Why `unresolvedCount > 0` is not the trigger.** The fix-code-review skill
+ * deliberately leaves threads open: a finding it judged invalid, out of scope, or
+ * architectural gets a reply explaining why, and keeps its status. A finished run
+ * therefore ends with open threads as a matter of course. A scheduler triggering
+ * on the count would start again at once, reply on top of its own replies, and do
+ * it on a pull request belonging to somebody else, where nothing can be undone.
+ *
+ * Four guards, layered rather than alternative:
+ *
+ *   1. **A watermark.** `lastCommentAt` is the newest open comment this plan has
+ *      already acted on. Only something newer than it is new work.
+ *   2. **Authorship.** When the newest open comment is ours it is a reply, not a
+ *      request. The watermark advances past it so it is never weighed again.
+ *   3. **A ceiling.** `MAX_REVIEW_ROUNDS`, after which the row reads `needs-human`
+ *      and stops asking.
+ *   4. **A cooldown.** Ten minutes after a run, while the provider is still
+ *      serving back the writes that run just made.
+ *
+ * Returns whether a run was started.
+ */
+async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
+  const now = Date.now();
+  if (now - (lastReviewScan.get(plan.id) ?? 0) < REVIEW_SCAN_MS) return false;
+
+  // Everything this plan could conceivably have a reviewer waiting on. The
+  // `prPublished` condition is what makes this safe to run at all: a draft pull
+  // request has no reviewer, so nothing on it is a review comment yet.
+  const candidates = await prisma.plannedTicket.findMany({
+    where: {
+      planId: plan.id,
+      claim: "mine",
+      prPublished: true,
+      NOT: { prUrl: "" },
+      reviewState: { notIn: ["running", "needs-human"] },
+      reviewRounds: { lt: MAX_REVIEW_ROUNDS },
+    },
+    orderBy: { implementOrder: "asc" },
+  });
+  if (!candidates.length) return false;
+  lastReviewScan.set(plan.id, now);
+
+  const ready = candidates.filter(
+    (r) => !r.reviewedAt || now - r.reviewedAt.getTime() >= REVIEW_COOLDOWN_MS
+  );
+  if (!ready.length) return false;
+
+  const provider = normalizeProvider(plan.provider);
+  const { org, identity } = await resolveCredential(plan.provider);
+  // The same condition `refreshClaims` checks, for the same reason: a read
+  // authenticated against another organization answers about other pull requests.
+  if (!org || org !== plan.org) return false;
+
+  const prUrls = new Map(ready.map((r) => [r.ticketId, r.prUrl]));
+  const summary = await loadReviewsSummary(provider, ready.map((r) => r.ticketId), prUrls);
+  // Every read failed: a dead token, or an outage. Acting on that would mark
+  // every ticket clean, which is the one answer here that hides real work.
+  if (summary.degraded) {
+    await logAutomation({
+      planId: plan.id, action: "review", outcome: "skipped", reason: "provider-degraded",
+      detail: summary.notice || "The review poll failed for every ticket, so nothing was judged.",
+    });
+    return false;
+  }
+  const byTicket = new Map(summary.reviews.map((e) => [e.ticketId, e]));
+
+  // One pass to record what the scan saw and to find the first row with something
+  // new on it. The writes happen for every row, including rows that will not run:
+  // no open comments is an answer the table has to be able to show.
+  let target: { row: (typeof ready)[number]; latestAt: string; reviewer: string; open: number } | null = null;
+  for (const row of ready) {
+    const entry = byTicket.get(row.ticketId);
+    if (!entry) {
+      if (row.openComments !== 0) {
+        await prisma.plannedTicket.update({ where: { id: row.id }, data: { openComments: 0 } });
+      }
+      continue;
+    }
+    // A review comment carries a display name and no address on either provider
+    // wired here, so authorship matches on `identity.name`. It is the second
+    // guard and not the first: the watermark catches our own reply even when the
+    // name does not match, because it advances past everything already weighed.
+    const verdict = reviewVerdict(row, {
+      unresolvedCount: entry.unresolvedCount,
+      latestAt: entry.latestAt,
+      mine: isSamePerson("", entry.reviewer, identity),
+    }, MAX_REVIEW_ROUNDS);
+    await prisma.plannedTicket.update({
+      where: { id: row.id },
+      data: {
+        openComments: entry.unresolvedCount,
+        // On a `wait` the watermark still moves when the verdict says so, and
+        // that is what closes the loop on our own replies.
+        ...(verdict.act === "wait" && verdict.advanceTo ? { lastCommentAt: verdict.advanceTo } : {}),
+      },
+    });
+    if (verdict.act !== "run" || target) continue;
+    target = { row, latestAt: verdict.advanceTo, reviewer: entry.reviewer, open: entry.unresolvedCount };
+  }
+  if (!target) return false;
+
+  const started = await startReviewRun(target.row.id, {
+    reason: "new-comment",
+    detail:
+      `${target.open} open thread(s); newest by ${target.reviewer || "a reviewer"} at ${target.latestAt}. ` +
+      `Round ${target.row.reviewRounds + 1} of ${MAX_REVIEW_ROUNDS}.`,
+    // Advanced at the start rather than on completion. A run that fails leaves
+    // the row `failed` and visible, and retrying it automatically would be the
+    // loop this whole function exists to prevent: the next trigger is a genuinely
+    // new comment, or the button on the row.
+    lastCommentAt: target.latestAt,
+    openComments: target.open,
+  });
+  return started.ok;
+}
+
+/**
+ * Start one review run against one planned ticket, and record what happened.
+ *
+ * The scheduler and the button on the row both come through here, which is the
+ * same rule the release path keeps: an automation nobody can trigger by hand is
+ * one nobody can check, and two starters would be two places for the admission
+ * contract to drift apart.
+ *
+ * It deliberately does **not** re-ask whether there is anything to fix. The
+ * scheduler has just read the provider and a person pressing the button has just
+ * read the same numbers on screen; a second poll here would cost a round trip to
+ * confirm what the caller already knows.
+ */
+export async function startReviewRun(
+  plannedId: string,
+  opts: { reason: string; detail: string; lastCommentAt?: string; openComments?: number }
+): Promise<{ ok: boolean; error: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+
+  // The three conditions that make a review run meaningful at all, re-read here
+  // rather than trusted from the caller: the button is on a page that may have
+  // been open since before any of them changed.
+  const refusal =
+    item.claim !== "mine"
+      ? "This ticket is no longer yours."
+      : !item.prPublished || !item.prUrl
+        ? "This ticket has no published pull request to review."
+        : item.reviewState === "running"
+          ? "A review fix is already running for this ticket."
+          : "";
+  if (refusal) {
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
+      reason: "not-reviewable", detail: refusal,
+    });
+    return { ok: false, error: refusal };
+  }
+
+  const mapped = await prisma.rootRepoProjectMap.findUnique({
+    where: {
+      provider_org_project: { provider: item.plan.provider, org: item.plan.org, project: item.plan.project },
+    },
+  });
+  if (!mapped?.rootRepo) {
+    const error = `No root repo is remembered for project "${item.plan.project}" — set it in the Root repo field on My Sprint.`;
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
+      reason: "no-root-repo", detail: error,
+    });
+    return { ok: false, error };
+  }
+
+  const result = await startRun({
+    ticketId: item.ticketId,
+    ticketUrl: "",
+    provider: item.plan.provider,
+    project: item.plan.project,
+    rootRepo: mapped.rootRepo,
+    prUrl: item.prUrl,
+    requestedSkill: "fix-code-review-v2",
+    // The same reasoning as the implement queue: the plan is the human approval,
+    // and a scheduled run must not park at a plan gate overnight. Without this,
+    // `resolveSkill()` reads `Setting.autoResolveCodeReview` and can route this
+    // into the gated v3 flow, where it would wait for somebody who is asleep.
+    skillExplicit: true,
+  });
+  if (!result.ok) {
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
+      reason: result.blocked || "admission-refused", detail: result.error,
+    });
+    return { ok: false, error: result.error };
+  }
+
+  await prisma.plannedTicket.update({
+    where: { id: item.id },
+    data: {
+      reviewState: "running",
+      reviewRunId: result.runId,
+      reviewError: "",
+      ...(opts.openComments === undefined ? {} : { openComments: opts.openComments }),
+      ...(opts.lastCommentAt ? { lastCommentAt: opts.lastCommentAt } : {}),
+    },
+  });
+  await logAutomation({
+    planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "started",
+    reason: opts.reason, detail: opts.detail,
+  });
+  return { ok: true, error: "" };
+}
+
+/**
  * Reconcile what the engine did with what the plan believes.
  *
  * Called at the top of each tick rather than written by the runner, and that is
@@ -338,7 +596,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
  * teaching it would put a second consumer inside the run lifecycle. Reading the
  * Run rows back is a cheap query and keeps the dependency pointing one way.
  */
-export async function reconcile(): Promise<void> {
+async function reconcileImplement(): Promise<void> {
   const inFlight = await prisma.plannedTicket.findMany({
     where: { implementState: "running", runId: { not: "" } },
   });
@@ -369,6 +627,96 @@ export async function reconcile(): Promise<void> {
         : "The run did not produce a pull request.",
     });
   }
+}
+
+/**
+ * The same sweep for the review lane.
+ *
+ * Separate from the implement sweep rather than a second branch inside it,
+ * because the two read different columns, write different columns, and answer
+ * different questions. Sharing a loop would mean a row in flight on one lane
+ * being judged by the other lane rules.
+ *
+ * What counts as success here is not what counts for an implement run. An
+ * implement run has to produce a pull request; a review run has to have written
+ * to the pull request that already exists. `threadsReplied` is therefore the
+ * field that decides it: a run that succeeded without replying to anything
+ * either found nothing to do or gave up quietly, and neither is a round worth
+ * counting against the ceiling.
+ */
+async function reconcileReviews(): Promise<void> {
+  const inFlight = await prisma.plannedTicket.findMany({
+    where: { reviewState: "running", reviewRunId: { not: "" } },
+  });
+  if (!inFlight.length) return;
+  const runs = await prisma.run.findMany({
+    where: { id: { in: inFlight.map((i) => i.reviewRunId) } },
+    select: { id: true, state: true, endReason: true },
+  });
+  const byId = new Map(runs.map((r) => [r.id, r]));
+  // What the run reported, read from the node contract rather than from its
+  // prose. `deliver` is the one-shot review node; a v3 run reports the same two
+  // fields from `publish`, so both are accepted and whichever exists wins.
+  const steps = await prisma.step.findMany({
+    where: { runId: { in: inFlight.map((i) => i.reviewRunId) }, nodeId: { in: ["deliver", "publish"] } },
+    select: { runId: true, output: true },
+  });
+  const outputByRun = new Map(steps.map((st) => [st.runId, st.output as Record<string, unknown>]));
+
+  for (const item of inFlight) {
+    const run = byId.get(item.reviewRunId);
+    if (!run || run.state === "running" || run.state === "waiting") continue;
+
+    const out = outputByRun.get(item.reviewRunId) ?? {};
+    const replied = Number(out.threadsReplied ?? 0) || 0;
+    const resolved = Number(out.threadsResolved ?? 0) || 0;
+    const answered = run.state === "succeeded" && replied > 0;
+    const rounds = item.reviewRounds + (answered ? 1 : 0);
+    // The ceiling is applied here rather than at the next scan so the row says
+    // why it stopped asking at the moment it stopped, not two minutes later.
+    const state = !answered ? "failed" : rounds >= MAX_REVIEW_ROUNDS ? "needs-human" : "resolved";
+
+    await prisma.plannedTicket.update({
+      where: { id: item.id },
+      data: {
+        reviewState: state,
+        reviewRounds: rounds,
+        threadsReplied: replied,
+        threadsResolved: resolved,
+        reviewedAt: new Date(),
+        reviewError: answered ? "" : run.endReason || run.state,
+      },
+    });
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "review",
+      outcome: answered ? "done" : "failed",
+      // Classified rather than free text, because the bell reads it: whether a
+      // finished fix needs the developer is exactly the difference between a
+      // notification that lands on the badge and one that does not.
+      reason: !answered
+        ? run.endReason || run.state
+        : state === "needs-human"
+          ? "max-rounds"
+          : replied > resolved
+            ? "left-open"
+            : "all-resolved",
+      detail: answered
+        ? `Replied to ${replied} thread(s), resolved ${resolved}.` +
+          (replied > resolved
+            ? ` ${replied - resolved} left open on purpose — invalid, out of scope, or needing your decision.`
+            : "") +
+          (state === "needs-human"
+            ? ` Round ${rounds} of ${MAX_REVIEW_ROUNDS}: this ticket will not be picked up automatically again.`
+            : "")
+        : "The run did not write to the pull request.",
+    });
+  }
+}
+
+/** Bring both lanes back in step with the engine before anything new starts. */
+export async function reconcile(): Promise<void> {
+  await reconcileImplement();
+  await reconcileReviews();
 }
 
 async function safeTick() {

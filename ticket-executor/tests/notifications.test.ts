@@ -374,3 +374,41 @@ test("a mention and a comment on one ticket are separate notifications", () => {
   assert.notEqual(notificationKey(list[0]), notificationKey(list[1]));
   assert.equal(actionCount(list, {}), 1);
 });
+
+// ---- the review lane ----
+//
+// The one automation whose success can still be the developer problem: the
+// skill answers every thread but resolves only the ones it fixed, so a finished
+// run routinely leaves work behind. These assertions are what stop that landing
+// as a quiet "done".
+
+test("a review fix that resolved everything is a record, not a task", () => {
+  const [n] = fromAutomation([automation({ action: "review", outcome: "done", reason: "all-resolved" })]);
+  assert.equal(n.kind, "scheduler.review-fixed");
+  assert.equal(n.severity, "info");
+  assert.equal(n.tab, "resolve-review");
+});
+
+test("a review fix that left threads open reaches the badge", () => {
+  const [n] = fromAutomation([automation({ action: "review", outcome: "done", reason: "left-open" })]);
+  assert.equal(n.severity, "action");
+  assert.match(n.summary, /left open for you/);
+});
+
+test("hitting the round ceiling says so, and says automation has stopped", () => {
+  const [n] = fromAutomation([automation({ action: "review", outcome: "done", reason: "max-rounds" })]);
+  assert.equal(n.severity, "action");
+  assert.match(n.summary, /automation has stopped/);
+});
+
+test("a failed review fix is named as the fix failing, not the review", () => {
+  const [n] = fromAutomation([automation({ action: "review", outcome: "failed", reason: "verification" })]);
+  assert.equal(n.kind, "scheduler.failed");
+  assert.equal(n.severity, "action");
+  assert.match(n.summary, /Could not resolve the review comments/);
+  assert.equal(n.tab, "resolve-review");
+});
+
+test("a skipped review decision stays in the sprint log and off the bell", () => {
+  assert.equal(fromAutomation([automation({ action: "review", outcome: "skipped", reason: "no-new-comments" })]).length, 0);
+});

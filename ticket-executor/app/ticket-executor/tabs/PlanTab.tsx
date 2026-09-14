@@ -11,7 +11,9 @@ import LoadingRing from "../LoadingRing";
 type Props = {
   /** The plan markdown as the run last produced it. */
   plan: string;
-  /** False while the run is still drafting/revising the plan — actions are hidden. */
+  /** True only at the review gate. False both while the run is still drafting the
+   *  plan and for a one-shot (auto) run, which has no gate — either way the
+   *  actions are hidden and the plan is read-only. */
   awaiting: boolean;
   busy: boolean;
   /** Which action's POST is currently in flight — drives which button shows a spinner. */
@@ -21,20 +23,28 @@ type Props = {
   onCancel: () => void;
 };
 
-// Section headings the skill's plan.md template always uses — each gets its
-// own accent-colored marker icon in Preview so the eye has something to latch
-// onto instead of a wall of uniform headings.
+// Section headings the skills' plan.md templates use — each gets its own
+// accent-colored marker icon in Preview so the eye has something to latch onto
+// instead of a wall of uniform headings. The implement and review flows share
+// most of them; "Scope" is the implement template's, "Thread Decisions" the
+// review one's.
 const SECTION_ICON: Record<string, { glyph: string; color: string }> = {
   Understanding: { glyph: "◎", color: COLORS.info },
   Scope: { glyph: "◫", color: COLORS.indigo },
+  "Thread Decisions": { glyph: "◫", color: COLORS.indigo },
   Changes: { glyph: "✎", color: COLORS.accent },
   Verification: { glyph: "✓", color: COLORS.success },
   "Risks / Assumptions": { glyph: "!", color: COLORS.warning },
 };
 
-// The plan-review gate: read (or edit) what Claude intends to do before any
-// source file is touched, then accept it, send it back with feedback, or drop
-// the run entirely.
+// Two jobs, told apart by `awaiting`:
+//   awaiting — the plan-review gate. Read (or edit) what Claude intends to do
+//              before any source file is touched, then accept it, send it back
+//              with feedback, or drop the run entirely.
+//   otherwise — a read-only record. The one-shot (auto) flow has no gate: it
+//              writes its plan, then runs on to the pull request in the same
+//              turn. The plan is kept so the finished run can still be read
+//              without reconstructing its intent from the diff.
 export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, onRevise, onCancel }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   const [draft, setDraft] = useState(plan);
@@ -62,6 +72,9 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
   useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
 
   const edited = draft.trim() !== plan.trim();
+  // Keyed off the server's plan, not the local draft: the header describes what
+  // the run produced, and it must not change while someone types in the editor.
+  const hasPlan = !!plan.trim();
   const lineCount = useMemo(() => draft.split("\n").length, [draft]);
 
   function handleSave() {
@@ -77,18 +90,20 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "18px", animation: "fadeUp .35s both" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard(awaiting ? "accent" : "warning", { padding: "16px 18px", radius: "13px" }) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard(awaiting ? "accent" : hasPlan ? "success" : "warning", { padding: "16px 18px", radius: "13px" }) }}>
         <span style={{ flex: "0 0 auto", width: "40px", height: "40px", borderRadius: "11px", background: "rgba(251,114,80,.14)", border: `1px solid ${COLORS.accent}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeWidth="2.2" style={{ stroke: COLORS.accent }}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
         </span>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>
-            {awaiting ? "Plan ready for your review" : "Drafting the plan…"}
+            {awaiting ? "Plan ready for your review" : hasPlan ? "Implementation plan" : "Drafting the plan…"}
           </div>
           <div style={{ fontSize: FONT.base, color: COLORS.textDim, marginTop: "2px" }}>
             {awaiting
               ? "Nothing has been changed in the repo yet. Edit the plan if you want, then accept it to let the run continue."
-              : "Claude is reading the ticket and the codebase. The plan will appear here when it's done."}
+              : hasPlan
+                ? "What Claude set out to do, written before it touched any file. This run doesn't stop for approval — the plan is kept so you can read back what it intended."
+                : "Claude is reading the ticket and the codebase. The plan will appear here when it's done."}
           </div>
         </div>
         {justSaved && (

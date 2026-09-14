@@ -6,9 +6,11 @@ import {
   rebuildPlan,
   recentAutomation,
   releasePlannedTicket,
+  retryPlannedTicket,
   setPlanAutomation,
   setPlanStatus,
   setTicketUnblocked,
+  startReviewRun,
   tickNow,
   type TriageResult,
 } from "@/lib/executionStore";
@@ -132,9 +134,10 @@ export async function PATCH(req: Request) {
     }
     await setPlanStatus(id, status);
   }
-  const patch: { autoImplement?: boolean; autoRelease?: boolean; reviewers?: string[] } = {};
+  const patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; reviewers?: string[] } = {};
   if (typeof body.autoImplement === "boolean") patch.autoImplement = body.autoImplement;
   if (typeof body.autoRelease === "boolean") patch.autoRelease = body.autoRelease;
+  if (typeof body.autoResolveReview === "boolean") patch.autoResolveReview = body.autoResolveReview;
   if (Array.isArray(body.reviewers)) patch.reviewers = body.reviewers.map(String).filter(Boolean);
   if (Object.keys(patch).length) await setPlanAutomation(id, patch);
 
@@ -144,6 +147,7 @@ export async function PATCH(req: Request) {
 // PUT /api/my-sprint/plan — the manual half of the same machinery.
 //
 //   { release: "<plannedTicketId>" }  hand one finished ticket over now
+//   { retry:   "<plannedTicketId>" }  put a stopped ticket back in the queue
 //   { tick: true }                    run one scheduler pass immediately
 //
 // The button and the timer call exactly the same code on purpose: an automation
@@ -154,6 +158,30 @@ export async function PUT(req: Request) {
     const outcome = await releasePlannedTicket(body.release);
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.release } });
     return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null });
+  }
+  // The manual half of the review lane. Same starter the scheduler uses, so the
+  // button cannot start a run the automation would have refused.
+  if (typeof body.resolveReview === "string" && body.resolveReview) {
+    const outcome = await startReviewRun(body.resolveReview, {
+      reason: "asked-by-user",
+      detail: "Started from the Review column on My Sprint.",
+    });
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.resolveReview } });
+    return NextResponse.json(
+      { outcome, plan: item ? await planById(item.planId) : null },
+      outcome.ok ? undefined : { status: 400 }
+    );
+  }
+  // Back into the implement queue. Deliberately not a "run it now" button: it
+  // resets the row and the scheduler starts it on its next pass, so a retried
+  // ticket meets the same admission rules as any other.
+  if (typeof body.retry === "string" && body.retry) {
+    const outcome = await retryPlannedTicket(body.retry);
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.retry } });
+    return NextResponse.json(
+      { outcome, plan: item ? await planById(item.planId) : null },
+      outcome.ok ? undefined : { status: 400 }
+    );
   }
   if (body.tick) return NextResponse.json({ report: await tickNow() });
   return NextResponse.json({ error: "Nothing to do." }, { status: 400 });

@@ -91,6 +91,67 @@ export function commonArgs(a: TurnArgs): string[] {
   return [...args, ...disablePluginArgs(a.cwd), ...EXTRA];
 }
 
+// ---- account limits ----
+
+// The CLI reports a spent account by ending the turn with is_error and a message
+// naming the reset time ("You've hit your session limit · resets 7:50pm
+// (Asia/Ho_Chi_Minh)"). This reads that one message, and only that one — it is
+// not a regex over the run's log, which the harness owns and must never
+// re-derive state from. The message is the *only* channel the CLI gives for the
+// one failure that is not the agent's fault and is not permanent, and the
+// alternative is scoring a spent quota as a failed ticket.
+const LIMIT_LINE = /\blimit\b/i;
+const RESET_AT = /\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i;
+const RESET_ZONE = /\(([A-Za-z]+(?:\/[A-Za-z_+-]+)+)\)/;
+
+/** The zone's offset from UTC at `at`, in milliseconds. */
+function zoneOffsetMs(tz: string, at: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(at);
+  const f = Object.fromEntries(parts.map((p) => [p.type, p.value])) as Record<string, string>;
+  const wall = Date.UTC(+f.year, +f.month - 1, +f.day, +f.hour % 24, +f.minute, +f.second);
+  return wall - at.getTime();
+}
+
+/**
+ * When the account this machine is logged in as comes back, or null when the
+ * message is not a limit at all.
+ *
+ * The message carries a wall-clock time and a zone but no date, so "the next
+ * time it is 7:50pm there" is the whole rule: a reset already past today is
+ * tomorrow's. An unparseable zone falls back to this machine's own, which is the
+ * zone the CLI reports in anyway.
+ */
+export function parseLimitReset(message: string, now = new Date()): Date | null {
+  if (!message || !LIMIT_LINE.test(message)) return null;
+  const m = RESET_AT.exec(message);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  const minute = Number(m[2] ?? 0);
+  const meridiem = (m[3] ?? "").toLowerCase();
+  if (hour > 23 || minute > 59) return null;
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+
+  const zone = RESET_ZONE.exec(message)?.[1] ?? "";
+  let offset = 0;
+  try {
+    offset = zone ? zoneOffsetMs(zone, now) : -now.getTimezoneOffset() * 60_000;
+  } catch {
+    offset = -now.getTimezoneOffset() * 60_000;
+  }
+
+  const wallNow = new Date(now.getTime() + offset);
+  let at =
+    Date.UTC(wallNow.getUTCFullYear(), wallNow.getUTCMonth(), wallNow.getUTCDate(), hour, minute) - offset;
+  if (at <= now.getTime()) at += 24 * 60 * 60_000;
+  return new Date(at);
+}
+
 /** What one Claude turn produced. `structured` is the validated object the CLI
  *  reported; null means the turn ended without honouring its contract, which the
  *  caller must treat as a failed node rather than guessing from `text`. */
@@ -100,6 +161,10 @@ export type TurnResult = {
   text: string;
   error: string;
   usage: TurnUsage;
+  /** Set only when the turn failed because the account is out of quota: when it
+   *  comes back. The node is parked until then rather than failed — see
+   *  parkForLimit() in graph/drive.ts. */
+  limitResetAt: Date | null;
   /** The session the CLI actually recorded this turn under. Reported rather than
    *  written straight onto the run: a `fresh` node opens its own session, which
    *  must not overwrite the run's primary one that `resume` nodes depend on. */
@@ -192,7 +257,14 @@ function sandboxEnv(): Record<string, string> {
 /** Run one Claude turn; resolves when the process closes. */
 export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
   return new Promise((resolve) => {
-    const out: TurnResult = { ok: false, structured: null, text: "", error: "", usage: { ...ZERO_USAGE }, sessionId: "" };
+    const out: TurnResult = {
+      ok: false, structured: null, text: "", error: "", usage: { ...ZERO_USAGE }, sessionId: "", limitResetAt: null,
+    };
+    // Every failure path resolves through here, so the limit is recognised
+    // whichever way the CLI reported it — a clean exit carrying `is_error`, a
+    // non-zero exit, or a message that only reached stderr.
+    const fail = (detail: string) =>
+      resolve({ ...out, ok: false, error: detail, limitResetAt: parseLimitReset(detail) });
     let child: ChildProcess;
     try {
       child = spawn(CLAUDE_BIN, args, {
@@ -204,7 +276,7 @@ export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       live.logLines.push({ text: `✖ ${detail}`, kind: "err" });
-      resolve({ ...out, ok: false, error: detail });
+      fail(detail);
       return;
     }
     live.child = child;
@@ -231,16 +303,18 @@ export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
     child.on("error", (e) => {
       live.child = null;
       live.logLines.push({ text: `✖ ${e.message}`, kind: "err" });
-      resolve({ ...out, ok: false, error: e.message });
+      fail(e.message);
     });
     child.on("close", (code) => {
       live.child = null;
       if (code !== 0) {
         const detail = out.text || errTail.trim() || `claude exited with code ${code}`;
         live.logLines.push({ text: detail, kind: "err" });
-        resolve({ ...out, ok: false, error: detail });
+        fail(detail);
         return;
       }
+      // A clean exit still carries `is_error` when the account ran out mid-turn.
+      if (!out.ok) out.limitResetAt = parseLimitReset(out.text);
       resolve(out);
     });
   });

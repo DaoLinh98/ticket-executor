@@ -110,7 +110,7 @@ function twoPhaseGraph(review: boolean, evaluate: boolean): Graph {
         label: "Draft plan",
         effects: "local", // writes only .te/plan.md
         context: "fresh",
-        prompt: (c) => openingPrompt(c, "plan"),
+        prompt: (c) => openingPrompt(c, "plan", { review }),
         output: PLAN_OUTPUT as unknown as Record<string, unknown>,
       },
       planCheck: {
@@ -271,6 +271,14 @@ function twoPhaseGraph(review: boolean, evaluate: boolean): Graph {
 
 // A single node that runs the whole ticket to a PR. It is `external`, but it is
 // also the only node and therefore a leaf — the invariant holds.
+//
+// It still writes `.te/plan.md` first, and declares `artifact: "plan"` so drive()
+// captures it when the node ends. That is a *record*, not a gate: nothing waits
+// on it and nothing routes on it — the node keeps going in the same turn. It
+// exists so the Plan tab can answer "what did the agent decide to do" for an
+// auto run afterwards, which is otherwise only recoverable by reading the diff —
+// and for the review flow, by reading replies scattered across someone else's
+// pull request.
 function oneShotGraph(review: boolean): Graph {
   return {
     id: review ? "fix-review-v2" : "implement-v2",
@@ -284,8 +292,11 @@ function oneShotGraph(review: boolean): Graph {
         context: "fresh",
         // Only the implement flow opens a pull request here; the review flow
         // answers threads on one that already exists and is already published.
-        prompt: (c) => openingPrompt(c, "", { opensPr: !review }),
+        prompt: (c) => openingPrompt(c, "", { opensPr: !review, review }),
         output: (review ? REVIEW_ONESHOT_OUTPUT : ONESHOT_OUTPUT) as unknown as Record<string, unknown>,
+        // Both v2 skills write one — the implement flow plans its changes, the
+        // review flow plans its thread decisions. Same file, same capture.
+        artifact: "plan",
       },
     },
     edges: {

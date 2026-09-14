@@ -6,7 +6,7 @@ import { resolveCredential } from "../providerCredentials";
 import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
-import { cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
+import { bankParkedTime, cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
 import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, isReviewSkill, KNOWN_SKILLS, PLAN_FILE, resolveSkill } from "./graph/graphs";
 import { loadKnowledge } from "./knowledgeStore";
 import { REVIEW_SKILL } from "./graph/prompts";
@@ -326,13 +326,17 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('ticket-executor:admission'))`;
 
       // Read the facts, then let the pure rule judge them (see admissionDenial).
-      const [dup, other, runningOthers] = await Promise.all([
+      // The pause is re-read here rather than taken from the `setting` above: it
+      // is the one admission fact another *run* writes, at the moment its quota
+      // ran out, and the row read before the lock can already be stale.
+      const [dup, other, runningOthers, paused] = await Promise.all([
         tx.run.findFirst({ where: { ticketId, state: { in: ACTIVE_STATES } }, select: { id: true } }),
         tx.run.findFirst({
           where: { ticketId: { not: ticketId }, state: { in: ACTIVE_STATES } },
           select: { ticketId: true },
         }),
         tx.run.count({ where: { ticketId: { not: ticketId }, state: { in: COMPUTING_STATES } } }),
+        tx.setting.findUnique({ where: { id: "default" }, select: { agentPausedUntil: true } }),
       ]);
       const denial = admissionDenial({
         ticketId,
@@ -341,6 +345,8 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
         runningOthers,
         isolate,
         cap: setting?.concurrentRuns ?? 2,
+        pausedUntil: paused?.agentPausedUntil ?? null,
+        now: new Date(),
       });
       if (denial) throw new AdmissionError(denial.message, denial.status, denial.blocked);
 
@@ -416,6 +422,10 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     mcpConfigPath: "",
     parkedAt: null,
     humanWaitMs: 0,
+    resumeAt: null,
+    limitWaitMs: 0,
+    limitParks: 0,
+    resumeSession: false,
     startedAt: row.startedAt.getTime(),
     endedAt: null,
     seq: 0,
@@ -568,6 +578,12 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     mcpConfigPath: "",
     parkedAt: row.parkedAt ? row.parkedAt.getTime() : null,
     humanWaitMs: row.humanWaitMs,
+    resumeAt: row.resumeAt ? row.resumeAt.getTime() : null,
+    limitWaitMs: row.limitWaitMs,
+    // Restored for the same reason as hops and visits: the ceiling belongs to
+    // the run, and a rebuild that reset it would grant one more park per restart.
+    limitParks: row.limitParks,
+    resumeSession: false,
     startedAt: row.startedAt.getTime(),
     endedAt: row.endedAt ? row.endedAt.getTime() : null,
     seq,
@@ -663,6 +679,51 @@ export async function cancelRun(id: string): Promise<boolean> {
   const live = await liveOf(id);
   if (!live) return false;
   return cancel(live);
+}
+
+// ---- account-limit recovery ----
+
+/**
+ * Continue every run the Claude account's usage limit parked, now that it has
+ * reset (see parkForLimit() in graph/drive.ts).
+ *
+ * The node is re-entered rather than the run restarted, and it re-enters the
+ * session it was cut off in — which is the entire reason the run was parked
+ * instead of failed. That session holds the ticket, the plan, the files already
+ * read and the edits already made; a fresh one would pay for all of it again and
+ * still not know what the interrupted turn had done.
+ *
+ * Driven from the scheduler's tick rather than a timer of its own: the tick
+ * already runs every two minutes under an advisory lock, and a second timer
+ * would be a second thing able to re-enter the same run.
+ */
+export async function resumeRateLimitedRuns(now = new Date()): Promise<number> {
+  const due = await prisma.run.findMany({
+    where: { state: "waiting", endReason: "rate-limited", resumeAt: { not: null, lte: now } },
+    select: { id: true },
+  });
+  let resumed = 0;
+
+  for (const { id } of due) {
+    const live = await liveOf(id);
+    // Another tick, or the run's own driver, got there first.
+    if (!live || live.state !== "waiting") continue;
+
+    bankParkedTime(live);
+    // Consumed by the next agent turn: it continues the cut-off session whatever
+    // that node's declared `context` is.
+    live.resumeSession = true;
+    live.state = "running";
+    live.errorMessage = "";
+    live.endReason = "";
+    live.logLines.push({ text: "↻ Usage limit reset — continuing where the run stopped", kind: "step" });
+    await saveRun(live);
+
+    const graph = graphById(live.graphId, live.ctx.skill);
+    void drive(live, graph, live.currentNodeId || graph.entry);
+    resumed += 1;
+  }
+  return resumed;
 }
 
 // ---- crash recovery ----

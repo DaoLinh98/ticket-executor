@@ -43,7 +43,7 @@ export type Ticket = {
 export type TicketComment = {
   author: string;
   date: string; // short human date, e.g. "Jul 2"
-  text: string; // plain text (may contain @mentions and newlines)
+  text: string; // sanitized HTML, like Ticket.description — render with RichText
 };
 
 // Where a run is. This is the whole answer — there is deliberately no separate
@@ -67,7 +67,12 @@ export type EndReason =
   | "plan-rejected"
   | "blocked"
   | "hop-limit"
-  | "needs-review";
+  | "needs-review"
+  // Not an ending at all while the run is `waiting`: the account this machine is
+  // logged in as ran out of quota mid-node, and the run holds here until
+  // `resumeAt`. It only *ends* under this reason when the ceiling on those parks
+  // is reached, which is a run a person has to look at.
+  | "rate-limited";
 
 export type LogLine = { text: string; kind: string };
 

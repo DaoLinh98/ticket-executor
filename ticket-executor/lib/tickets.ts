@@ -210,8 +210,8 @@ export async function loadTicketDetail(
 
 // Load the discussion comments for a single ticket. Only Azure DevOps is wired;
 // other providers return an empty list so the section simply hides.
-export async function loadTicketComments(provider: ProviderId, id: string, project?: string): Promise<TicketComment[]> {
-  if (provider === "azure-devops") return getWorkItemComments(project ?? "", id);
+export async function loadTicketComments(provider: ProviderId, id: string): Promise<TicketComment[]> {
+  if (provider === "azure-devops") return getWorkItemComments(id);
   return [];
 }
 
