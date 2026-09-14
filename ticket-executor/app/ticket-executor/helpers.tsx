@@ -2,23 +2,6 @@
 // run's progress is the state of its graph nodes, reported by the API, not a
 // guess made from regexes over the terminal output.
 
-// Render a comment body: color @mentions and keep line breaks (ADO-style).
-const MENTION_RE = /(@[A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)?)/g;
-export function renderCommentBody(text: string) {
-  return text.split("\n").map((line, li) => (
-    <span key={li}>
-      {li > 0 && <br />}
-      {line.split(MENTION_RE).map((part, pi) =>
-        /^@[A-Z]/.test(part) ? (
-          <span key={pi} style={{ color: "#6C8EEF", fontWeight: 600 }}>{part}</span>
-        ) : (
-          part
-        )
-      )}
-    </span>
-  ));
-}
-
 // Format a token count compactly ("12.3K", "1.2M") for the Result tab's usage badges.
 export function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

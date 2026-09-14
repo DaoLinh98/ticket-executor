@@ -14,7 +14,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
+import { parseLimitReset } from "../lib/execution/claudeCli";
 import { graphById, graphForSkill, resolveSkill } from "../lib/execution/graph/graphs";
+import { DRAFT_RULE, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
 
 // ---- fixtures ----
@@ -432,6 +434,32 @@ for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e]) {
   });
 }
 
+// The one-shot flow has no gate to park at, so the only place its plan can be
+// captured is the node itself declaring that it leaves one. Asserted on the
+// graph rather than in drive(): if this declaration is dropped, an auto run
+// still opens its PR and nothing fails — the Plan tab just quietly goes empty.
+test("both one-shot flows declare the plan record they leave behind", () => {
+  for (const graph of [v2, reviewV2]) {
+    const deliver = graph.nodes.deliver;
+    assert.equal(deliver.kind, "agent");
+    assert.equal(
+      (deliver as { artifact?: string }).artifact,
+      "plan",
+      `${graph.id}: the only node in this graph must declare the plan it writes, or nothing captures it`
+    );
+  }
+});
+
+test("the gated flow still shows its plan at the gate, not at a node", () => {
+  for (const graph of [v3, v3e]) {
+    const gate = Object.values(graph.nodes).find((n) => n.kind === "gate");
+    assert.equal(gate?.artifact, "plan", `${graph.id}: the review gate must name the plan it shows`);
+    // The plan node writes the file; the gate is what captures it. Declaring it
+    // on both would be a second place to keep in sync.
+    assert.equal((graph.nodes.plan as { artifact?: string }).artifact, undefined);
+  }
+});
+
 test("graphById resolves a persisted run back onto the shape it started on", () => {
   assert.equal(graphById("implement-v3", "anything").id, "implement-v3");
   assert.equal(graphById("fix-review-v2", "anything").id, "fix-review-v2");
@@ -492,6 +520,8 @@ const FREE: AdmissionFacts = {
   runningOthers: 0,
   isolate: true,
   cap: 2,
+  pausedUntil: null,
+  now: new Date("2026-09-10T10:00:00Z"),
 };
 
 test("admission: nothing in flight → the run starts", () => {
@@ -553,5 +583,91 @@ test("admission: a cap of 0 or less is treated as 1 — never as 'no limit'", ()
 
 test("admission: the duplicate check reports before the cap — the specific reason wins", () => {
   const d = admissionDenial({ ...FREE, duplicate: true, runningOthers: 9 });
+  assert.equal(d?.blocked, "duplicate-ticket");
+});
+
+// ---- the review flow's opening prompt ----
+//
+// An isolated worktree is created detached at the root repo's HEAD, so a review
+// run does not start on the branch holding the code it was sent to fix. That is
+// carried by the prompt rather than by a second worktree recipe in the engine,
+// which makes it exactly the kind of guard invariant 4 says must be observable:
+// these assertions are the wiring being visible.
+
+function promptOf(graph: Graph, nodeId: string): string {
+  const node = graph.nodes[nodeId];
+  assert.ok(node, `graph ${graph.id} has no node "${nodeId}"`);
+  assert.equal(node.kind, "agent", `node "${nodeId}" is not an agent node`);
+  return (node as { prompt: (c: RunContext) => string }).prompt(CTX);
+}
+
+test("review flow: both fresh nodes are told to check out the pull request's branch", () => {
+  assert.ok(promptOf(reviewV2, "deliver").includes(REVIEW_BRANCH_RULE));
+  assert.ok(promptOf(reviewV3, "plan").includes(REVIEW_BRANCH_RULE));
+});
+
+test("implement flow: nothing tells it to check out a branch that does not exist yet", () => {
+  assert.ok(!promptOf(v2, "deliver").includes(REVIEW_BRANCH_RULE));
+  assert.ok(!promptOf(v3, "plan").includes(REVIEW_BRANCH_RULE));
+});
+
+test("the two rules do not cross: only the flow that opens a pull request carries the draft rule", () => {
+  assert.ok(promptOf(v2, "deliver").includes(DRAFT_RULE));
+  assert.ok(!promptOf(reviewV2, "deliver").includes(DRAFT_RULE));
+});
+
+// ---- account limits: park, don't fail ----
+// A spent quota is the one failure that is not a statement about the work, and
+// the harness reacts to it by holding the run rather than ending it. Both halves
+// of that decision are pure and asserted here: reading the CLI's message, and
+// refusing to start anything else until it resets.
+
+const AT_NOON = new Date("2026-09-10T12:00:00+07:00");
+
+test("limit: the CLI's reset time is read, and a time already past is tomorrow's", () => {
+  const later = parseLimitReset(
+    "You've hit your session limit · resets 7:50pm (Asia/Ho_Chi_Minh)",
+    AT_NOON
+  );
+  assert.equal(later?.toISOString(), "2026-09-10T12:50:00.000Z"); // 19:50 +07
+
+  const past = parseLimitReset(
+    "You've hit your session limit · resets 9:30am (Asia/Ho_Chi_Minh)",
+    AT_NOON
+  );
+  assert.equal(past?.toISOString(), "2026-09-11T02:30:00.000Z"); // tomorrow 09:30 +07
+});
+
+test("limit: only a limit message parks a run", () => {
+  // Every other failure keeps failing the node — parking on one would hold a
+  // worktree open forever waiting for a quota nobody is out of.
+  assert.equal(parseLimitReset("implement finished without returning its structured output", AT_NOON), null);
+  assert.equal(parseLimitReset("Graph exceeded 40 transitions — it is looping.", AT_NOON), null);
+  assert.equal(parseLimitReset("", AT_NOON), null);
+  // A limit with no reset time in it cannot say when to wake up, so it is not
+  // one this can act on.
+  assert.equal(parseLimitReset("You've hit your session limit", AT_NOON), null);
+});
+
+test("limit: no zone in the message falls back to this machine's clock", () => {
+  const at = parseLimitReset("5-hour limit reached ∙ resets 11pm", AT_NOON);
+  assert.ok(at instanceof Date);
+  assert.ok(at!.getTime() > AT_NOON.getTime());
+});
+
+test("admission: a spent account refuses every new run until it resets", () => {
+  const paused = { ...FREE, pausedUntil: new Date("2026-09-10T12:50:00Z"), now: AT_NOON };
+  const d = admissionDenial(paused);
+  assert.equal(d?.status, 429);
+  assert.equal(d?.blocked, "rate-limited");
+
+  // The pause expires by itself: nothing has to clear the column.
+  assert.equal(admissionDenial({ ...paused, now: new Date("2026-09-10T13:00:00Z") }), null);
+});
+
+test("admission: a ticket-specific refusal still outranks the pause", () => {
+  // Waiting three hours for a quota does not help somebody whose ticket already
+  // has a run in flight — that one is theirs to finish or cancel now.
+  const d = admissionDenial({ ...FREE, duplicate: true, pausedUntil: new Date("2026-09-10T12:50:00Z"), now: AT_NOON });
   assert.equal(d?.blocked, "duplicate-ticket");
 });

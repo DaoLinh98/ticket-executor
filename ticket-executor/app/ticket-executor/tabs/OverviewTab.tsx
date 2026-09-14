@@ -8,7 +8,6 @@ import type { Ticket, TicketComment } from "@/lib/types";
 import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, initials, runDot, tintedCard } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
-import { renderCommentBody } from "../helpers";
 import type { Action, OverrideField, RunSummary } from "../types";
 import LoadingRing from "../LoadingRing";
 
@@ -102,7 +101,7 @@ export default function OverviewTab({
                     <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{cm.author}</span>
                     <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
                   </div>
-                  <div style={{ fontSize: FONT.lg, lineHeight: 1.65, color: COLORS.textSoft, marginTop: "5px" }}>{renderCommentBody(cm.text)}</div>
+                  <div style={{ marginTop: "5px" }}><RichText html={cm.text} /></div>
                 </div>
               </div>
             ))}

@@ -44,6 +44,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "run.succeeded": "DONE",
   "scheduler.started": "AUTO",
   "scheduler.released": "RELEASED",
+  "scheduler.review-fixed": "REVIEW FIXED",
   "scheduler.failed": "AUTO FAILED",
   "plan.drift": "DRIFT",
 };

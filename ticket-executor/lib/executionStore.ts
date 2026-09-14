@@ -20,6 +20,7 @@ export {
   cancelRun,
   recoverInterruptedRuns,
   resolvePlan,
+  resumeRateLimitedRuns,
   startRun,
   type GateAction,
   type StartRunInput,
@@ -54,6 +55,7 @@ export {
   planInputs,
   recentAutomation,
   rebuildPlan,
+  retryPlannedTicket,
   setPlanAutomation,
   setPlanStatus,
   setTicketUnblocked,
@@ -65,4 +67,4 @@ export {
   RELEASE_STATUS,
   type ReleaseOutcome,
 } from "./execution/release";
-export { startScheduler, tickNow, type TickReport } from "./execution/scheduler";
+export { startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";

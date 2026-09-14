@@ -26,6 +26,7 @@ export type NotificationKind =
   | "run.succeeded"
   | "scheduler.started"
   | "scheduler.released"
+  | "scheduler.review-fixed"
   | "scheduler.failed"
   | "plan.drift";
 
@@ -354,8 +355,35 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
         ...base,
         kind: "scheduler.failed",
         severity: "action",
-        summary: `Automatic ${e.action} failed${e.reason ? ` — ${e.reason}` : ""}`,
-        tab: e.action === "release" ? "result" : "execution",
+        // "Automatic review failed" would read as the review having failed
+        // rather than the attempt to answer it, so that one lane is named.
+        summary:
+          e.action === "review"
+            ? `Could not resolve the review comments${e.reason ? ` — ${e.reason}` : ""}`
+            : `Automatic ${e.action} failed${e.reason ? ` — ${e.reason}` : ""}`,
+        tab: e.action === "release" ? "result" : e.action === "review" ? "resolve-review" : "execution",
+      });
+      continue;
+    }
+    if (e.action === "review") {
+      // The one automation whose *success* can still be the developer's problem.
+      // The fix-code-review skill answers every thread but only resolves the ones
+      // it actually fixed: a finding it judged invalid, out of scope, or needing a
+      // decision is replied to and left open on purpose. Reporting that as "done"
+      // and nothing more would quietly hand back work nobody is looking at, so the
+      // classified reason decides which of the two this is.
+      const needsMe = e.reason === "left-open" || e.reason === "max-rounds";
+      out.push({
+        ...base,
+        kind: "scheduler.review-fixed",
+        severity: needsMe ? "action" : "info",
+        summary:
+          e.reason === "max-rounds"
+            ? "Review fixes pushed — the rest needs your decision, and automation has stopped on this one"
+            : needsMe
+              ? "Review fixes pushed — some threads were answered but left open for you"
+              : "Review fixes pushed — every thread resolved",
+        tab: "resolve-review",
       });
       continue;
     }

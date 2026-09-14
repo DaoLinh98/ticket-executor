@@ -3,6 +3,7 @@ import { resolveCredential } from "../../providerCredentials";
 import { removeRunMcpConfig, resolveMcp, writeRunMcpConfig } from "../../mcp";
 import { prisma } from "../../prisma";
 import { commonArgs, runTurn } from "../claudeCli";
+import { LIMIT_RESUME_PROMPT } from "./prompts";
 import type { AgentNode, CheckNode, LiveRun, Node, NodeResult, TurnUsage } from "./types";
 import { ZERO_USAGE } from "./types";
 
@@ -55,7 +56,14 @@ export function releaseMcp(live: LiveRun) {
 // ---- node execution ----
 
 async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
-  const prompt = node.prompt(live.ctx);
+  // A node woken after an account limit continues the session it was cut off in,
+  // whatever its declared `context` is, and is told to continue rather than
+  // re-briefed. Consumed here so it applies to exactly the one turn the sweep
+  // woke: if that turn parks again, the sweep sets it again.
+  const waking = live.resumeSession && !!live.sessionId;
+  live.resumeSession = false;
+
+  const prompt = waking ? LIMIT_RESUME_PROMPT : node.prompt(live.ctx);
   const modelArgs = [
     ...(live.model ? ["--model", live.model] : []),
     ...(live.effort ? ["--effort", live.effort] : []),
@@ -65,7 +73,7 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
   // earlier nodes read. `fresh` opens its own — the point of a fresh node is that
   // it has *not* seen the reasoning it is about to act on, so its session id is
   // deliberately not written back over the run's.
-  const resuming = node.context === "resume" && !!live.sessionId;
+  const resuming = waking || (node.context === "resume" && !!live.sessionId);
   const ownSessionId = resuming ? "" : randomUUID();
   const sessionArgs = resuming ? ["--resume", live.sessionId] : ["--session-id", ownSessionId];
 
@@ -78,6 +86,13 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
     live.logLines.push({
       text: `⚠ ${node.label} declares context "resume" but this run has no session yet — it starts a fresh one and re-reads from scratch.`,
       kind: "err",
+    });
+  }
+
+  if (waking) {
+    live.logLines.push({
+      text: `↻ ${node.label} continues in the session the usage limit cut off — it is not restarted.`,
+      kind: "step",
     });
   }
 
@@ -102,7 +117,13 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
   if (!resuming && turn.sessionId && !live.sessionId) live.sessionId = turn.sessionId;
 
   if (!turn.ok) {
-    return { ok: false, data: {}, error: turn.error || turn.text || "Claude CLI reported an error", usage: turn.usage };
+    return {
+      ok: false,
+      data: {},
+      error: turn.error || turn.text || "Claude CLI reported an error",
+      usage: turn.usage,
+      limitResetAt: turn.limitResetAt,
+    };
   }
   // A turn that ended without honouring its contract is a failed node. There is
   // deliberately no fallback to parsing `turn.text`: guessing here is exactly

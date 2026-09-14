@@ -45,6 +45,10 @@ export type NodeResult = {
   data: Record<string, unknown>;
   error: string;
   usage: TurnUsage;
+  /** Set only when the node failed because the account is out of quota: when it
+   *  comes back. drive() parks on this instead of routing the edge, so it never
+   *  reaches an edge and no edge may branch on it. */
+  limitResetAt?: Date | null;
 };
 
 // ---- context policy ----
@@ -105,6 +109,13 @@ export type AgentNode = NodeBase & {
   context: ContextPolicy;
   prompt: (c: RunContext) => string;
   output: Record<string, unknown>; // JSON Schema, passed to the CLI as --json-schema
+  /** A human-readable deliverable this node leaves in the worktree, captured as
+   *  an Artifact row when the node ends. Same vocabulary as `GateNode.artifact`,
+   *  and for the same reason: what a person is shown is declared on the graph,
+   *  not recognised from a node id. Only `"plan"` exists today — it is how the
+   *  one-shot flow keeps a readable record of what it intended, given it has no
+   *  gate to park at and `.te/` is thrown away with the worktree. */
+  artifact?: string;
 };
 
 /** A stop. The run parks here holding no child process until a human resolves it.
@@ -169,6 +180,22 @@ export type LiveRun = {
   mcpConfigPath: string;
   parkedAt: number | null;
   humanWaitMs: number;
+  /** When a run parked by an account limit may continue. Null for every other
+   *  kind of park: a gate waits for a person, not for a clock. It is also what
+   *  tells the two parks apart when the wait is banked. */
+  resumeAt: number | null;
+  /** Time spent parked on a spent quota. Beside humanWaitMs rather than folded
+   *  into it: one is a person who has not answered and the other is a bill, and
+   *  the dashboard reports the first as a fact about the team. */
+  limitWaitMs: number;
+  /** How many times an account limit has parked this run. The ceiling that stops
+   *  a run from parking forever against a quota that never recovers. */
+  limitParks: number;
+  /** Set for exactly one turn, by the sweep that wakes a limit-parked run: the
+   *  node re-enters `--resume`ing the session it was cut off in, whatever its
+   *  declared `context` is. Not persisted — it is derived from the park, and the
+   *  sweep sets it again after a restart. */
+  resumeSession: boolean;
   startedAt: number;
   endedAt: number | null;
   /** Monotonic counter for Transition.seq. */

@@ -40,7 +40,35 @@ export function invokeSkill(c: RunContext, mode: string): string {
  * but is not deciding anything a repo convention bears on — it pushes a branch
  * that is already final.
  */
-export function openingPrompt(c: RunContext, mode: string, opts: { opensPr?: boolean } = {}): string {
+/**
+ * Why a review run has to check out a branch that already exists.
+ *
+ * An isolated run gets its working tree from `git worktree add --detach <wt> HEAD`
+ * (`runner.ts`), which puts it on whatever commit the root repository happened to
+ * be sitting on. For the implement flow that is the right starting point — the
+ * branch does not exist yet and the agent creates it. For the review flow it is
+ * the wrong tree entirely: the pull request's changes are not in it, so every file
+ * the threads point at is read at its pre-change contents, and a commit would
+ * land on a detached HEAD that nothing can push.
+ *
+ * The fix is a prompt rather than a second worktree recipe in the engine: the
+ * source branch is a fact only the provider knows, and resolving it before the
+ * tree exists would put a provider read inside `startRun()`'s advisory-lock
+ * transaction. The agent is already talking to the provider for the threads.
+ */
+export const REVIEW_BRANCH_RULE =
+  "\n\nBEFORE you read any file or change anything: this working tree is NOT on the pull request's branch. " +
+  "It was created detached at an unrelated commit, so the code under review is not in it and every file would read " +
+  "at its pre-change contents. Run `git fetch origin`, take the source branch name from the pull request you just " +
+  "fetched, and check it out (it already exists on the remote). Verify with `git branch --show-current` before going " +
+  "further. Every read, commit and push in this run happens on that branch: never create a branch, and never commit " +
+  "on a detached HEAD.\n";
+
+export function openingPrompt(
+  c: RunContext,
+  mode: string,
+  opts: { opensPr?: boolean; review?: boolean } = {}
+): string {
   // The one-shot implement flow opens its pull request inside this same node —
   // there is no separate publish prompt to carry the draft rule — so it is
   // attached here instead. The graph says whether the node opens anything rather
@@ -50,12 +78,31 @@ export function openingPrompt(c: RunContext, mode: string, opts: { opensPr?: boo
   // draft would be an instruction with no referent, and asking it for `isDraft`
   // would ask for a field its contract does not declare.
   const draft = opts.opensPr ? "\n\n" + DRAFT_RULE : "";
-  return invokeSkill(c, mode) + draft + c.knowledge;
+  // Both review nodes that run `fresh` need this, and for the same reason: the
+  // plan phase reads the code under review, the one-shot reads and rewrites it,
+  // and neither is on the branch that holds it until it says so.
+  const branch = opts.review ? REVIEW_BRANCH_RULE : "";
+  return invokeSkill(c, mode) + branch + draft + c.knowledge;
 }
 
 // Resume prompts stay short: the session already holds the ticket and the
 // codebase reading. Each opens with the same `Mode:` token the first turn used —
 // the skill's mode table treats an absent Mode as a different flow entirely.
+
+/**
+ * Sent when a node is re-entered after the account ran out of quota mid-turn.
+ *
+ * It replaces the node's own prompt rather than repeating it, and that is the
+ * whole point of resuming the cut-off session instead of starting the node over:
+ * the transcript already holds the brief, the files read and the work done, and
+ * re-sending the opening prompt would ask an agent that is halfway through a
+ * ticket to begin it again. It says nothing about *what* to do — only that the
+ * interruption was ours, and that the same output contract still applies.
+ */
+export const LIMIT_RESUME_PROMPT =
+  "Continue. Your previous turn was cut off because the account hit its usage limit — nothing you did was rejected and " +
+  "nothing about the task has changed. Check the current state of the working tree and the branch before acting, since " +
+  "some of what you intended may already be done, then finish the work and report the result through your output contract.";
 
 export const REPLAN_PROMPT =
   "Mode: replan. The plan was rejected. Read .te/feedback.md for the reviewer's reason, then rewrite .te/plan.md to address it. " +

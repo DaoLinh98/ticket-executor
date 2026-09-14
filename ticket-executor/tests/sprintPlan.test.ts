@@ -14,6 +14,7 @@ import {
   isDeliverable,
   laneOf,
   releasesOn,
+  retryDenial,
   summarize,
   ticketHours,
   workingDays,
@@ -340,4 +341,35 @@ test("a window still open keeps clamping to today rather than shifting", () => {
   const plan = buildPlan([input("1", 2)], SPRINT, "2026-09-14", CFG);
   assert.equal(plan.tickets[0].releaseDay, "2026-09-14");
   assert.equal(plan.summary.workingDaysLeft, 5);
+});
+
+// ---- retrying a ticket the queue has stopped asking about ----
+// A rebuild deliberately will not requeue a settled row, so this rule is the
+// only way back — and its refusals are what stop it becoming a duplicate-PR
+// button.
+
+const STOPPED = { implementState: "failed", prUrl: "", claim: "mine" };
+
+test("retry: a failed run may be queued again", () => {
+  assert.equal(retryDenial(STOPPED), "");
+  assert.equal(retryDenial({ ...STOPPED, implementState: "skipped" }), "");
+});
+
+test("retry: a row that already opened a pull request never runs again", () => {
+  // The one-shot flow publishes inside the turn it verifies in, so `failed` with
+  // a PR attached is a real state — and retrying it is a second pull request.
+  const d = retryDenial({ ...STOPPED, prUrl: "https://dev.azure.com/pr/1" });
+  assert.match(d, /second one/);
+});
+
+test("retry: finished or in-flight work is refused", () => {
+  for (const implementState of ["running", "implemented", "pending"]) {
+    assert.notEqual(retryDenial({ ...STOPPED, implementState }), "");
+  }
+});
+
+test("retry: a ticket that changed hands is not yours to requeue", () => {
+  for (const claim of ["handed-off", "dropped"]) {
+    assert.match(retryDenial({ ...STOPPED, claim }), /no longer assigned/);
+  }
 });

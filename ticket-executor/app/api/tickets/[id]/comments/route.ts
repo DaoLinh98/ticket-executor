@@ -11,9 +11,8 @@ export async function GET(
   const { id } = await params;
   const url = new URL(req.url);
   const provider = normalizeProvider(url.searchParams.get("provider"));
-  const project = url.searchParams.get("project") ?? undefined;
   try {
-    const comments = await loadTicketComments(provider, id, project);
+    const comments = await loadTicketComments(provider, id);
     return NextResponse.json({ comments });
   } catch {
     // Degrade gracefully — the section just stays hidden.

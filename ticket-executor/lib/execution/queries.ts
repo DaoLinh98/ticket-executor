@@ -522,7 +522,10 @@ async function computeDashboardMetrics(filter?: {
   const failed = scoped.filter((r) => r.state === "failed" && !isHumanEnded(r.endReason)).length;
   const cancelled = scoped.filter((r) => r.state === "cancelled" || isHumanEnded(r.endReason)).length;
   const running = scoped.filter((r) => r.state === "running").length;
-  const awaitingApproval = scoped.filter((r) => r.state === "waiting").length;
+  // `waiting` alone would also count runs parked on the Claude account's usage
+  // limit, and this number is read as "how many plans are sitting on somebody's
+  // desk". A run waiting for a quota is on nobody's desk.
+  const awaitingApproval = scoped.filter((r) => r.state === "waiting" && r.endReason !== "rate-limited").length;
   const decided = completed + failed;
 
   // ---- leverage (parallelism) ----

@@ -506,3 +506,59 @@ export function buildPlan(
 export function releasesOn(plan: SprintPlanResult, day: string): PlannedTicket[] {
   return plan.tickets.filter((t) => t.releaseDay === day);
 }
+
+// ---- putting a stopped ticket back in the queue ----
+
+/** The state of one plan row, as far as retrying it is concerned. */
+export type RetryFacts = {
+  implementState: string;
+  /** A pull request this row already produced. */
+  prUrl: string;
+  /** Where the developer's claim on the ticket stands (lib/sprintClaim.ts). */
+  claim: string;
+};
+
+/**
+ * Whether a planned ticket may be queued again, and why not when it may not.
+ *
+ * It exists because a rebuild deliberately will not do this. `savePlan()` treats
+ * any row that is not `pending` as settled and refuses to re-date it, which is
+ * right for work that finished and wrong for work that stopped — so before this,
+ * one failed run took a ticket out of the sprint's queue permanently and the only
+ * way back was an UPDATE by hand.
+ *
+ * The refusals are the point, not the permission:
+ *
+ *   - **A row that already produced a pull request** is never retried, whatever
+ *     its state says. `implementState` can be `failed` with a `prUrl` set — the
+ *     one-shot flow opens the PR inside the same turn it verifies in, so a run
+ *     that published and then failed its tests lands exactly there. Queueing that
+ *     again is a second pull request for one ticket, which is the thing invariant
+ *     2 exists to prevent. The way forward for that row is the review lane.
+ *   - **A running row** would be a second agent on one branch — the failure
+ *     worktrees exist to prevent. Cancel it first; the cancel marks it failed and
+ *     then this allows it.
+ *   - **An implemented or released row** is finished work. Re-running it is not a
+ *     retry, it is a duplicate.
+ *   - **A ticket that is no longer the developer's** is somebody else's to run,
+ *     and `startNextTicket()` would refuse it anyway. Refusing here too is the
+ *     same two-locks-on-one-door rule the queue already follows.
+ */
+export function retryDenial(f: RetryFacts): string {
+  if (f.claim !== "mine") {
+    return "This ticket is no longer assigned to you, so the queue will not run it.";
+  }
+  if (f.prUrl) {
+    return "This ticket already has a pull request. Running it again would open a second one — use the review lane instead.";
+  }
+  if (f.implementState === "running") {
+    return "This ticket is running right now. Cancel that run first.";
+  }
+  if (f.implementState === "implemented") {
+    return "This ticket is already implemented and waiting for its release day.";
+  }
+  if (f.implementState === "pending") {
+    return "This ticket is already in the queue.";
+  }
+  return "";
+}

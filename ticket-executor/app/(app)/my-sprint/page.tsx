@@ -86,6 +86,13 @@ type PlannedRow = {
   statusMoved: boolean;
   releasedAt: string | null;
   releaseError: string;
+  reviewState: string;
+  reviewRunId: string;
+  openComments: number;
+  threadsReplied: number;
+  threadsResolved: number;
+  reviewRounds: number;
+  reviewError: string;
   claim: Claim;
   assigneeNow: string;
 };
@@ -95,6 +102,7 @@ type StoredPlan = {
   status: "draft" | "active" | "archived";
   autoImplement: boolean;
   autoRelease: boolean;
+  autoResolveReview: boolean;
   includeWider: boolean;
   reviewers: string[];
   pointsPerDay: number;
@@ -191,6 +199,45 @@ function stateOf(t: PlannedRow): { color: string; label: string } {
   return IMPLEMENT_STATE[t.implementState] ?? IMPLEMENT_STATE.pending;
 }
 
+/**
+ * What the Review column says about one row.
+ *
+ * A column of its own rather than another branch inside `stateOf()`. The two
+ * answer questions about different moments and both stay true at once: a
+ * released ticket whose review is being resolved is still released, and folding
+ * the second fact into the first is exactly the mistake that left a released
+ * ticket reading "Draft PR" until State was split from the release columns.
+ *
+ * `spin` is the live half. A pill alone cannot say whether "Fixing" is this
+ * second or a stale row, which is the same reason the State column carries one.
+ */
+function reviewOf(t: PlannedRow): { color: string; label: string; spin: boolean } | null {
+  // Nothing is under review until a reviewer has been told there is something to
+  // review. Before release the pull request is a draft nobody has been sent.
+  if (!t.prPublished) return null;
+  switch (t.reviewState) {
+    case "running":
+      return { color: COLORS.accent, label: "Fixing", spin: true };
+    case "failed":
+      return { color: COLORS.danger, label: "Fix failed", spin: false };
+    case "needs-human":
+      return { color: COLORS.warning, label: "Needs you", spin: false };
+    case "resolved":
+      return {
+        color: t.openComments > 0 ? COLORS.warning : COLORS.success,
+        // Replied and resolved are different numbers on purpose: the skill
+        // deliberately answers threads it will not act on, and a row claiming to
+        // have resolved everything would hide the ones left for a person.
+        label: `Fixed ${t.threadsResolved}/${t.threadsReplied}`,
+        spin: false,
+      };
+    default:
+      return t.openComments > 0
+        ? { color: COLORS.warning, label: `${t.openComments} open`, spin: false }
+        : { color: COLORS.textDim, label: "Clean", spin: false };
+  }
+}
+
 const hours = (h: number) => (Math.round(h * 10) / 10).toString() + "h";
 
 /** "Mon 07 Sep" — the weekday is the part a release calendar is read for. */
@@ -202,7 +249,7 @@ function dayLabel(iso: string): string {
 
 // The triage column carries the override control next to its verdict, so it is
 // the one that has to fit two things rather than one.
-const GRID = "44px 1fr 60px 68px 132px 106px 104px 176px";
+const GRID = "44px 1fr 60px 68px 132px 106px 104px 104px 176px";
 
 /**
  * Where a ticket actually lives, when that is not the iteration on screen.
@@ -460,12 +507,29 @@ export default function MySprintPage() {
       if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The release did not complete.");
     });
 
+  const retryNow = (plannedId: string) =>
+    act("retry-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { retry: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "This ticket could not be requeued.");
+      else setMessage("Back in the queue — the scheduler starts it on its next pass.");
+    });
+
+  const resolveReviewNow = (plannedId: string) =>
+    act("fixreview-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { resolveReview: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The review fix did not start.");
+      else setMessage("Resolving the review comments on this pull request.");
+    });
+
   const tickNow = () =>
     act("tick", async () => {
       const d = await post("/api/my-sprint/plan", { tick: true }, "PUT");
       const r = d.report ?? {};
       setMessage(
         `Scheduler ran: ${r.implementStarted ?? 0} started, ${r.released ?? 0} released, ${r.skipped ?? 0} skipped` +
+          (r.reviewStarted ? `, ${r.reviewStarted} review fix(es) started` : "") +
           (r.aborted ? `, ${r.aborted} stopped (changed hands)` : "") +
           "."
       );
@@ -497,10 +561,15 @@ export default function MySprintPage() {
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
           blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
           prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
+          reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
+          reviewRounds: 0, reviewError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
         }));
 
   const runningRows = rows.filter((t) => t.implementState === "running");
+  // The second lane. Kept apart from `runningRows` because the two are different
+  // work on different tickets and the banner has to name which is which.
+  const reviewingRows = rows.filter((t) => t.reviewState === "running");
 
   const tile = (label: string, value: string, sub?: string) => (
     <div style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -615,18 +684,28 @@ export default function MySprintPage() {
                   column says it per row, but the row is one of many and the
                   answer to "what is running?" should not have to be scanned
                   for. */}
-              {runningRows.length > 0 && (
+              {(runningRows.length > 0 || reviewingRows.length > 0) && (
                 <div style={{ ...tintedCard("accent"), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                   <LoadingRing size={18} />
                   <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 700 }}>
-                    IMPLEMENTING NOW
+                    {runningRows.length > 0 && reviewingRows.length > 0
+                      ? "WORKING NOW"
+                      : reviewingRows.length > 0
+                        ? "RESOLVING REVIEW"
+                        : "IMPLEMENTING NOW"}
                   </span>
-                  {runningRows.map((t) => (
-                    <span key={t.ticketId} style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                  {[...runningRows.map((t) => ({ t, lane: "implementing" })), ...reviewingRows.map((t) => ({ t, lane: "resolving review" }))].map(({ t, lane }) => (
+                    <span key={lane + t.ticketId} style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
                       <span style={{ fontSize: FONT.base, color: COLORS.textMuted, fontWeight: 600 }}>
                         #{t.ticketId} · {t.title}
                       </span>
-                      {button("Watch run", "outline", () => openExecution(t.ticketId, "execution"), "watch-" + t.ticketId)}
+                      {/* Named only when both lanes are live: with one lane the
+                          heading above already says which, and repeating it per
+                          row is noise. */}
+                      {runningRows.length > 0 && reviewingRows.length > 0 && (
+                        <span style={pill({ color: COLORS.textDim, size: "xs", weight: 700 })}>{lane}</span>
+                      )}
+                      {button("Watch run", "outline", () => openExecution(t.ticketId, "execution"), "watch-" + lane + t.ticketId)}
                     </span>
                   ))}
                 </div>
@@ -768,6 +847,7 @@ export default function MySprintPage() {
                   {([
                     ["autoImplement", "Auto-implement", "Work down the queue without waiting to be asked."],
                     ["autoRelease", "Auto-release", "Hand finished work over on its release day."],
+                    ["autoResolveReview", "Auto-resolve review", "Answer new review comments on released work without waiting to be asked."],
                   ] as const).map(([field, label, hint]) => {
                     const on = !!stored?.[field];
                     return (
@@ -788,8 +868,9 @@ export default function MySprintPage() {
                 </div>
 
                 <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-                  The two are separate on purpose: working ahead is private and cheap to undo, while releasing notifies
-                  a reviewer and moves the work item. Nothing is scheduled from a draft plan.
+                  The three are separate on purpose: working ahead is private and cheap to undo, releasing notifies a
+                  reviewer and moves the work item, and resolving a review writes replies under your name on a pull
+                  request somebody is already reading. Nothing is scheduled from a draft plan.
                 </span>
               </div>
 
@@ -809,7 +890,7 @@ export default function MySprintPage() {
                 </span>
                 <div style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
                   <div style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
-                    {["#", "TICKET", "PTS", "EST.", "TRIAGE", "RELEASE", "STATE", "ACTIONS"].map((h) => (
+                    {["#", "TICKET", "PTS", "EST.", "TRIAGE", "RELEASE", "STATE", "REVIEW", "ACTIONS"].map((h) => (
                       <span key={h} style={{ ...sectionCaption(), ...(h === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{h}</span>
                     ))}
                   </div>
@@ -831,6 +912,7 @@ export default function MySprintPage() {
                       const tri = triaged.get(t.ticketId);
                       const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
                       const state = stateOf(t);
+                      const review = reviewOf(t);
                       const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
                       // Only a ticket triage stopped, still the developer's, and
                       // still waiting to start, has an override worth offering.
@@ -885,6 +967,14 @@ export default function MySprintPage() {
                             {t.releaseError && (
                               <span style={{ fontSize: FONT.sm, color: COLORS.danger }}>{t.releaseError}</span>
                             )}
+                            {t.reviewError && (
+                              <span style={{ fontSize: FONT.sm, color: COLORS.danger }}>Review fix: {t.reviewError}</span>
+                            )}
+                            {t.reviewState === "needs-human" && (
+                              <span style={{ fontSize: FONT.sm, color: COLORS.warning }}>
+                                {t.reviewRounds} rounds of automatic fixes did not close this review — the rest needs a decision.
+                              </span>
+                            )}
                           </span>
                           <span style={{ fontSize: FONT.base, fontWeight: 700, color: t.points ? COLORS.text : COLORS.faint }}>
                             {t.points || "—"}
@@ -923,6 +1013,16 @@ export default function MySprintPage() {
                             {t.implementState === "running" && <LoadingRing size={13} />}
                             <span style={pill({ color: state.color, size: "xs", weight: 700 })}>{state.label}</span>
                           </span>
+                          <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
+                            {review ? (
+                              <>
+                                {review.spin && <LoadingRing size={13} />}
+                                <span style={pill({ color: review.color, size: "xs", weight: 700 })}>{review.label}</span>
+                              </>
+                            ) : (
+                              <span style={{ fontSize: FONT.base, color: COLORS.faint }}>—</span>
+                            )}
+                          </span>
                           {/* Every action a row offers, in one column at the end
                               of it. Kept out of the pill columns because a
                               button beside a verdict reads as part of it, and
@@ -933,11 +1033,32 @@ export default function MySprintPage() {
                               (t.unblockedByUser
                                 ? button("Overridden", "success", () => setUnblocked(t.id, false), "unblock-" + t.id)
                                 : button("Force ready", "outline", () => setUnblocked(t.id, true), "unblock-" + t.id))}
-                            {t.implementState === "running"
+                            {t.implementState === "running" || t.reviewState === "running"
                               ? button("Watch", "outline", () => openExecution(t.ticketId, "execution"), "watch-row-" + t.ticketId)
-                              : t.runId
+                              : t.runId || t.reviewRunId
                                 ? button("Result", "ghost", () => openExecution(t.ticketId, "result"), "result-" + t.ticketId)
                                 : null}
+                            {/* The manual half of the same machinery, and the only
+                                way back for a row the scheduler has stopped asking
+                                about: a failed fix, or one that hit the round
+                                ceiling. Offered whenever there is something open to
+                                answer, so the automation being off is not the same
+                                as the work being unreachable. */}
+                            {t.id && t.prPublished && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
+                              button("Fix review", "outline", () => resolveReviewNow(t.id), "fixreview-" + t.id)}
+                            {/* The only way back for a ticket the queue has
+                                stopped asking about. A rebuild will not do it:
+                                `savePlan()` treats any row that is not `pending`
+                                as settled and refuses to re-date it, which is
+                                right for finished work and wrong for stopped
+                                work — so without this a single failed run took a
+                                ticket out of the sprint permanently. Not offered
+                                where there is a pull request already: that row
+                                belongs to the review lane, and a second run on it
+                                would open a second PR. */}
+                            {t.id && claim === "mine" && !t.prUrl &&
+                              (t.implementState === "failed" || t.implementState === "skipped") &&
+                              button("Retry", "warning", () => retryNow(t.id), "retry-" + t.id)}
                             {due && t.id && button("Release", "primary", () => releaseNow(t.id), "release-" + t.id)}
                           </span>
                         </div>

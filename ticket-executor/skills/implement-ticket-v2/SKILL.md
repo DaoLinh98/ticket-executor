@@ -1,7 +1,7 @@
 ---
 name: implement-ticket-v2
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab fully autonomously, end-to-end — branch, implement, verify, commit, push, PR — in a single non-interactive run
-version: 2.1.0
+version: 2.2.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations. Make the **smallest safe change that satisfies the Acceptance Criteria**, and preserve all unrelated behavior and all uncommitted work in the tree.
@@ -9,6 +9,8 @@ Implement ticket $ARGUMENTS following the project structure, existing workflow, 
 ## Goal
 
 Implement the ticket correctly based on full ticket context, existing implementation patterns, and appropriate test coverage — then get it to an open pull/merge request, without pausing to ask the user anything mid-run.
+
+Along the way you also leave a **plan record** in `.te/plan.md`. It is written once, before you touch any source file, and it is never approved by anyone: the run continues straight through it. It exists so the developer reading the app's Plan tab afterwards can see what you intended to do without reconstructing it from the diff.
 
 ## Autonomy (read this first)
 
@@ -56,15 +58,53 @@ Also read the repository's instruction files if present: root-level `CLAUDE.md`,
 
 1. Parse `Provider:` from $ARGUMENTS (or infer it, see above) and retrieve/summarize the ticket via that provider's tool (description, AC, discussion) before touching code.
 2. Read the instruction files above, then explore only the code areas the ticket touches — grep for the symbols involved and read the files you expect to change plus their direct call sites. Scale the reading to the ticket: a one-point change does not justify a codebase tour.
-3. Run `git status` and note any pre-existing uncommitted changes, so you neither revert them nor sweep them into your commit.
-4. Get onto the working branch: `git checkout -b <branch>` from the current HEAD — `feature/[ID]-[short-description]` for a feature/User Story, `bug/[ID]-[short-description]` for a Bug. **Do not `git checkout main` first.** The runner has already placed this working tree at the right base commit, and when the run is isolated it is a detached worktree where `main` is checked out elsewhere, so that checkout fails. **This run can be retried after a crash** — if the branch already exists, check it out and continue on it rather than failing or inventing a second name.
-5. Implement the change, preserving existing behavior unless the ticket explicitly requires otherwise.
-6. Add/update unit tests when the change affects business logic, validation, mapping, branching, or edge cases — follow existing test style.
-7. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Fix failures you caused before moving on.
-8. **Verify each Acceptance Criterion individually** against what you actually built and ran, and note which ones you could not verify.
-9. **Review the final diff before committing**: unintended changes, unrelated formatting, leftover debug code, temporary or generated files, anything outside ticket scope. Stage only what the ticket needs.
-10. Commit with a clear message and push the branch.
-11. Open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket. **Check for an existing PR/MR on this branch first** (`gh pr list --head <branch>`, `glab mr list --source-branch <branch>`, or the ADO MCP pull-request list filtered by source branch) — a second PR for the same branch is worse than no PR at all. If one exists, reuse its URL.
+3. Write the plan record to **`.te/plan.md`** (create the `.te/` directory if needed) using the template below, then **keep going without pausing** — see "Plan record".
+4. Run `git status` and note any pre-existing uncommitted changes, so you neither revert them nor sweep them into your commit.
+5. Get onto the working branch: `git checkout -b <branch>` from the current HEAD — `feature/[ID]-[short-description]` for a feature/User Story, `bug/[ID]-[short-description]` for a Bug. **Do not `git checkout main` first.** The runner has already placed this working tree at the right base commit, and when the run is isolated it is a detached worktree where `main` is checked out elsewhere, so that checkout fails. **This run can be retried after a crash** — if the branch already exists, check it out and continue on it rather than failing or inventing a second name.
+6. Implement the change, preserving existing behavior unless the ticket explicitly requires otherwise.
+7. Add/update unit tests when the change affects business logic, validation, mapping, branching, or edge cases — follow existing test style.
+8. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Fix failures you caused before moving on.
+9. **Verify each Acceptance Criterion individually** against what you actually built and ran, and note which ones you could not verify.
+10. **Review the final diff before committing**: unintended changes, unrelated formatting, leftover debug code, temporary or generated files, anything outside ticket scope. Stage only what the ticket needs.
+11. Commit with a clear message and push the branch.
+12. Open a pull/merge request against `main` using the provider-specific tool from the table above, linking the ticket. **Check for an existing PR/MR on this branch first** (`gh pr list --head <branch>`, `glab mr list --source-branch <branch>`, or the ADO MCP pull-request list filtered by source branch) — a second PR for the same branch is worse than no PR at all. If one exists, reuse its URL.
+
+## Plan record
+
+Before the first source edit, write `.te/plan.md`. Then **carry straight on to step 4** — nobody reviews this file, nothing waits on it, and you must not ask for approval of it. It is a record, written while your reasoning is still fresh, that the developer reads in the app afterwards.
+
+Keep it markdown, concrete and under ~120 lines. Name real files and real functions; a record a reader can't check against the code is useless. Do not restate the ticket and do not paste code:
+
+```markdown
+# Plan — #<ticket id> <ticket title>
+
+## Understanding
+<2-4 sentences: what the ticket asks for, in your words.>
+
+## Scope
+**In scope**
+- <bullet>
+
+**Out of scope**
+- <bullet>
+
+## Changes
+| # | File | Change | Why |
+|---|---|---|---|
+| 1 | `path/to/file.ts` | <what you will add/modify> | <which requirement it serves> |
+
+## Verification
+- <command you will run, e.g. `npm run build`> — <what it proves>
+- Acceptance Criteria coverage: <AC → how it's satisfied>
+
+## Risks / Assumptions
+| Item | Reasoning |
+|---|---|
+```
+
+If implementing it turns out differently — a file that doesn't exist, an approach that can't work — do not stop and do not silently follow the stale record: implement the smallest correct thing, then **update `.te/plan.md` before you commit** so the record matches what you actually did, and say what changed in your summary. The record is read after the run, so a stale one is worse than none.
+
+Never stage `.te/`; the app already lists it in the repo's `.git/info/exclude`, so if it shows up in `git status` something is wrong — leave it out of the commit rather than "fixing" it by editing `.gitignore`, which is a tracked project file.
 
 ## Pull request description
 
@@ -82,6 +122,7 @@ Write the PR/MR body yourself instead of letting the tool auto-fill it from the 
 - Comments: short, English, only for non-obvious logic — never for obvious code.
 - Tests are not mandatory for every change, but add them when they meaningfully verify behavior; never invent a new test structure.
 - Do not report the Acceptance Criteria as met if any criterion is unverified or only partially satisfied.
+- **`.te/plan.md` is a record, never a gate.** Write it, then continue in the same run all the way to the PR. Never pause on it, never ask for it to be approved, and never treat a run as finished because it exists.
 - Commit, push, and open the PR/MR automatically once implementation + verification are done — do not wait for explicit confirmation to do this (this skill supersedes any general "ask before committing" default).
 - Everything that leaves this machine (push, PR, tracker writes) happens in this single run, so make each of those steps safe to repeat: check whether it has already been done before doing it.
 - If verification cannot be completed, say exactly what and why — never claim tests/build passed when they didn't run.
