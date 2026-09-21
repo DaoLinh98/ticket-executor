@@ -15,6 +15,7 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import PushNotifications from "./PushNotifications";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
@@ -40,6 +41,7 @@ const TABS = [
   { id: "connection", label: "Connection" },
   { id: "execution", label: "Execution" },
   { id: "dashboard", label: "Dashboard" },
+  { id: "notifications", label: "Notifications" },
   { id: "appearance", label: "Appearance" },
 ] as const;
 type SettingsTabId = (typeof TABS)[number]["id"];
@@ -342,7 +344,7 @@ export default function SettingsPage() {
 
   const connectionPane = (
     <div style={pane}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+      <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={fieldLabel()}>PROVIDER</span>
           <div style={{ ...card({ padding: "0 13px", background: "#0E1015" }), height: "40px", display: "flex", alignItems: "center" }}>
@@ -377,7 +379,7 @@ export default function SettingsPage() {
       {editor && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px", ...card({ padding: "16px", background: "#0E1015" }) }}>
           <span style={fieldLabel()}>{editor.id ? "EDIT ORGANIZATION" : "NEW ORGANIZATION"}</span>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+          <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <span style={fieldLabel()}>NAME (OPTIONAL)</span>
               <input value={editor.label} onChange={(e) => setEditor({ ...editor, label: e.target.value })} placeholder="Client A" autoComplete="off" style={fieldInput()} />
@@ -392,7 +394,7 @@ export default function SettingsPage() {
             <input type="password" value={editor.pat} onChange={(e) => setEditor({ ...editor, pat: e.target.value })} placeholder={editor.hasPat ? "•••••••••••••• (saved)" : "••••••••••••••••"} autoComplete="new-password" style={fieldInput()} />
           </label>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+          <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <span style={fieldLabel()}>MY EMAIL HERE (OPTIONAL)</span>
               <input value={editor.identityEmail} onChange={(e) => setEditor({ ...editor, identityEmail: e.target.value })} placeholder="ken.nguyen@emesoft.net" autoComplete="off" style={fieldInput()} />
@@ -532,6 +534,14 @@ export default function SettingsPage() {
     </div>
   );
 
+  // The one pane whose switch is not part of the saved form: it belongs to the
+  // device, not to the organization's settings. See PushNotifications.
+  const notificationsPane = (
+    <div style={pane}>
+      <PushNotifications />
+    </div>
+  );
+
   const appearancePane = (
     <div style={pane}>
       <ToggleRow
@@ -561,24 +571,25 @@ export default function SettingsPage() {
     connection: connectionPane,
     execution: executionPane,
     dashboard: dashboardPane,
+    notifications: notificationsPane,
     appearance: appearancePane,
   };
 
   return (
-    <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+    <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Settings" kicker="D-AGENT · CONFIGURATION" icon={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
         <ProviderBadge provider={pm.id} />
       </header>
 
-      <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "22px 28px 28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "22px 28px 28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
           <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "22px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
+            <div className="te-tabs-scroll te-scroll" style={{ display: "flex", alignItems: "center", gap: "6px", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
               {TABS.map((t) => (
                 <button key={t.id} onClick={(e) => { fireBoltFromEvent(e); setTab(t.id); }} style={tabStyle({ active: tab === t.id })}>
                   {t.label}

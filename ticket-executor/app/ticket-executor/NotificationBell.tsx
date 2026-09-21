@@ -73,7 +73,7 @@ export default function NotificationBell({
         )}
       </button>
       {open && (
-        <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
+        <div className="te-scroll te-notif-panel" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
           {/* Two views, not a per-kind filter list. The panel opens on "All" —
               the whole record of what the app did on your behalf; "Needs you"
               narrows it to exactly what the badge is counting. */}

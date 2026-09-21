@@ -59,4 +59,10 @@ export async function register() {
   // only schedule once.
   const { startScheduler } = await import("./lib/executionStore");
   startScheduler();
+
+  // The bell's server half. Separate from the scheduler because it answers a
+  // different question on a different clock and takes no lock — see
+  // lib/pushWatcher.ts. A no-op when no VAPID keys are configured.
+  const { startPushWatcher } = await import("./lib/pushWatcher");
+  startPushWatcher();
 }

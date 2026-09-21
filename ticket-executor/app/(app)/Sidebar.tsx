@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { COLORS, FONT, clipCorner, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 import ProviderTag from "./ProviderTag";
+import { useIsMobile, useMobileNav } from "./MobileNav";
 
 type NavItem = { href: string; label: string; icon: ReactNode };
 
@@ -80,6 +81,10 @@ const NAV: NavItem[] = [
 export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean }) {
   const pathname = usePathname();
   const { fireBoltFromEvent } = useBoltsContext();
+  // Below the breakpoint the rail is an off-canvas drawer (globals.css), opened
+  // from the hamburger every page header carries.
+  const isMobile = useIsMobile();
+  const { open: navOpen, setOpen: setNavOpen } = useMobileNav();
   // Collapsed rail: icons only. Remembered so it survives navigation/reload.
   const [collapsed, setCollapsed] = useState(false);
   // The collapse chevron floats on the rail's outer edge, over the page beside
@@ -99,20 +104,33 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
     });
   };
 
+  // A drawer that is also a 68px icon rail is neither: on mobile the collapsed
+  // state is ignored, since the drawer already costs nothing when closed.
+  const railCollapsed = collapsed && !isMobile;
+
+  // Navigating is what the drawer is for, so it closes itself afterwards.
+  useEffect(() => { setNavOpen(false); }, [pathname, setNavOpen]);
+
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 
   return (
-    <aside
+    <>
+      {navOpen && (
+        <div className="te-nav-scrim" role="presentation" onClick={() => setNavOpen(false)} />
+      )}
+      <aside
+      className="te-sidebar"
+      data-mobile-open={navOpen ? "true" : "false"}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         position: "relative",
         zIndex: 6,
         flex: "0 0 auto",
-        width: collapsed ? "68px" : "272px",
+        width: railCollapsed ? "68px" : "272px",
         transition: "width .18s ease",
-        height: "100vh",
+        height: "var(--te-app-h)",
         display: "flex",
         flexDirection: "column",
         gap: "6px",
@@ -129,7 +147,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         <div style={{ flex: "0 0 auto", width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
-        {!collapsed && (
+        {!railCollapsed && (
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, minWidth: 0 }}>
             <span style={logoText(FONT.xl)}>D-Agent</span>
             <span style={{ fontSize: "11px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
@@ -141,16 +159,18 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
       <button
         type="button"
         onClick={toggleCollapsed}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        aria-expanded={!collapsed}
+        title={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-expanded={!railCollapsed}
         // Focus reveals it too, so the control is still reachable by keyboard —
         // a pointer-only affordance would simply be missing for anyone tabbing.
         onFocus={() => setHovered(true)}
         onBlur={() => setHovered(false)}
         style={{
           position: "absolute", top: "74px", right: "-13px", zIndex: 8,
-          display: "flex", alignItems: "center", justifyContent: "center",
+          // A collapsed icon rail is a pointer affordance; in the drawer there
+          // is nothing to collapse to, so the control goes away entirely.
+          display: isMobile ? "none" : "flex", alignItems: "center", justifyContent: "center",
           width: "26px", height: "26px", color: COLORS.textDim, cursor: "pointer",
           opacity: hovered ? 1 : 0,
           // Not just invisible: while hidden it sits over the page beside the
@@ -163,7 +183,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = COLORS.textDim; }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? "rotate(180deg)" : "none", transition: "transform .24s cubic-bezier(.2,.8,.2,1)" }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: railCollapsed ? "rotate(180deg)" : "none", transition: "transform .24s cubic-bezier(.2,.8,.2,1)" }}>
           <path d="M14 6l-6 6 6 6" />
         </svg>
       </button>
@@ -176,9 +196,9 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
             display: "flex",
             alignItems: "center",
             gap: "11px",
-            justifyContent: collapsed ? "center" : "flex-start",
+            justifyContent: railCollapsed ? "center" : "flex-start",
             height: "40px",
-            padding: collapsed ? "0" : "0 13px",
+            padding: railCollapsed ? "0" : "0 13px",
             fontSize: FONT.base,
             fontWeight: active ? 700 : 600,
             textDecoration: "none",
@@ -194,7 +214,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
               key={item.href}
               href={item.href}
               onClick={(e) => fireBoltFromEvent(e)}
-              title={collapsed ? item.label : undefined}
+              title={railCollapsed ? item.label : undefined}
               style={style}
               onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,.04)"; }}
               onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -202,7 +222,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
                 {item.icon}
               </svg>
-              {!collapsed && item.label}
+              {!railCollapsed && item.label}
             </Link>
           );
         })}
@@ -210,7 +230,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
 
       <div style={{ flex: 1 }} />
 
-      {!collapsed && (
+      {!railCollapsed && (
         <div style={{ padding: "0 6px 12px" }}>
           <ProviderTag />
         </div>
@@ -223,14 +243,14 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
           await fetch("/api/auth/logout", { method: "POST" }).catch(() => { });
           window.location.href = "/login";
         }}
-        title={collapsed ? "Log out" : undefined}
+        title={railCollapsed ? "Log out" : undefined}
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: collapsed ? "center" : "flex-start",
+          justifyContent: railCollapsed ? "center" : "flex-start",
           gap: "11px",
           height: "40px",
-          padding: collapsed ? "0" : "0 13px",
+          padding: railCollapsed ? "0" : "0 13px",
           fontSize: FONT.base,
           fontWeight: 600,
           color: COLORS.textDim,
@@ -244,8 +264,9 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
         </svg>
-        {!collapsed && "Log out"}
+        {!railCollapsed && "Log out"}
       </button>}
-    </aside>
+      </aside>
+    </>
   );
 }

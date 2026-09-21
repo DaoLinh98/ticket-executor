@@ -603,8 +603,8 @@ export default function MySprintPage() {
   );
 
   return (
-    <div style={{ position: "relative", height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+    <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="My Sprint" kicker="D-AGENT · SPRINT PLAN" icon={<><path d="M8 2v4M16 2v4M3 10h18" /><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -613,10 +613,10 @@ export default function MySprintPage() {
 
       {/* Which sprint this page is about, and how wide it looks for the work. */}
       <PageToolbar>
-        <div style={{ minWidth: "180px" }}>
+        <div style={{ minWidth: "clamp(150px, 44vw, 180px)" }}>
           <SelectMenu value={project} onChange={(v) => { setProject(v); setSprint(""); }} options={projects} ariaLabel="Project" />
         </div>
-        <div style={{ minWidth: "180px" }}>
+        <div style={{ minWidth: "clamp(150px, 44vw, 180px)" }}>
           <SelectMenu value={sprint} onChange={setSprint} options={sprints} ariaLabel="Sprint" />
         </div>
         <button
@@ -629,7 +629,7 @@ export default function MySprintPage() {
         </button>
       </PageToolbar>
 
-      <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
         <div style={{ maxWidth: "1160px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
           {loading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
@@ -888,7 +888,12 @@ export default function MySprintPage() {
                 <span style={sectionCaption()}>
                   RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
                 </span>
-                <div style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
+                {/* The nine columns are a comparison — queue position against
+                    release day against state — so below the breakpoint the card
+                    scrolls sideways rather than reflowing into nine stacked
+                    labels that no longer line up with each other. */}
+                <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
+                  <div className="te-table-body">
                   <div style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
                     {["#", "TICKET", "PTS", "EST.", "TRIAGE", "RELEASE", "STATE", "REVIEW", "ACTIONS"].map((h) => (
                       <span key={h} style={{ ...sectionCaption(), ...(h === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{h}</span>
@@ -1065,6 +1070,7 @@ export default function MySprintPage() {
                       );
                     })
                   )}
+                  </div>
                 </div>
               </div>
 

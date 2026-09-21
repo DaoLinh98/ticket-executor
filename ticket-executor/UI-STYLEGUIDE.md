@@ -78,3 +78,43 @@ component.
   ring's spin (this broke the dashboard panels once).
 - Don't mix the two ring families: a dark-filled secondary button never uses
   `variant: "filled"`, a solid-accent CTA never uses `"outline"`.
+
+## The responsive layer
+
+Every component here styles itself with inline style objects, and an inline
+style cannot carry a media query. So the phone layout lives in **one CSS block
+at the foot of `app/globals.css`**, and components only contribute a class as a
+hook. Rules:
+
+- **One breakpoint: `max-width: 900px`.** It catches phone portrait (390/402px),
+  phone landscape (844/874px wide but 390px *tall*) and tablet portrait. Its JS
+  twin is `MOBILE_QUERY` in `app/(app)/MobileNav.tsx` — change both or neither.
+- **`!important` is expected in that block and only there.** It is the only way
+  to beat an inline style. Nothing outside the media query uses it.
+- **Full-height shells use `var(--te-app-h)`, never `100vh`.** On iOS `100vh` is
+  the height with the URL bar *collapsed*, so a `100vh` shell hides its own
+  bottom row. The token resolves to `100dvh` where supported.
+- **Structure CSS cannot change goes through a data attribute, not a JS media
+  query.** `TicketExecutor` marks which pane the phone is showing with
+  `data-pane` on `.te-split` and the CSS hides the other one, so the desktop
+  render is byte-identical and there is no viewport guess at hydration.
+  `useIsMobile()` exists for the two things CSS genuinely cannot do: a drawer
+  that must not also be a collapsed rail, and closing it on navigation.
+- **Safe areas come from `viewportFit: "cover"`** (the `viewport` export in
+  `app/layout.tsx`); without it `env(safe-area-inset-*)` is always 0.
+
+| Hook | Effect below 900px |
+|---|---|
+| `te-sidebar` + `data-mobile-open` / `te-nav-scrim` | The nav rail becomes an off-canvas drawer over a scrim. |
+| `te-nav-toggle` (`MobileNavToggle`) | The drawer's trigger — hidden above the breakpoint. In `PageHeading`, plus Home, which has no header. |
+| `te-page-header` / `te-page-kicker` | Header shrinks to safe-area padding; the kicker line drops. |
+| `te-page-toolbar` | Control strips wrap onto more rows. They must never scroll — a scroll container clips the dropdowns they hold. Pages size their own controls with `clamp()` so two fit per row. |
+| `te-tabs-scroll` | Tab rows scroll sideways. Safe here only because a tab opens no dropdown. |
+| `te-notif-panel` | The bell's panel pins to the viewport — 372px cannot hang off an element 300px into a 390px screen. |
+| `te-main` | Scroll-region padding drops to 14px + bottom safe area. |
+| `te-grid-2` / `te-grid-3` | Fixed-column grids collapse to one column (`auto-fit` grids already do). |
+| `te-table-scroll` + `te-table-body` | A real table scrolls sideways at its full width rather than reflowing. |
+| `te-split[data-pane]` / `te-pane-list` / `te-pane-detail` / `te-back-btn` | A two-pane screen shows one pane at a time, with a Back control. Used by Ticket Execution (rail + detail) and by the commit popup (file list + diff). |
+| `te-diffview` | A diff's side padding drops to 12px — it wraps mid-word, so every pixel is a character. |
+| `te-modal-shell` / `te-modal-overlay` | Modals go full-screen, inset-padded. |
+| `te-picker-label` | A picker's label truncates **in a header only** — the toolbar scrolls instead. |

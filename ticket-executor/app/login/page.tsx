@@ -53,7 +53,7 @@ export default function LoginPage() {
     <div
       style={{
         ["--accent" as string]: COLORS.accent,
-        position: "relative", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        position: "relative", minHeight: "var(--te-app-h)", display: "flex", alignItems: "center", justifyContent: "center",
         background: "#06070A", padding: "24px", overflow: "hidden",
       }}
     >

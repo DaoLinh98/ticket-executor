@@ -8,10 +8,16 @@ import { AUTH_COOKIE, authDisabled, isValidToken } from "@/lib/auth";
 // login page itself are always allowed so the gate can be passed.
 
 // Paths reachable without a session.
+// The manifest and the service worker are listed because iOS fetches both
+// outside any page's session — the worker is re-fetched for update checks while
+// the app is closed, and a redirect to /login there installs the login page as
+// the service worker. Neither file contains anything a session protects.
 const PUBLIC_PATHS = new Set([
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
+  "/manifest.webmanifest",
+  "/sw.js",
 ]);
 
 export async function proxy(request: NextRequest) {

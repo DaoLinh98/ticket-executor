@@ -5,7 +5,7 @@ import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
 import type { Ticket, TicketComment } from "@/lib/types";
-import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, initials, runDot, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, initials, runDot, sectionCaption, tintedCard } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
 import type { Action, OverrideField, RunSummary } from "../types";
@@ -14,6 +14,11 @@ import LoadingRing from "../LoadingRing";
 type Props = {
   ticket: Ticket;
   comments: TicketComment[];
+  /** Vietnamese translations already in hand, keyed `<ticketId>:<index>`. A key
+   *  that is absent has not been translated (or was toggled back off). */
+  translations: Record<string, string>;
+  translating: Record<string, boolean>;
+  onTranslateComment: (key: string, html: string) => void;
   history: RunSummary[];
   onOpenRun: (ticketId: string, execId: string, e?: MouseEvent) => void;
   // resolved per-ticket config (override ?? default) + its editors
@@ -53,7 +58,7 @@ const sectionHeading: CSSProperties = {
 // Ticket detail: description, acceptance criteria, discussion, the per-run
 // configuration grid, the command preview, past runs and the CTA banner.
 export default function OverviewTab({
-  ticket: t, comments, history, onOpenRun,
+  ticket: t, comments, translations, translating, onTranslateComment, history, onOpenRun,
   rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
@@ -94,7 +99,11 @@ export default function OverviewTab({
       {comments.length > 0 && (
         <section>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {comments.map((cm, i) => (
+            {comments.map((cm, i) => {
+              const key = `${t.id}:${i}`;
+              const vi = translations[key];
+              const busy = !!translating[key];
+              return (
               <div key={i} style={{ display: "flex", gap: "11px", alignItems: "flex-start" }}>
                 <span style={{ ...avatar(cm.author), flex: "0 0 auto", width: "28px", height: "28px", fontSize: FONT.xs }}>{initials(cm.author)}</span>
                 <div style={{ flex: 1, minWidth: 0, ...card({ padding: "11px 14px", border: COLORS.borderSubtle }) }}>
@@ -103,13 +112,40 @@ export default function OverviewTab({
                     <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
                   </div>
                   <div style={{ marginTop: "5px" }}><RichText html={cm.text} /></div>
+                  {/* The original is never replaced: a translation is a second
+                      reading of somebody's words, and losing what they actually
+                      wrote is how a misreading becomes the record. */}
+                  <button
+                    onClick={() => onTranslateComment(key, cm.text)}
+                    disabled={busy}
+                    title={vi ? "Hide the Vietnamese translation" : "Translate this comment into Vietnamese"}
+                    style={{ ...ctaButtonStyle("ghost", { height: "26px", cornerPx: 6 }), marginTop: "9px", fontSize: FONT.xs, color: vi ? COLORS.accent : COLORS.textDim, opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
+                  >
+                    {busy ? <LoadingRing size={12} /> : (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 5h10M8 3v2M10 5c0 4-3.5 8-7 9M6 9c0 2 2.5 4.5 6 5.5" />
+                        <path d="M21 21l-4.5-10L12 21M13.6 17.4h5.8" />
+                      </svg>
+                    )}
+                    {vi ? "Hide translation" : "Translate to Vietnamese"}
+                  </button>
+                  {vi && (
+                    <div style={{ marginTop: "9px", paddingTop: "9px", borderTop: `1px solid ${COLORS.borderSubtle}` }}>
+                      <div style={{ ...sectionCaption(), marginBottom: "4px" }}>VIETNAMESE</div>
+                      {/* Plain text, not RichText: this string came from a model,
+                          not from sanitizeHtml() at a provider, and RichText
+                          deliberately does not sanitize what it is handed. */}
+                      <div style={{ fontSize: FONT.md, lineHeight: 1.7, color: COLORS.textSoft, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{vi}</div>
+                    </div>
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
+      <section className="te-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
         <div style={{ ...fieldCard, ...(rootRepoMissing ? { border: `1px solid ${COLORS.warning}` } : null) }}>
           <div style={fieldLabel}>
             ROOT REPO

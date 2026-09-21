@@ -20,6 +20,7 @@ import { COLORS } from "@/lib/ui";
 export default function PageToolbar({ children }: { children: ReactNode }) {
   return (
     <div
+      className="te-page-toolbar"
       style={{
         position: "relative", zIndex: 20, flex: "0 0 auto",
         display: "flex", alignItems: "center", gap: "12px",
