@@ -1,6 +1,6 @@
 "use client";
 
-import type { MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 import type { ReviewData } from "@/lib/types";
 import { COLORS, FONT, avatar, card, ctaButtonStyle, initials, pill, statusPill, tintedCard } from "@/lib/ui";
 import { timeAgo } from "../helpers";
@@ -38,16 +38,22 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
             {review.pr.url ? (
               <a href={review.pr.url} target="_blank" rel="noopener noreferrer" style={{ ...card(), display: "block", textDecoration: "none" }}>
                 <div style={cardLabel}>PULL REQUEST</div>
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.md, color: COLORS.indigo }}>
-                  PR #{review.pr.id} — {review.pr.branch}
-                </span>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.md, color: COLORS.indigo }}>
+                    PR #{review.pr.id} — {review.pr.branch}
+                  </span>
+                  <CopyBranchButton branch={review.pr.branch} />
+                </div>
               </a>
             ) : (
               <div style={card()}>
                 <div style={cardLabel}>PULL REQUEST</div>
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.md, color: COLORS.indigo }}>
-                  PR #{review.pr.id} — {review.pr.branch}
-                </span>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.md, color: COLORS.indigo }}>
+                    PR #{review.pr.id} — {review.pr.branch}
+                  </span>
+                  <CopyBranchButton branch={review.pr.branch} />
+                </div>
               </div>
             )}
             <div style={card()}>
@@ -110,5 +116,44 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
         </>
       )}
     </div>
+  );
+}
+
+function CopyBranchButton({ branch }: { branch: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={copied ? "Copied" : "Copy branch name"}
+      aria-label="Copy branch name"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void navigator.clipboard.writeText(branch).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 900);
+        });
+      }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flex: "0 0 auto",
+        width: "26px",
+        height: "26px",
+        padding: 0,
+        borderRadius: "7px",
+        border: `1px solid ${COLORS.borderSubtle}`,
+        background: "transparent",
+        color: copied ? COLORS.success : COLORS.textDim,
+        cursor: "pointer",
+      }}
+    >
+      {copied ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" /></svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      )}
+    </button>
   );
 }
