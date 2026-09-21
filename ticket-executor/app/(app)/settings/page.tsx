@@ -6,7 +6,7 @@ import type { CSSProperties, ReactNode } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
-import { SETTINGS_UPDATED_EVENT } from "../../settingsEvents";
+import { broadcastSettingsUpdated } from "../../settingsEvents";
 import { PROVIDERS, providerMeta, connectionLabel, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
@@ -117,7 +117,7 @@ export default function SettingsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/settings");
+        const r = await fetch("/api/settings", { cache: "no-store" });
         const data = await r.json();
         if (data.settings) {
           setSettings(data.settings);
@@ -266,16 +266,13 @@ export default function SettingsPage() {
       if (!r.ok || !data.settings) { setError(data.error || "Failed to save settings"); return; }
       setSettings(data.settings);
       // Broadcast so the app-wide reactor backdrop and the click-effect layer pick
-      // the change up immediately, without waiting for a route change / reload.
-      window.dispatchEvent(
-        new CustomEvent(SETTINGS_UPDATED_EVENT, {
-          detail: {
-            animatedBackground: data.settings.animatedBackground,
-            clickEffects: data.settings.clickEffects,
-            ringAnimation: data.settings.ringAnimation,
-          },
-        })
-      );
+      // the change up immediately — in this tab and in every other tab of this
+      // browser. Another device converges on its next resume or poll instead.
+      broadcastSettingsUpdated({
+        animatedBackground: data.settings.animatedBackground,
+        clickEffects: data.settings.clickEffects,
+        ringAnimation: data.settings.ringAnimation,
+      });
       if (!connections.length) {
         showToast(
           `Settings saved. ${pm.name} has no organization yet — add one under Organizations before running a ticket.`,

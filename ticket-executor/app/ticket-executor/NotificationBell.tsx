@@ -3,12 +3,12 @@
 import { useState, type MouseEvent, type RefObject } from "react";
 import { COLORS, FONT, SURFACE, dropdownPanelStyle, ringBorder, tabStyle, tintFill, tintedCard } from "@/lib/ui";
 import {
-  actionCount,
   isUnread,
   notificationKey,
   type AppNotification,
   type NotificationKind,
   type ReadMap,
+  unreadCount,
 } from "@/lib/notifications";
 import { timeAgo } from "./helpers";
 
@@ -56,7 +56,12 @@ export default function NotificationBell({
 }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
 
-  const badge = actionCount(notifications, read);
+  // Everything unread, not just what needs doing. The badge counted `action`
+  // only, which made it silent for the case it is most often right about: three
+  // comments landed on your tickets and the bell showed nothing, so the only way
+  // to find out was to open it. A number that disagrees with the list under it is
+  // a number nobody trusts.
+  const badge = unreadCount(notifications, read);
   const shown = filter === "action" ? notifications.filter((n) => n.severity === "action") : notifications;
   const anyUnread = notifications.some((n) => isUnread(n, read));
 
@@ -75,8 +80,8 @@ export default function NotificationBell({
       {open && (
         <div className="te-scroll te-notif-panel" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
           {/* Two views, not a per-kind filter list. The panel opens on "All" —
-              the whole record of what the app did on your behalf; "Needs you"
-              narrows it to exactly what the badge is counting. */}
+              the whole record of what the app did on your behalf, which is what
+              the badge counts; "Needs you" narrows it to the actionable half. */}
           <div style={{ display: "flex", alignItems: "center", gap: "4px", padding: "2px 3px 7px", marginBottom: "3px", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
             <button onClick={() => setFilter("action")} style={tabStyle({ active: filter === "action" })}>Needs you</button>
             <button onClick={() => setFilter("all")} style={tabStyle({ active: filter === "all" })}>All</button>

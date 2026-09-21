@@ -675,3 +675,24 @@ model PushDelivery {
 
   @@index([sentAt])
 }
+
+/// Which notifications the developer has already seen.
+///
+/// Server-side because the bell is one bell: it used to live in `localStorage`,
+/// so reading a notification on the laptop left it unread on the phone and on
+/// every other browser — the same notification announced twice for one thing
+/// that had already been dealt with. There is one developer per installation
+/// (see **Auth**), so the key alone identifies a row.
+///
+/// `seen` is the notification's fingerprint, not a boolean: a review summary
+/// whose content changed is unread again even though its key was read. That
+/// rule lives in `isUnread()` (lib/notifications.ts) and this table only stores
+/// what it compares against.
+model NotificationRead {
+  /// `kind::ticketId::refId` — `notificationKey()` in lib/notifications.ts.
+  key    String   @id
+  seen   String
+  readAt DateTime @default(now())
+
+  @@index([readAt])
+}

@@ -31,8 +31,10 @@ export type NotificationKind =
   | "plan.drift";
 
 /** `action` means the developer has to do something; `info` is a record of
- *  something the app did on their behalf. Only `action` is allowed to put a
- *  number on the bell — a badge that counts everything is a badge nobody reads. */
+ *  something the app did on their behalf. It splits the panel into its two
+ *  views and orders the list (see `sortNotifications`); the badge counts both,
+ *  because a badge that goes quiet while the panel still has unread rows in it
+ *  is one nobody trusts. */
 export type NotificationSeverity = "action" | "info";
 
 /** Where clicking the notification should land. A subset of the detail pane's
@@ -98,12 +100,13 @@ export function markAllRead(read: ReadMap, list: AppNotification[], at: string):
   return next;
 }
 
-/** The badge number: unread things that need doing. Counted over `action` only,
- *  on purpose — see `NotificationSeverity`. */
+/** Unread things that need doing — what the "Needs you" view holds. Not the
+ *  badge, which counts everything unread. */
 export function actionCount(list: AppNotification[], read: ReadMap): number {
   return list.filter((n) => n.severity === "action" && isUnread(n, read)).length;
 }
 
+/** The badge number: everything unread, actionable or not. */
 export function unreadCount(list: AppNotification[], read: ReadMap): number {
   return list.filter((n) => isUnread(n, read)).length;
 }
@@ -111,9 +114,9 @@ export function unreadCount(list: AppNotification[], read: ReadMap): number {
 /**
  * Newest first, with everything actionable ahead of everything informational.
  *
- * Severity outranks time because the list is read top-down under a badge that
- * counts only actions: a run that needs approving must not be pushed out of the
- * visible part of the panel by six things the scheduler did successfully.
+ * Severity outranks time because the list is read top-down: a run that needs
+ * approving must not be pushed out of the visible part of the panel by six
+ * things the scheduler did successfully.
  */
 export function sortNotifications(list: AppNotification[]): AppNotification[] {
   return [...list].sort((a, b) => {

@@ -1,51 +1,27 @@
 "use client";
 
 import { useEffect } from "react";
-import { SETTINGS_UPDATED_EVENT, type SettingsUpdatedDetail } from "./settingsEvents";
+import { useAppSettings } from "./SettingsProvider";
 
-// The `ringAnimation` setting, applied app-wide as one class on <html>.
+// Keeps the `ringAnimation` class on <html> in step with a change made after
+// the document was rendered — a save here, in another tab, or on another
+// machine picked up by SettingsProvider's re-read.
 //
-// Mounted in the root layout rather than read per component: the ring lives in
-// ringBorder()'s inline style, so the only place a global switch can reach it is
-// the --te-ring-image variable that class sets (see globals.css).
-//
-// The last known value is mirrored into localStorage and applied before paint,
-// because the /api/settings read resolves well after first paint — without the
-// cache, turning the glow off still flashed a full sweep on every page load.
-const CACHE_KEY = "te:ring-animation";
+// The class itself is put there by the root layout, not by this component: the
+// ring lives in ringBorder()'s inline style, so the only thing that can reach
+// it is the --te-ring-image variable the class sets (see globals.css), and a
+// variable applied from an effect is a variable applied one paint too late.
+// This used to be bridged by mirroring the last value into localStorage, which
+// is per-browser by definition — the very reason the setting looked ignored in
+// a browser that had never saved it.
 const CLASS = "te-ring-static";
 
-function apply(on: boolean) {
-  document.documentElement.classList.toggle(CLASS, !on);
-  try {
-    localStorage.setItem(CACHE_KEY, on ? "1" : "0");
-  } catch {
-    /* private mode — the setting still applies for this page */
-  }
-}
-
 export default function RingAnimation() {
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(CACHE_KEY) === "0")
-        document.documentElement.classList.add(CLASS);
-    } catch {
-      /* ignore */
-    }
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((d) => apply(typeof d?.settings?.ringAnimation === "boolean" ? d.settings.ringAnimation : true))
-      .catch(() => { /* unauthenticated (login page) or offline — leave as cached */ });
-  }, []);
+  const { settings } = useAppSettings();
 
   useEffect(() => {
-    const onUpdated = (e: Event) => {
-      const detail = (e as CustomEvent<SettingsUpdatedDetail>).detail;
-      if (detail && typeof detail.ringAnimation === "boolean") apply(detail.ringAnimation);
-    };
-    window.addEventListener(SETTINGS_UPDATED_EVENT, onUpdated);
-    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, onUpdated);
-  }, []);
+    document.documentElement.classList.toggle(CLASS, !settings.ringAnimation);
+  }, [settings.ringAnimation]);
 
   return null;
 }

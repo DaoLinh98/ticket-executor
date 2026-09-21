@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { collectNotificationSources } from "@/lib/notificationSources";
+import { jsonNoStore } from "@/lib/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,5 +18,5 @@ export async function GET(req: Request) {
   const sources = await collectNotificationSources(
     new URL(req.url).searchParams.get("provider") ?? undefined,
   );
-  return NextResponse.json(sources);
+  return jsonNoStore(sources);
 }

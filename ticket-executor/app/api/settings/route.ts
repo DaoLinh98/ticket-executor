@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { clearMcpProbe } from "@/lib/mcp";
 import { normalizeProvider } from "@/lib/tickets";
 import { activeConnection, type ConnectionView } from "@/lib/providerCredentials";
 import { getOrCreateSetting, invalidateSetting } from "@/lib/settings";
+import { jsonNoStore } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +56,7 @@ export async function GET(req: Request) {
   const s = await getOrCreateSetting();
   const { searchParams } = new URL(req.url);
   const provider = normalizeProvider(searchParams.get("provider") ?? s.provider);
-  return NextResponse.json({ settings: publicSettings(s, await activeConnection(provider)) });
+  return jsonNoStore({ settings: publicSettings(s, await activeConnection(provider)) });
 }
 
 export async function POST(req: Request) {
@@ -116,5 +116,5 @@ export async function POST(req: Request) {
   // the next run on a setup that no longer exists.
   if (typeof body.provider === "string" || typeof body.manageMcp === "boolean") clearMcpProbe();
 
-  return NextResponse.json({ settings: publicSettings(s, await activeConnection(provider)) });
+  return jsonNoStore({ settings: publicSettings(s, await activeConnection(provider)) });
 }

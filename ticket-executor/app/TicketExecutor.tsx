@@ -441,7 +441,7 @@ export default function TicketExecutor() {
   const loadWorkspace = useCallback(async () => {
     let provider: ProviderId = "azure-devops";
     try {
-      const r = await fetch("/api/settings");
+      const r = await fetch("/api/settings", { cache: "no-store" });
       const data = await r.json();
       if (data.settings) {
         setSettings(data.settings);
