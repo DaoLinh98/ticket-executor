@@ -265,12 +265,10 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-function lastAreaSegment(areaPath: string, project: string): string {
+function lastAreaSegment(areaPath: string): string {
   if (!areaPath) return "";
   const parts = areaPath.split("\\");
-  const last = parts[parts.length - 1].trim();
-  // If the area is just the project root (no sub-area), treat it as no project.
-  return last === project ? "" : last;
+  return parts[parts.length - 1].trim();
 }
 
 export type ProjectInfo = { id: string; name: string; description?: string };
@@ -382,8 +380,15 @@ const TICKET_FIELDS = [
   "System.BoardColumn",
 ].join(",");
 
-/** The two heavy rich-text fields, read for one ticket at a time. */
-const TICKET_DETAIL_FIELDS = ["System.Description", "Microsoft.VSTS.Common.AcceptanceCriteria"].join(",");
+/** The heavy rich-text fields, read for one ticket at a time.
+ *  `Microsoft.VSTS.TCM.ReproSteps` is where a Bug keeps its description: the Bug
+ *  form has no Description field at all, so reading only `System.Description`
+ *  rendered every bug as "No description." */
+const TICKET_DETAIL_FIELDS = [
+  "System.Description",
+  "Microsoft.VSTS.TCM.ReproSteps",
+  "Microsoft.VSTS.Common.AcceptanceCriteria",
+].join(",");
 
 /** ADO's own cap on the `ids` parameter of the batch work-item read. */
 const BATCH_SIZE = 200;
@@ -453,7 +458,7 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
         assigneeEmail: assignedTo?.uniqueName,
         areaPath: area,
         iterationPath: (f["System.IterationPath"] as string) || undefined,
-        project: lastAreaSegment(area, proj) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
+        project: lastAreaSegment(area) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
         url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
         storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
@@ -623,8 +628,9 @@ export async function getWorkItemDetail(id: string): Promise<{ description: stri
     )}?fields=${TICKET_DETAIL_FIELDS}&${API}`;
     const data = await adoGet<{ fields?: Record<string, unknown> }>(url, pat);
     const f = data.fields ?? {};
+    const description = (f["System.Description"] as string) || (f["Microsoft.VSTS.TCM.ReproSteps"] as string) || "";
     return {
-      description: htmlToRich((f["System.Description"] as string) ?? ""),
+      description: htmlToRich(description),
       criteria: htmlToRich((f["Microsoft.VSTS.Common.AcceptanceCriteria"] as string) ?? ""),
     };
   });

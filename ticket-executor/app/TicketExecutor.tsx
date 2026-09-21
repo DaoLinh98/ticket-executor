@@ -31,7 +31,7 @@ import type {
 import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT } from "@/lib/claudeOptions";
+import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
 import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
@@ -194,6 +194,7 @@ export default function TicketExecutor() {
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
+  const [modelOptions, setModelOptions] = useState<readonly ClaudeModel[]>(CLAUDE_MODELS);
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<OverrideField, string>>>>({});
   const [savedOptions, setSavedOptions] = useState<Record<"rootRepo" | "project" | "skill", string[]>>({ rootRepo: [], project: [], skill: [] });
   const [settings, setSettings] = useState<SettingsView>({
@@ -561,6 +562,15 @@ export default function TicketExecutor() {
         if (Array.isArray(data.skills) && data.skills.length) setSkillOptions(data.skills);
       } catch {
         /* keep default SKILL_OPTIONS */
+      }
+    })();
+    (async () => {
+      try {
+        const r = await fetch("/api/claude-models");
+        const data = await r.json();
+        if (Array.isArray(data.models) && data.models.length) setModelOptions(data.models);
+      } catch {
+        /* keep the family aliases, which the CLI resolves to the latest model */
       }
     })();
     (async () => {
@@ -989,7 +999,10 @@ export default function TicketExecutor() {
   // The repo a run executes in. Chosen per ticket: one provider connection spans
   // many projects, so there is nothing app-wide to fall back to.
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "";
-  const getModel = (t: Ticket) => overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL;
+  // The default is the `opus` family alias; once the installed CLI's catalog
+  // has loaded it names the concrete model that alias resolves to, so the
+  // dropdown and the command preview show the version that will actually run.
+  const getModel = (t: Ticket) => resolveModelId(overrides[t.id]?.model ?? DEFAULT_CLAUDE_MODEL, modelOptions);
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
   const setOverrideValue = (ticketId: string, field: OverrideField, value: string) =>
     setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
@@ -1905,6 +1918,7 @@ export default function TicketExecutor() {
                     project={getArea(t)}
                     skill={getSkill(t)}
                     model={getModel(t)}
+                    modelOptions={modelOptions}
                     effort={getEffort(t)}
                     setOverrideValue={setOverrideValue}
                     onProjectChange={onProjectChange}

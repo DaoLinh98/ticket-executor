@@ -3,7 +3,7 @@
 import type { CSSProperties, MouseEvent } from "react";
 import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
-import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel } from "@/lib/claudeOptions";
+import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
 import type { Ticket, TicketComment } from "@/lib/types";
 import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, initials, runDot, tintedCard } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
@@ -21,6 +21,7 @@ type Props = {
   project: string;
   skill: string;
   model: string;
+  modelOptions: readonly ClaudeModel[];
   effort: string;
   setOverrideValue: (ticketId: string, field: OverrideField, value: string) => void;
   onProjectChange: (ticketId: string, value: string) => void;
@@ -53,7 +54,7 @@ const sectionHeading: CSSProperties = {
 // configuration grid, the command preview, past runs and the CTA banner.
 export default function OverviewTab({
   ticket: t, comments, history, onOpenRun,
-  rootRepo, project, skill, model, effort, setOverrideValue, onProjectChange,
+  rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
 }: Props) {
@@ -118,7 +119,7 @@ export default function OverviewTab({
         </div>
         <div style={fieldCard}><div style={fieldLabel}>PROJECT</div><Combobox value={project} onChange={(v) => onProjectChange(t.id, v)} options={projectOptions} ariaLabel="Project" /></div>
         <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={skill} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
-        <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v))} options={CLAUDE_MODELS.map((m) => m.label)} ariaLabel="Claude model" /></div>
+        <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model, modelOptions)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v, modelOptions))} options={modelOptions.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
         <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
         {rootRepoMissing && (
