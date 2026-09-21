@@ -231,3 +231,183 @@ button:disabled{cursor:not-allowed;}
    author pasted — cap them to the column and drop the fixed height, or the
    image renders squashed. */
 .te-rich img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid #23272F;border-radius:9px;background:#0A0B0E;}
+
+/* ============================================================================
+   RESPONSIVE LAYER — phones and small tablets (iPhone 13 · iPhone 17 Pro).
+   ============================================================================
+
+   Every component in app/ styles itself with inline style objects, so a media
+   query can only reach them through a class hook plus `!important`. That is the
+   whole reason this layer exists as CSS rather than as more inline objects:
+   inline styles cannot carry a breakpoint at all.
+
+   The contract:
+   - Components add a `te-*` class as a hook. They keep owning their desktop
+     styles inline; this file only overrides them below the breakpoint.
+   - One breakpoint, 900px. It catches phone portrait (390/402px), phone
+     landscape (844/874px) and tablet portrait — all of which need the stacked
+     layout, because landscape on a phone is 390px *tall*.
+   - Colours and sizes still come from the tokens above. No new palette here. */
+
+/* Viewport height that survives iOS Safari's collapsing URL bar. `100vh` there
+   is the *expanded* height, so a full-height shell is taller than the visible
+   window and its bottom row sits under the browser chrome. */
+:root { --te-app-h: 100vh; }
+@supports (height: 100dvh) { :root { --te-app-h: 100dvh; } }
+
+/* Drawer scrim + hamburger: present in the DOM at every width, shown only below
+   the breakpoint. */
+.te-nav-scrim { display: none; }
+.te-nav-toggle { display: none; }
+
+@media (max-width: 900px) {
+  /* iOS zooms the page when a focused field is under 16px. Sizes come from FONT
+     everywhere else; this is the one place the platform overrules the scale. */
+  input, textarea, select { font-size: 16px !important; }
+
+  /* ---- shell ---------------------------------------------------------- */
+  /* The nav rail becomes an off-canvas drawer: on a 390px viewport a 272px
+     rail leaves 118px of page. */
+  .te-sidebar {
+    position: fixed !important;
+    top: 0; left: 0;
+    z-index: 60 !important;
+    width: min(272px, 82vw) !important;
+    flex: 0 0 auto !important;
+    height: var(--te-app-h) !important;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform .24s cubic-bezier(.2,.8,.2,1) !important;
+    padding-top: calc(20px + env(safe-area-inset-top)) !important;
+    padding-left: calc(14px + env(safe-area-inset-left)) !important;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+  }
+  .te-sidebar[data-mobile-open="true"] { transform: translateX(0); }
+  .te-nav-scrim {
+    display: block;
+    position: fixed; inset: 0; z-index: 59;
+    background: var(--te-scrim);
+    animation: fadeIn .18s ease-out both;
+  }
+  .te-nav-toggle { display: inline-flex !important; }
+
+  /* ---- page chrome ---------------------------------------------------- */
+  .te-page-header {
+    height: auto !important;
+    min-height: 56px;
+    padding: calc(8px + env(safe-area-inset-top)) 14px 8px calc(14px + env(safe-area-inset-left)) !important;
+    gap: 10px !important;
+  }
+  /* The kicker is decoration, and it is what forces the header to wrap on a
+     390px viewport once the hamburger and the bell are in the row. */
+  .te-page-kicker { display: none !important; }
+
+  /* The connected organization stays in the header — it is the only place it
+     can be switched — but its name truncates instead of pushing the page title
+     out. Pickers on the toolbar are left alone: that strip scrolls, so a full
+     name there costs nothing. */
+  .te-page-header .te-picker-label {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
+
+  /* The bell sits mid-header, so a panel anchored to it with `right: 0` runs
+     off the LEFT edge of a 390px viewport — 372px of panel cannot hang from an
+     element 300px in. Pinned to the viewport instead, which is also the only
+     thing wide enough to hold it. `fixed` is safe here: the panel is a direct
+     child of the bell wrapper, which has no transform or filter to contain it. */
+  .te-notif-panel {
+    position: fixed !important;
+    /* Straight under the header, whose height on mobile is the 56px min plus
+       the top inset — the row cannot wrap, so this is not a guess. */
+    top: calc(60px + env(safe-area-inset-top)) !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-height: calc(var(--te-app-h) - 100px - env(safe-area-inset-top)) !important;
+  }
+
+  /* Six settings tabs in 362px: the row scrolls rather than stacking into a
+     block of buttons taller than the pane it labels. */
+  .te-tabs-scroll {
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+  .te-tabs-scroll::-webkit-scrollbar { display: none; }
+  .te-tabs-scroll > * { flex: 0 0 auto; }
+
+  /* A page's controls wrap onto as many rows as they need. They must NOT
+     scroll: a scroll container clips its children's absolutely-positioned
+     dropdowns, which is the exact reason PageToolbar is a sibling of <main>
+     rather than inside it. The controls themselves are sized with clamp() by
+     the pages that own them, so two fit per row at 390px. */
+  .te-page-toolbar {
+    padding: 8px 14px !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+  }
+  .te-page-toolbar > * { max-width: 100%; }
+
+  .te-main {
+    padding: 16px 14px calc(36px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Fixed-column sections collapse; `auto-fit` grids already do it themselves. */
+  .te-grid-2, .te-grid-3 { grid-template-columns: 1fr !important; }
+
+  /* A real table's columns cannot be reflowed without losing the comparison the
+     table exists for, so it scrolls sideways inside its card instead. */
+  .te-table-scroll { overflow-x: auto !important; }
+  .te-table-body { min-width: 860px; }
+
+  /* ---- two panes become one ------------------------------------------- */
+  /* Used by Ticket Execution (ticket rail + detail) and by the commit popup
+     (file list + diff). Which pane is showing is a `data-pane` attribute the
+     component sets, so the desktop render is untouched and nothing has to
+     guess the viewport at hydration. */
+  .te-split[data-pane="list"] > .te-pane-detail { display: none !important; }
+  .te-split[data-pane="detail"] > .te-pane-list { display: none !important; }
+  .te-pane-list {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    border-right: none !important;
+  }
+  .te-detail-header { padding: 14px 14px 0 !important; }
+  .te-detail-title { font-size: 19px !important; }
+  /* Six tabs plus two run buttons never fit — the bar scrolls and the buttons
+     drop onto their own row under it. */
+  .te-tabbar {
+    flex-wrap: wrap !important;
+    row-gap: 6px !important;
+  }
+  .te-tabbar-actions { margin-left: auto; }
+  .te-back-btn { display: inline-flex !important; }
+
+  /* ---- modals --------------------------------------------------------- */
+  .te-modal-shell {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    border-radius: 0 !important;
+    padding-top: env(safe-area-inset-top) !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+  .te-modal-overlay { padding: 0 !important; }
+
+  /* A diff wraps mid-word, so every pixel of column is a character that stays
+     on its own line. */
+  .te-diffview > div { padding-left: 12px !important; padding-right: 12px !important; }
+}
+
+/* Phone landscape: 390px of height, and the notch is on a side. */
+@media (max-width: 900px) and (orientation: landscape) {
+  .te-page-header { min-height: 48px; }
+  .te-page-header, .te-page-toolbar, .te-main, .te-detail-header {
+    padding-right: calc(14px + env(safe-area-inset-right)) !important;
+  }
+}

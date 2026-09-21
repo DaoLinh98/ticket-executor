@@ -30,7 +30,7 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
         </div>
       ) : (
         <>
-          <section style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "10px" }}>
+          <section className="te-grid-3" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "10px" }}>
             {/* The whole card is the link, not just the text — a click landing on
                 the card's padding used to do nothing at all. Falls back to plain
                 text when the provider gave us no URL, so a click can never
@@ -59,7 +59,7 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
               <div style={{ fontSize: FONT.md, color: COLORS.textSoft }}>{timeAgo(review.pr.createdAt)}</div>
             </div>
           </section>
-          <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+          <section className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
             <div style={card()}>
               <div style={cardLabel}>AUTHOR</div>
               <span style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: FONT.md, color: COLORS.text }}><span style={avatar(review.pr.author)}>{initials(review.pr.author)}</span>{review.pr.author}</span>

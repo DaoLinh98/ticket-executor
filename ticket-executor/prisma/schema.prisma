@@ -636,3 +636,42 @@ model AutomationEvent {
   @@index([createdAt])
   @@index([planId])
 }
+
+// One iOS/desktop device that asked to be told about notifications while the
+// app is closed.
+//
+// Per device, not per user: this app has no user accounts (one shared password,
+// see lib/auth.ts), and a push subscription is issued by the browser to one
+// installed copy of the app. The endpoint the push service hands back is the
+// address, so it is the identity — re-subscribing on the same device returns
+// the same endpoint and must update the keys rather than add a second row.
+//
+// Rows are deleted, not marked dead, when the push service answers 404/410:
+// that response means the subscription no longer exists anywhere, so keeping it
+// would only buy a guaranteed failure on every future send.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  // What the device called itself when it subscribed, so the Settings list can
+  // say "iPhone" rather than a 200-character endpoint URL.
+  label     String   @default("")
+  createdAt DateTime @default(now())
+}
+
+// The notifications already pushed, keyed by the same key the bell dedupes on.
+//
+// The watcher recomputes the whole current notification set on every tick — the
+// sources are all "what is true now", not "what changed" — so without a record
+// of what was already sent, one unresolved review comment would light up the
+// lock screen every minute until somebody answered it.
+//
+// Persisted rather than held in memory because the opposite failure is the
+// costly one: a restart that forgot would re-push everything at once, at 3am.
+model PushDelivery {
+  key    String   @id
+  sentAt DateTime @default(now())
+
+  @@index([sentAt])
+}

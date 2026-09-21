@@ -12,6 +12,7 @@ import LoadingRing from "./ticket-executor/LoadingRing";
 import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
 import Toast, { type ToastMessage } from "./ticket-executor/Toast";
+import { htmlToPlainText } from "@/lib/richText";
 import CommitsTab from "./ticket-executor/tabs/CommitsTab";
 import ExecutionTab from "./ticket-executor/tabs/ExecutionTab";
 import OverviewTab from "./ticket-executor/tabs/OverviewTab";
@@ -169,6 +170,13 @@ export default function TicketExecutor() {
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
+  // Which of the two panes the phone is showing. Below the breakpoint the rail
+  // and the detail cannot both be on screen (globals.css hides one on this
+  // attribute), so picking a ticket has to also mean "go to it", and the
+  // detail header grows a Back control. Above the breakpoint nothing reads it —
+  // the state is kept rather than gated on a media query so the desktop render
+  // is unchanged and there is no hydration-time viewport guess.
+  const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const [tab, setTab] = useState<TabId>("overview");
   const [search, setSearch] = useState("");
   const [fStatus, setFStatus] = useState("");
@@ -193,6 +201,12 @@ export default function TicketExecutor() {
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
+  // Vietnamese translations of individual comments, keyed `<ticketId>:<index>`.
+  // Held here rather than in OverviewTab because the container owns fetching,
+  // and kept in memory rather than persisted: the source lives in the provider
+  // and one Haiku turn is cheap to ask for again.
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [translating, setTranslating] = useState<Record<string, boolean>>({});
   const [skillOptions, setSkillOptions] = useState<string[]>(SKILL_OPTIONS);
   const [modelOptions, setModelOptions] = useState<readonly ClaudeModel[]>(CLAUDE_MODELS);
   const [overrides, setOverrides] = useState<Record<string, Partial<Record<OverrideField, string>>>>({});
@@ -1524,10 +1538,47 @@ export default function TicketExecutor() {
     [execs, showToast, loadHistory, startPolling]
   );
 
+  // Translate one comment. A second press hides the block again rather than
+  // spending another turn — the translation is already in hand.
+  const translateComment = useCallback(async (key: string, html: string) => {
+    if (translating[key]) return;
+    if (translations[key] !== undefined) {
+      setTranslations((t) => {
+        const next = { ...t };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setTranslating((t) => ({ ...t, [key]: true }));
+    try {
+      const r = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: htmlToPlainText(html) }),
+      });
+      const data = await r.json();
+      if (typeof data?.vietnamese === "string") {
+        setTranslations((t) => ({ ...t, [key]: data.vietnamese }));
+      } else {
+        showToast(data?.error || "Translation failed.", 7000, "error");
+      }
+    } catch {
+      showToast("Translation failed.", 7000, "error");
+    } finally {
+      setTranslating((t) => {
+        const next = { ...t };
+        delete next[key];
+        return next;
+      });
+    }
+  }, [translating, translations, showToast]);
+
   const selectTicket = (id: string, e?: MouseEvent) => {
     fireBoltFromEvent(e);
     const ex = execs[id];
     setSelectedId(id);
+    setMobilePane("detail");
     setTab(ex && ex.state === "running" ? "execution" : "overview");
   };
 
@@ -1802,7 +1853,7 @@ export default function TicketExecutor() {
   return (
     <div
       style={{
-        position: "relative", height: "100vh", width: "100%", display: "flex", flexDirection: "column",
+        position: "relative", height: "var(--te-app-h)", width: "100%", display: "flex", flexDirection: "column",
         background: "transparent", color: "#ECEEF3", fontFamily: "var(--font-hanken), sans-serif",
         overflow: "hidden", ["--accent" as string]: ACCENT,
       }}
@@ -1826,7 +1877,7 @@ export default function TicketExecutor() {
         activeCount={activeCount}
       />
 
-      <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
+      <div className="te-split" data-pane={mobilePane} style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
         <TicketSidebar
           tickets={tickets}
           filtered={filtered}
@@ -1872,7 +1923,7 @@ export default function TicketExecutor() {
         />
 
         {/* Main */}
-        <main style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+        <main className="te-pane-detail" style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
           {!t ? (
             <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "#5B6273", fontSize: FONT.md }}></span>}</div>
           ) : (
@@ -1894,6 +1945,7 @@ export default function TicketExecutor() {
                   if (next) loadStatusMenuOptions(t);
                 }}
                 onSelectStatus={(s, e) => selectStatus(t.id, s, e)}
+                onBack={() => setMobilePane("list")}
                 tab={tab}
                 setTab={setTab}
                 tabStyle={tabStyle}
@@ -1907,11 +1959,14 @@ export default function TicketExecutor() {
                 secondaryAction={secondaryAction}
               />
 
-              <div className="te-scroll te-scroll--smooth" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", minHeight: 0, padding: "24px 28px 44px" }}>
+              <div className="te-scroll te-scroll--smooth te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", minHeight: 0, padding: "24px 28px 44px" }}>
                 {tab === "overview" && (
                   <OverviewTab
                     ticket={t}
                     comments={comments[t.id] ?? []}
+                    translations={translations}
+                    translating={translating}
+                    onTranslateComment={translateComment}
                     history={history[t.id] ?? []}
                     onOpenRun={openRun}
                     rootRepo={getRootRepo(t)}

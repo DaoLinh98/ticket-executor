@@ -108,7 +108,7 @@ export default function DiffView({ diff }: { diff: string }) {
   }
 
   return (
-    <div className="te-scroll" style={{ flex: 1, overflow: "auto", padding: "14px 0", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, lineHeight: 1.6 }}>
+    <div className="te-scroll te-diffview" style={{ flex: 1, overflow: "auto", padding: "14px 0", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, lineHeight: 1.6 }}>
       {rows.map((row) => {
         const isAdd = row.kind === "add";
         const isDel = row.kind === "del";

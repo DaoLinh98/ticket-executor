@@ -378,8 +378,8 @@ export default function DashboardPage() {
   const opsTier: CSSProperties = { display: "flex", flexDirection: "column", gap: "16px", opacity: 0.86 };
 
   return (
-    <div style={{ position: "relative", height: "100vh", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
-      <header style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+    <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Run Metrics" kicker="D-AGENT · ANALYTICS" icon={<path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -388,18 +388,18 @@ export default function DashboardPage() {
 
       {/* This page's own filters — what the metrics below are counted over. */}
       <PageToolbar>
-        <div style={{ width: "170px" }}>
+        <div style={{ width: "clamp(150px, 44vw, 170px)" }}>
           <SelectMenu variant="filter" alwaysGlow value={rangeLabel} onChange={setRangeLabel} options={Object.keys(RANGES)} allLabel="Range: All time" ariaLabel="Filter by time range" />
         </div>
-        <div style={{ width: "190px" }}>
+        <div style={{ width: "clamp(150px, 44vw, 190px)" }}>
           <SelectMenu variant="filter" alwaysGlow value={provider} onChange={setProvider} options={data?.filters.providers ?? []} allLabel="Provider: All" ariaLabel="Filter by provider" />
         </div>
-        <div style={{ width: "210px" }}>
+        <div style={{ width: "clamp(150px, 44vw, 210px)" }}>
           <SelectMenu variant="filter" alwaysGlow value={project} onChange={setProject} options={data?.filters.projects ?? []} allLabel="Project: All" ariaLabel="Filter by project" />
         </div>
       </PageToolbar>
 
-      <main className="te-scroll" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
         <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>
           {error && (
             <div style={{ ...tintedCard("danger"), animation: "fadeUp .4s both" }}>
@@ -407,7 +407,7 @@ export default function DashboardPage() {
             </div>
           )}
           {loading && !data && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", minHeight: "calc(100vh - 220px)" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", minHeight: "calc(var(--te-app-h) - 220px)" }}>
               <LoadingRing size={100} />
             </div>
           )}
@@ -500,7 +500,7 @@ export default function DashboardPage() {
                   hint="real work, not a one-line edit" />
               </section>
 
-              <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(3) }}>
+              <section className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(3) }}>
                 <div style={panelStyle(3.8)}>
                   <h3 style={sectionHeading}>DELIVERY FUNNEL</h3>
                   <Funnel f={data.funnel} live={funnel} />
@@ -526,7 +526,7 @@ export default function DashboardPage() {
                   </div>
                 </section>
 
-                <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <section className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                   <div style={panelStyle(3.6)}>
                     <h3 style={sectionHeading}>RELIABILITY</h3>
                     <StatusBar r={data.reliability} />

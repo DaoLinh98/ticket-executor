@@ -21,6 +21,9 @@ type Props = {
   statusMenuOptions: string[];
   onToggleStatusMenu: () => void;
   onSelectStatus: (status: string, e?: MouseEvent) => void;
+  /** Back to the ticket list. Only reachable below the responsive breakpoint,
+   *  where the two panes share one screen — hidden by globals.css above it. */
+  onBack: () => void;
   // tabs
   tab: TabId;
   setTab: (tab: TabId) => void;
@@ -40,7 +43,7 @@ type Props = {
 // with its primary + secondary run buttons.
 export default function TicketDetailHeader({
   ticket: t, effStatus, projectName, state: st, execPillStyle, onOpenTicketLink,
-  statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus,
+  statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus, onBack,
   tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
@@ -50,8 +53,21 @@ export default function TicketDetailHeader({
   // dropdown's own zIndex can't help, since it is trapped inside this element's
   // context. Still below AppHeader (5).
   return (
-    <div style={{ position: "relative", zIndex: 2, flex: "0 0 auto", padding: "20px 28px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "9px" }}>
+    <div className="te-detail-header" style={{ position: "relative", zIndex: 2, flex: "0 0 auto", padding: "20px 28px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "9px", flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="te-back-btn"
+          aria-label="Back to tickets"
+          onClick={(e) => { fireBoltFromEvent(e); onBack(); }}
+          style={{
+            display: "none", alignItems: "center", justifyContent: "center", flex: "0 0 auto",
+            width: "32px", height: "32px", color: COLORS.textSoft, cursor: "pointer",
+            ...ringBorder({ fill: "var(--te-btn-ghost-fill)", duration: 4.2, cornerPx: 7 }),
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 6l-6 6 6 6" /></svg>
+        </button>
         <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, fontWeight: 600, color: "var(--accent)" }}>#{t.id}</span>
         <span style={typeBadge(t.type)}>{t.type}</span>
         <div ref={statusMenuRef} style={{ position: "relative" }}>
@@ -74,7 +90,7 @@ export default function TicketDetailHeader({
           )}
         </div>
       </div>
-      <h1 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
+      <h1 className="te-detail-title" style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
       <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "#8A90A0", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
@@ -108,7 +124,7 @@ export default function TicketDetailHeader({
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
+      <div className="te-tabbar" style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("overview"); }} style={tabStyle("overview", true)}>Overview</button>
         <button onClick={(e) => { if (execEnabled) { fireBoltFromEvent(e); setTab("execution"); } }} style={tabStyle("execution", execEnabled)}>Execution</button>
         {planEnabled && (
@@ -126,7 +142,7 @@ export default function TicketDetailHeader({
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
         <button onClick={(e) => { if (resultEnabled) { fireBoltFromEvent(e); setTab("result"); } }} style={tabStyle("result", resultEnabled)}>Result</button>
         <div style={{ flex: 1 }} />
-        <div style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
+        <div className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
             {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
             {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={14} /></span>}

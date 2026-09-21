@@ -46,7 +46,7 @@ export default function AppHeader({
 }: Props) {
   return (
     <>
-      <header style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 30 }}>
+      <header className="te-page-header" style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 30 }}>
         <PageHeading title="Ticket Execution" kicker="D-AGENT · RUNS" icon={<path d="M8 5l8 7-8 7" />} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CommitFile, CommitSummary } from "@/lib/types";
-import { FONT, modalShellStyle, pill, ringBorder } from "@/lib/ui";
+import { COLORS, FONT, modalShellStyle, pill, ringBorder } from "@/lib/ui";
 import DiffView from "./DiffView";
 import { timeAgo } from "./helpers";
 import LoadingRing from "./LoadingRing";
@@ -32,17 +32,24 @@ const CHANGE_LETTER: Record<CommitFile["changeType"], string> = {
 // Result tab's single-file diff popup.
 export default function CommitFilesModal({ commit, files, onClose }: Props) {
   const [activePath, setActivePath] = useState<string | null>(null);
+  // Which of the two panes the phone is showing. A diff wraps mid-word, so
+  // sharing 390px with a 280px file list left it roughly one character wide;
+  // below the breakpoint the list and the diff take the screen in turn. Above
+  // it nothing reads this (globals.css), and `activePath` still preselects the
+  // first file so the desktop popup opens on a diff as before.
+  const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
   const { fireBoltFromEvent } = useBoltsContext();
 
   useEffect(() => {
     setActivePath(files && files.length ? files[0].path : null);
+    setMobilePane("list");
   }, [files, commit.sha]);
 
   const active = files?.find((f) => f.path === activePath) ?? null;
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 55, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
-      <div style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
+    <div className="te-modal-overlay" style={{ position: "fixed", inset: 0, zIndex: 55, background: "rgba(6,7,9,.68)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
+      <div className="te-modal-shell" style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "14px", padding: "16px 20px", borderBottom: "1px solid #1E232C", flex: "0 0 auto" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.md, fontWeight: 700, color: "#F3F5F9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{commit.message || "(no message)"}</div>
@@ -60,14 +67,14 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
         ) : files.length === 0 ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#5B6273", fontSize: FONT.base }}>No file changes found for this commit.</div>
         ) : (
-          <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-            <div className="te-scroll" style={{ width: "280px", flex: "0 0 auto", overflowY: "auto", borderRight: "1px solid #1E232C", padding: "8px" }}>
+          <div className="te-split" data-pane={mobilePane} style={{ flex: 1, display: "flex", minHeight: 0 }}>
+            <div className="te-scroll te-pane-list" style={{ width: "280px", flex: "0 0 auto", overflowY: "auto", borderRight: "1px solid #1E232C", padding: "8px" }}>
               {files.map((f) => {
                 const isActive = f.path === activePath;
                 return (
                   <button
                     key={f.path}
-                    onClick={(e) => { fireBoltFromEvent(e); setActivePath(f.path); }}
+                    onClick={(e) => { fireBoltFromEvent(e); setActivePath(f.path); setMobilePane("detail"); }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -94,10 +101,23 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
                 );
               })}
             </div>
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <div className="te-pane-detail" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
               {active && (
-                <div style={{ flex: "0 0 auto", padding: "10px 20px", borderBottom: "1px solid #1E232C", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#C7CCD8" }}>
-                  {active.path}
+                <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px", borderBottom: "1px solid #1E232C", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#C7CCD8" }}>
+                  <button
+                    type="button"
+                    className="te-back-btn"
+                    aria-label="Back to file list"
+                    onClick={(e) => { fireBoltFromEvent(e); setMobilePane("list"); }}
+                    style={{
+                      display: "none", alignItems: "center", justifyContent: "center", flex: "0 0 auto",
+                      width: "28px", height: "28px", color: COLORS.textSoft, cursor: "pointer",
+                      ...ringBorder({ fill: "var(--te-btn-ghost-fill)", duration: 4.2, cornerPx: 6 }),
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 6l-6 6 6 6" /></svg>
+                  </button>
+                  <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{active.path}</span>
                 </div>
               )}
               {active ? <DiffView diff={active.diff} /> : <div style={{ flex: 1 }} />}

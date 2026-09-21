@@ -76,7 +76,7 @@ export default function SprintPicker({
         }}
       >
         {leading}
-        <span style={{ fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
+        <span className="te-picker-label" style={{ fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
         {hasOptions && (
           <svg
             width="12"

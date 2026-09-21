@@ -308,7 +308,48 @@ What happens when you press the CTA, in order — the cheap guards come first:
 3. **Engine** (`startExecution`) — creates the worktree if multi-ticket mode is
    on, then spawns `claude`. This is the first step that costs money.
 
-## 10. Troubleshooting
+## 10. Notifications on your phone
+
+The bell in the header only refreshes while the app is open in a browser. To be
+told about a review comment or an overnight run while the app is **closed** —
+on an iPhone lock screen, or as a desktop notification — the server has to push
+it, and that needs three things set up once.
+
+**1. VAPID keys** (the server's identity to Apple's and Google's push services):
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Put the pair in `.env` as `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`, set
+`VAPID_SUBJECT` to your own `mailto:` address, and restart the app. Leaving them
+empty keeps push off entirely — nothing is polled and nothing is sent.
+Regenerating them later invalidates every device: each one has to be enabled
+again.
+
+**2. A stable HTTPS origin.** A push subscription is issued against one origin
+and dies with it, so `localhost` cannot receive one and a tunnel whose URL
+changes on every restart means re-enabling every time. Use a reserved domain
+(ngrok static domain, Cloudflare tunnel, a real host).
+
+**3. The app installed to the Home Screen (iOS).** iOS grants push only to an
+installed web app, never to a Safari tab. Open the site in Safari, **Share → Add
+to Home Screen**, then launch it from that icon. An icon added before this app
+had a manifest is only a bookmark — remove it and add it again.
+
+Then, inside the installed app: **Settings → Notifications → Enable on this
+device**, allow the permission prompt, and press **Send a test**. The switch is
+per device, not per account — each phone and laptop enables itself.
+
+What arrives is exactly what the bell would have shown: the server re-asks the
+same sources every two minutes and sends only what it has not sent before. The
+first check after you enable is silent on purpose — it records the standing
+backlog rather than announcing three days of it.
+
+Note that this only works while the app is actually running on your machine. It
+is a local tool: nothing pushes while the laptop is asleep.
+
+## 11. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -323,8 +364,11 @@ What happens when you press the CTA, in order — the cheap guards come first:
 | `Ticket #N is currently running` (409) | Multi-ticket mode is off — one run at a time | Finish/cancel that run, or turn multi-ticket mode on |
 | Prisma client type errors after pulling | Schema changed | `npx prisma generate` |
 | Root repo dropdown is empty on a fresh install | It only lists paths used before — there are no built-in suggestions | Type the clone path once; it is remembered per project afterwards |
+| Settings → Notifications says "Add to Home Screen" on an iPhone that already has the icon | The icon predates the app manifest, so iOS treats it as a bookmark | Delete the icon, re-add it from Safari's Share menu, open the app from it |
+| Notifications enabled, test says "Sent to 1 device", nothing appears | Notifications are muted for the installed app at the OS level | iOS Settings → Notifications → D-Agent → Allow Notifications |
+| The Notifications tab says the server has no VAPID keys | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` unset, or the app was not restarted after setting them | §10 |
 
-## 11. Notes
+## 12. Notes
 
 - `npm run test` runs the unit suite (`node --test` over `tests/*.test.ts`, TypeScript
   via `tests/register.mjs`) — it needs no database and costs no tokens. Run it after
@@ -335,6 +379,8 @@ What happens when you press the CTA, in order — the cheap guards come first:
   consumers: `GET /api/preflight` for the System Check page, and
   `validateRootRepo()` for the implement route. Add new checks there, not in a
   route.
+- Lock-screen notifications need VAPID keys, a stable HTTPS origin and (on iOS)
+  the app installed to the Home Screen — see §10.
 - Cost control: there is no spend ceiling by design (see `CLAUDE.md`). Watch what
   a run costs on the Dashboard's OPERATIONS tier, and use Cancel to stop one.
 - Architecture, module layout and conventions: see `CLAUDE.md` (repo root and

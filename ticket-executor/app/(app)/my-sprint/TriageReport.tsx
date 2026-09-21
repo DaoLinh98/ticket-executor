@@ -193,10 +193,12 @@ export default function TriageReport({
   // only parent that guarantees the whole screen.
   const body = (
     <div
+      className="te-modal-overlay"
       style={{ ...modalOverlayStyle({ zIndex: 60 }), padding: "20px" }}
       onClick={onClose}
     >
       <div
+        className="te-modal-shell"
         style={{ width: "min(1720px, 96vw)", height: "94vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }}
         onClick={(e) => e.stopPropagation()}
       >

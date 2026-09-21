@@ -68,3 +68,4 @@ export {
   type ReleaseOutcome,
 } from "./execution/release";
 export { startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";
+export { translateToVietnamese, TRANSLATE_MODEL, type TranslateResult } from "./execution/translate";
