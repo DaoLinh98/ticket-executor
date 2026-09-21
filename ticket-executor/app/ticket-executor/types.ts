@@ -97,7 +97,7 @@ export type SettingsView = {
 };
 
 // The detail-pane tabs.
-export type TabId = "overview" | "execution" | "plan" | "resolve-review" | "commits" | "result";
+export type TabId = "overview" | "execution" | "plan" | "resolve-review" | "commits" | "result" | "ask";
 
 // Per-ticket Overview overrides.
 export type OverrideField = "area" | "skill" | "rootRepo" | "model" | "effort";

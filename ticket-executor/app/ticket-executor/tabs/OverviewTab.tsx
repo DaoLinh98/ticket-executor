@@ -36,6 +36,7 @@ type Props = {
   branch: string;
   cdCommand: string;
   command: string;
+  onOpenTerminal: () => void;
   // CTA banner
   ctaTitle: string;
   ctaSub: string;
@@ -60,7 +61,7 @@ const sectionHeading: CSSProperties = {
 export default function OverviewTab({
   ticket: t, comments, translations, translating, onTranslateComment, history, onOpenRun,
   rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
-  rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command,
+  rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
 }: Props) {
   const fieldLabel: CSSProperties = { fontSize: FONT.xs, letterSpacing: ".12em", color: COLORS.textDim, fontWeight: 600, marginBottom: "5px" };
@@ -168,7 +169,22 @@ export default function OverviewTab({
         )}
       </section>
       <section>
-        <h3 style={sectionHeading}>COMMAND PREVIEW</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <h3 style={{ ...sectionHeading, flex: 1 }}>COMMAND PREVIEW</h3>
+          {/* Opens on the machine hosting this app, not on the device reading
+              the page — from a phone the Ask Claude tab is the equivalent. */}
+          <button
+            onClick={onOpenTerminal}
+            disabled={rootRepoMissing}
+            title={rootRepoMissing ? "Set ROOT REPO first" : "Open a terminal in the Root repo on this app's machine, with claude already running"}
+            style={{ ...ctaButtonStyle("ghost", { height: "26px", cornerPx: 6 }), marginBottom: "12px", fontSize: FONT.xs, opacity: rootRepoMissing ? 0.5 : 1, cursor: rootRepoMissing ? "default" : "pointer" }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2.5" y="4" width="19" height="16" rx="2" /><path d="M7 9l3 3-3 3M13 15h4" />
+            </svg>
+            Open Terminal
+          </button>
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, ...card({ padding: "15px 18px", radius: "12px", border: "#23272F", background: COLORS.panelBgDark }) }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "#5B6273" }}>$</span><span style={{ color: "#8A90A0" }}>{cdCommand}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "#C7CCD8" }}>{command}</span></div>

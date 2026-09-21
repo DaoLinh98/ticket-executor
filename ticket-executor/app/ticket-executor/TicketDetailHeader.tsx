@@ -118,6 +118,7 @@ export default function TicketDetailHeader({
         </button>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
         <button onClick={(e) => { if (resultEnabled) { fireBoltFromEvent(e); setTab("result"); } }} style={tabStyle("result", resultEnabled)}>Result</button>
+        <button onClick={(e) => { fireBoltFromEvent(e); setTab("ask"); }} style={tabStyle("ask", true)}>Ask Claude</button>
         <div style={{ flex: 1 }} />
         <div className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>

@@ -13,6 +13,7 @@ import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
 import Toast, { type ToastMessage } from "./ticket-executor/Toast";
 import { htmlToPlainText } from "@/lib/richText";
+import AskTab from "./ticket-executor/tabs/AskTab";
 import CommitsTab from "./ticket-executor/tabs/CommitsTab";
 import ExecutionTab from "./ticket-executor/tabs/ExecutionTab";
 import OverviewTab from "./ticket-executor/tabs/OverviewTab";
@@ -22,6 +23,7 @@ import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
   ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
+import type { AskView } from "@/lib/ask";
 import type { RunEventSource } from "@/lib/notifications";
 import { useNotifications } from "./(app)/NotificationsProvider";
 import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
@@ -197,6 +199,11 @@ export default function TicketExecutor() {
   const [statusMenuOptions, setStatusMenuOptions] = useState<string[]>([]);
   const [statusMenuLoading, setStatusMenuLoading] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  // The ad-hoc Claude session of whichever ticket is selected, plus its unsent
+  // draft per ticket so switching tickets does not eat what was being typed.
+  // Lives on the server (lib/ask.ts) — this is a view of it, not a copy.
+  const [ask, setAsk] = useState<AskView | null>(null);
+  const [askPrompts, setAskPrompts] = useState<Record<string, string>>({});
   const [execs, setExecs] = useState<Record<string, ExecView>>({});
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
@@ -265,6 +272,8 @@ export default function TicketExecutor() {
   // the runs this session is watching, and the ticket titles it has loaded.
   const { setLocalSources, refresh: refreshShared } = useNotifications();
   const logRef = useRef<HTMLDivElement>(null);
+  const askLogRef = useRef<HTMLDivElement>(null);
+  const askSse = useRef<EventSource | null>(null);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseConnections = useRef<Record<string, EventSource>>({});
@@ -1020,6 +1029,122 @@ export default function TicketExecutor() {
   const getEffort = (t: Ticket) => overrides[t.id]?.effort ?? DEFAULT_CLAUDE_EFFORT;
   const setOverrideValue = (ticketId: string, field: OverrideField, value: string) =>
     setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
+
+  // ---- Open Terminal, and the ad-hoc "Ask Claude" session ----
+  // Both run the CLI on the machine hosting this app, in the ticket's Root repo,
+  // with none of the execution engine involved: no Run row, no worktree, no
+  // branch, no pull request, no admission check. Open Terminal is for sitting at
+  // that machine; Ask is the same thing driven from a phone.
+  const openTerminal = useCallback(async (ticketId: string, rootRepo: string) => {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/terminal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rootRepo }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) showToast(data.error || "Could not open a terminal", 9000, "error");
+      else showToast("Terminal opened on this app's machine", 3000);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not open a terminal", 9000, "error");
+    }
+  }, [showToast]);
+
+  const closeAskStream = useCallback(() => {
+    askSse.current?.close();
+    askSse.current = null;
+  }, []);
+
+  const openAskStream = useCallback((ticketId: string) => {
+    closeAskStream();
+    if (typeof EventSource === "undefined") return;
+    const es = new EventSource(`/api/tickets/${ticketId}/ask/stream`);
+    askSse.current = es;
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.ask) setAsk(data.ask as AskView);
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    // The route closes the stream once the turn ends, which arrives here as an
+    // error. The frame before it already carried the finished state, so there is
+    // nothing to reconnect to and nothing to refetch.
+    es.onerror = () => closeAskStream();
+  }, [closeAskStream]);
+
+  const loadAsk = useCallback(async (ticketId: string) => {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/ask`, { cache: "no-store" });
+      const data = (await res.json()) as AskView;
+      setAsk(data);
+      // A turn started from another device is still running here: pick it up.
+      if (data.state === "running") openAskStream(ticketId);
+    } catch {
+      /* leave the panel on whatever it last showed */
+    }
+  }, [openAskStream]);
+
+  const sendAsk = useCallback(async (ticketId: string, rootRepo: string) => {
+    const prompt = (askPrompts[ticketId] ?? "").trim();
+    if (!prompt) return;
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rootRepo, prompt }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Claude could not be started", 9000, "error");
+        return;
+      }
+      setAskPrompts((s) => ({ ...s, [ticketId]: "" }));
+      openAskStream(ticketId);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Claude could not be started", 9000, "error");
+    }
+  }, [askPrompts, openAskStream, showToast]);
+
+  const stopAsk = useCallback(async (ticketId: string) => {
+    try {
+      await fetch(`/api/tickets/${ticketId}/ask/cancel`, { method: "POST" });
+    } catch {
+      /* the stream reports the real outcome either way */
+    }
+  }, []);
+
+  const clearAsk = useCallback(async (ticketId: string) => {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/ask`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Could not reset the session", 7000, "error");
+        return;
+      }
+      closeAskStream();
+      setAsk(null);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not reset the session", 7000, "error");
+    }
+  }, [closeAskStream, showToast]);
+
+  // Read the session when the tab is opened (or the selection changes under it),
+  // and drop the stream on the way out — a closed panel has nothing to render.
+  useEffect(() => {
+    if (tab !== "ask" || !selectedId) {
+      closeAskStream();
+      return;
+    }
+    setAsk(null);
+    void loadAsk(selectedId);
+    return () => closeAskStream();
+  }, [tab, selectedId, loadAsk, closeAskStream]);
+
+  useEffect(() => {
+    if (tab === "ask" && askLogRef.current) askLogRef.current.scrollTop = askLogRef.current.scrollHeight;
+  });
 
   // Remember a Root Repo / Project / Skill value in the DB so it shows up as a
   // saved option next time (any ticket, any session) instead of only being a
@@ -1803,6 +1928,16 @@ export default function TicketExecutor() {
       whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, flex: 1, animation: "lineIn .3s ease-out both",
     } as CSSProperties,
   }));
+  // Same palette, same shape — the Ask panel is a terminal too, and a second
+  // mapping would be a second place for a log line to look different.
+  const askLogLines = (ask?.logLines ?? []).map((l, i) => ({
+    text: l.text, num: i + 1,
+    style: {
+      color: kindColor[l.kind] || "#C7CCD8",
+      fontWeight: (l.kind === "cmd" ? 600 : 400) as number,
+      whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, flex: 1, animation: "lineIn .3s ease-out both",
+    } as CSSProperties,
+  }));
   const logStatusMap: Record<UiRunState, [string, string]> = {
     running: ["running", "#F5B341"], waiting: ["your review", "#9BA6E8"], succeeded: ["done", "#35D6A4"],
     failed: ["failed", "#FF6B6B"], cancelled: ["cancelled", "#5B6273"], none: ["idle", "#5B6273"],
@@ -1983,6 +2118,7 @@ export default function TicketExecutor() {
                     branch={selBranch}
                     cdCommand={selCdCommand}
                     command={selCommand}
+                    onOpenTerminal={() => openTerminal(t.id, getRootRepo(t))}
                     ctaTitle={ctaTitle}
                     ctaSub={ctaSub}
                     action={action}
@@ -2033,6 +2169,23 @@ export default function TicketExecutor() {
                     pr={ticketReview.pr}
                     commits={commits[t.id] ?? null}
                     onOpenCommit={(commit) => openCommitFiles(t.id, settings.provider, commit)}
+                  />
+                )}
+
+                {tab === "ask" && (
+                  <AskTab
+                    rootRepo={getRootRepo(t)}
+                    logLines={askLogLines}
+                    state={ask?.state ?? "idle"}
+                    resuming={!!ask?.resuming}
+                    error={ask?.error ?? ""}
+                    prompt={askPrompts[t.id] ?? ""}
+                    skillOptions={mergedSkillOptions}
+                    onPromptChange={(v) => setAskPrompts((s) => ({ ...s, [t.id]: v }))}
+                    onSend={() => sendAsk(t.id, getRootRepo(t))}
+                    onCancel={() => stopAsk(t.id)}
+                    onReset={() => clearAsk(t.id)}
+                    logRef={askLogRef}
                   />
                 )}
 
