@@ -12,6 +12,7 @@ import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import { usePagePrefs } from "../../pagePrefs";
+import DesktopOnly from "../DesktopOnly";
 
 // ---- formatting helpers (view-only) ----
 const fmtUsd = (n: number) => (n >= 1 || n === 0 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
@@ -249,7 +250,7 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
   );
 }
 
-export default function DashboardPage() {
+function DashboardPageInner() {
   const [data, setData] = useState<DashboardMetrics | null>(null);
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [error, setError] = useState("");
@@ -590,5 +591,13 @@ export default function DashboardPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <DesktopOnly title="Dashboard">
+      <DashboardPageInner />
+    </DesktopOnly>
   );
 }

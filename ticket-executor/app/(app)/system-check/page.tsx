@@ -12,6 +12,7 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import DesktopOnly from "../DesktopOnly";
 
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
@@ -71,7 +72,7 @@ function CheckRow({ c }: { c: Check }) {
   );
 }
 
-export default function SystemCheckPage() {
+function SystemCheckPageInner() {
   const { fireBoltFromEvent } = useBoltsContext();
   const [result, setResult] = useState<PreflightResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -225,5 +226,13 @@ export default function SystemCheckPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function SystemCheckPage() {
+  return (
+    <DesktopOnly title="System Check">
+      <SystemCheckPageInner />
+    </DesktopOnly>
   );
 }

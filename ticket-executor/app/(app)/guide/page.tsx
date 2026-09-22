@@ -13,6 +13,7 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
+import DesktopOnly from "../DesktopOnly";
 
 /** Roll the checks of one preflight group up into a single section verdict:
  *  any blocking failure wins, then any warning, otherwise pass. */
@@ -28,7 +29,7 @@ function rollUp(result: PreflightResult | null, group?: string): { status: Secti
   return { status: "pass" };
 }
 
-export default function GuidePage() {
+function GuidePageInner() {
   const { fireBoltFromEvent } = useBoltsContext();
   const [result, setResult] = useState<PreflightResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -275,5 +276,13 @@ export default function GuidePage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function GuidePage() {
+  return (
+    <DesktopOnly title="Guide">
+      <GuidePageInner />
+    </DesktopOnly>
   );
 }

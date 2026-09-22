@@ -20,7 +20,16 @@ const Ctx = createContext<MobileNav>({ open: false, setOpen: () => {} });
  * and a nav that closes itself on navigation.
  */
 export function useIsMobile() {
-  const [mobile, setMobile] = useState(false);
+  return useResolvedIsMobile() === true;
+}
+
+/** Same reading as `useIsMobile`, but `null` until the viewport is known.
+ *
+ * `useIsMobile` answers "not mobile" for the first client render, which is the
+ * right default for layout but the wrong one for a gate that must stop a
+ * desktop-only page from mounting and firing its requests on a phone. */
+export function useResolvedIsMobile() {
+  const [mobile, setMobile] = useState<boolean | null>(null);
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     const apply = () => setMobile(mq.matches);

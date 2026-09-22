@@ -9,7 +9,9 @@ import { useBoltsContext } from "../BoltsContext";
 import ProviderTag from "./ProviderTag";
 import { useIsMobile, useMobileNav } from "./MobileNav";
 
-type NavItem = { href: string; label: string; icon: ReactNode };
+// `desktopOnly` items are gated by `DesktopOnly` as well; the rail only stops
+// offering a link the phone cannot follow.
+type NavItem = { href: string; label: string; icon: ReactNode; desktopOnly?: boolean };
 
 const NAV: NavItem[] = [
   {
@@ -40,11 +42,13 @@ const NAV: NavItem[] = [
   {
     href: "/dashboard",
     label: "Dashboard",
+    desktopOnly: true,
     icon: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   },
   {
     href: "/guide",
     label: "Guide",
+    desktopOnly: true,
     icon: (
       <>
         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
@@ -55,6 +59,7 @@ const NAV: NavItem[] = [
   {
     href: "/system-check",
     label: "System Check",
+    desktopOnly: true,
     icon: (
       <>
         <path d="M9 11l3 3L22 4" />
@@ -190,7 +195,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
 
       {/* Nav */}
       <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-        {NAV.map((item) => {
+        {NAV.filter((item) => !(item.desktopOnly && isMobile)).map((item) => {
           const active = isActive(item.href);
           const baseStyle: CSSProperties = {
             display: "flex",
