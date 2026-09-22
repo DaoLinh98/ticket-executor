@@ -696,3 +696,23 @@ model NotificationRead {
 
   @@index([readAt])
 }
+
+/// One day's work report, exactly as the Report page left it.
+///
+/// Server-side rather than in the browser because the report is prepared where
+/// the work happened and pasted from wherever the chat group is open — ticking
+/// boxes on the laptop and exporting from the phone is the whole point, and
+/// `localStorage` would make those two different reports.
+///
+/// Keyed per organization, project and day: a report is a statement about one
+/// day, and yesterday's is kept rather than overwritten.
+model ReportDraft {
+  /// `provider::org::project::YYYY-MM-DD`
+  key       String   @id
+  reportDay String
+  /// `ReportDraftState` from lib/report.ts.
+  state     Json
+  updatedAt DateTime @updatedAt
+
+  @@index([reportDay])
+}

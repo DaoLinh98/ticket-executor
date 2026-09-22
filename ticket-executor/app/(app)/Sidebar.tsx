@@ -40,6 +40,11 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: "/report",
+    label: "Report",
+    icon: <path d="M8 3h8l4 4v14H4V3zM8 12h8M8 16h5" />,
+  },
+  {
     href: "/dashboard",
     label: "Dashboard",
     desktopOnly: true,

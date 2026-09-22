@@ -1,6 +1,6 @@
 import type { CommitFile, CommitSummary, PullRequestBrief, Ticket, TicketActivity, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
 import {
-  adoCreds, getScopedTickets, getMyOpenWorkItems, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
   type ProjectInfo,
@@ -150,6 +150,45 @@ export async function loadMySprintTickets(
     widened: true,
     truncated: base.truncated || found.truncated,
   };
+}
+
+/**
+ * Every open ticket assigned to the developer, across every project.
+ *
+ * What the Report page needs and `loadMySprintTickets` deliberately is not: a
+ * sprint read is one project's iteration, while a day's report is one person's
+ * day, and those are the same list only when the person worked in one project.
+ *
+ * Azure DevOps answers this in a single organization-wide query. Every other
+ * provider degrades to "not connected" rather than throwing — the same rule the
+ * rest of this module follows.
+ */
+export async function loadMyOpenTickets(
+  provider: ProviderId,
+  identity: DevIdentity
+): Promise<TicketLoadResult> {
+  if (!hasIdentity(identity))
+    return { tickets: [], sprint: "", connected: true, truncated: false, notice: "" };
+  if (provider !== "azure-devops")
+    return {
+      tickets: [],
+      sprint: "",
+      connected: false,
+      truncated: false,
+      notice: "Reporting across all projects is available for Azure DevOps only.",
+    };
+  try {
+    const found = await getMyOpenWorkItemsAnyProject(identity);
+    return { tickets: found.tickets, sprint: "", connected: true, truncated: found.truncated, notice: "" };
+  } catch (err) {
+    return {
+      tickets: [],
+      sprint: "",
+      connected: false,
+      truncated: false,
+      notice: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export type ProjectLoadResult = {

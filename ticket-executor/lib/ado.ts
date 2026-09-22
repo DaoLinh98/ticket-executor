@@ -459,7 +459,12 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
         areaPath: area,
         iterationPath: (f["System.IterationPath"] as string) || undefined,
         project: lastAreaSegment(area) || (process.env.CLAUDE_DEFAULT_PROJECT ?? ""),
-        url: `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`,
+        // An organization-wide read has no project to scope the link to. Azure
+        // DevOps resolves the project itself from the id, so the shorter form is
+        // a real deep link and not a degraded one.
+        url: proj
+          ? `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_workitems/edit/${f["System.Id"]}`
+          : `https://dev.azure.com/${org}/_workitems/edit/${f["System.Id"]}`,
         estimateHours: numOrUndefined(f["Microsoft.VSTS.Scheduling.OriginalEstimate"]),
         storyPoints: numOrUndefined(f["Microsoft.VSTS.Scheduling.StoryPoints"]),
         // Empty for a work item type that is not on a board (a Task, usually).
@@ -562,6 +567,46 @@ export async function getMyOpenWorkItems(
       `ORDER BY [System.Id] DESC`;
 
     const wiqlUrl = `https://dev.azure.com/${org}/${encodeURIComponent(proj)}/_apis/wit/wiql?${API}`;
+    const res = await adoSend<{ workItems?: { id: number }[] }>(
+      wiqlUrl,
+      "POST",
+      { query },
+      "application/json",
+      pat
+    );
+    const found = (res.workItems ?? []).map((w) => w.id);
+    const ids = found.slice(0, MAX_TICKETS);
+    return { tickets: await fetchWorkItems(creds, ids), truncated: found.length > ids.length };
+  });
+}
+
+/**
+ * The developer's open work anywhere in the organization.
+ *
+ * `getMyOpenWorkItems` above scopes the same question to one project, which is
+ * what a sprint plan needs. A day's report does not: a developer routinely
+ * touches two projects between two stand-ups, and asking per project would be
+ * one round-trip per project to reconstruct an answer Azure DevOps already
+ * gives in one — WIQL run at the organization endpoint, with no
+ * `System.TeamProject` clause, spans every project the token can see.
+ */
+export async function getMyOpenWorkItemsAnyProject(
+  identity: DevIdentity
+): Promise<{ tickets: Ticket[]; truncated: boolean }> {
+  const who = [identity.email, identity.name].filter(Boolean);
+  if (who.length === 0) return { tickets: [], truncated: false };
+
+  const creds = await loadCreds();
+  const { org, pat } = creds;
+  const key = `${ADO_CACHE_PREFIX}tickets:${org}:mine:__any__:${who.join("|")}`;
+  return cached(key, TTL.tickets, async () => {
+    const query =
+      `SELECT [System.Id] FROM WorkItems WHERE ` +
+      `[System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
+      `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")}) ` +
+      `ORDER BY [System.Id] DESC`;
+
+    const wiqlUrl = `https://dev.azure.com/${org}/_apis/wit/wiql?${API}`;
     const res = await adoSend<{ workItems?: { id: number }[] }>(
       wiqlUrl,
       "POST",
