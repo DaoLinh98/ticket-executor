@@ -10,7 +10,7 @@ import {
   type ReadMap,
   unreadCount,
 } from "@/lib/notifications";
-import { timeAgo } from "./helpers";
+import { timeAgoOrDate } from "./helpers";
 
 type Props = {
   bellRef: RefObject<HTMLDivElement | null>;
@@ -107,7 +107,6 @@ export default function NotificationBell({
           )}
           {shown.map((n) => {
             const unread = isUnread(n, read);
-            const readAt = read[notificationKey(n)]?.readAt;
             const title = titleOf(n.ticketId);
             return (
               <button
@@ -131,7 +130,7 @@ export default function NotificationBell({
                 )}
                 <div style={{ fontSize: FONT.sm, color: unread ? COLORS.textDim : COLORS.faint, lineHeight: 1.5, paddingLeft: "13px" }}>{n.summary}</div>
                 <div style={{ fontSize: FONT.xs, color: COLORS.faint, lineHeight: 1.4, paddingLeft: "13px" }}>
-                  {unread ? timeAgo(n.at) : `Read ${timeAgo(readAt ?? "")}`}
+                  {timeAgoOrDate(n.at)}
                 </div>
               </button>
             );

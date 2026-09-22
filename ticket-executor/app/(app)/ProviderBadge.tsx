@@ -18,6 +18,17 @@ const orgLeading = (
   </svg>
 );
 
+// What the chip says on a phone. A connection name is long enough that no
+// amount of ellipsis leaves anything readable ("CreativePlanning-27global" cut
+// to fit is "Creat…"), so the capitals carry it instead — they are how the
+// organization is said out loud anyway. Falls back to the first characters when
+// a name has no capitals of its own to use.
+function orgInitials(label: string): string {
+  const caps = label.replace(/[^A-Z]/g, "");
+  if (caps.length >= 2) return caps.slice(0, 3);
+  return label.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
+}
+
 export default function ProviderBadge({ provider }: { provider?: ProviderId }) {
   const [id, setId] = useState<ProviderId | null>(provider ?? null);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -75,10 +86,11 @@ export default function ProviderBadge({ provider }: { provider?: ProviderId }) {
   // Just the organization switch: the provider marker itself lives in the
   // Sidebar (ProviderTag), so it is stated once instead of on every header.
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: "0 0 auto" }}>
+    <div className="te-org-badge" style={{ display: "flex", alignItems: "center", gap: "10px", flex: "0 0 auto" }}>
       {active && (
         <SprintPicker
           label={connectionLabel(active)}
+          shortLabel={orgInitials(connectionLabel(active))}
           options={connections.map((c) => ({ id: c.id, name: connectionLabel(c) }))}
           value={connectionLabel(active)}
           onSelect={onSelect}

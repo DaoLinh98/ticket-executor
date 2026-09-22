@@ -32,7 +32,7 @@ export type NotificationKind =
 
 /** `action` means the developer has to do something; `info` is a record of
  *  something the app did on their behalf. It splits the panel into its two
- *  views and orders the list (see `sortNotifications`); the badge counts both,
+ *  views — not their order, which is time alone; the badge counts both,
  *  because a badge that goes quiet while the panel still has unread rows in it
  *  is one nobody trusts. */
 export type NotificationSeverity = "action" | "info";
@@ -112,17 +112,15 @@ export function unreadCount(list: AppNotification[], read: ReadMap): number {
 }
 
 /**
- * Newest first, with everything actionable ahead of everything informational.
+ * Newest first, and nothing else.
  *
- * Severity outranks time because the list is read top-down: a run that needs
- * approving must not be pushed out of the visible part of the panel by six
- * things the scheduler did successfully.
+ * Severity used to outrank time, which made the panel a list nobody could scan:
+ * the newest thing that happened was somewhere in the middle, under an
+ * actionable row from three days ago. "Needs you" is the view for the
+ * actionable half — the ordering does not need to say it a second time.
  */
 export function sortNotifications(list: AppNotification[]): AppNotification[] {
-  return [...list].sort((a, b) => {
-    if (a.severity !== b.severity) return a.severity === "action" ? -1 : 1;
-    return b.at.localeCompare(a.at);
-  });
+  return [...list].sort((a, b) => b.at.localeCompare(a.at));
 }
 
 // ---- sources ----

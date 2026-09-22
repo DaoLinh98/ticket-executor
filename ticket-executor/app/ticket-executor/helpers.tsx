@@ -29,3 +29,19 @@ export function timeAgo(iso: string): string {
   const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
+
+// The same label, except that past a week "14 days ago" stops meaning anything
+// and the calendar date is the useful answer. The year is only shown when it is
+// not the current one.
+export function timeAgoOrDate(iso: string): string {
+  if (!iso) return "";
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  if (Date.now() - then.getTime() < 7 * 24 * 60 * 60 * 1000) return timeAgo(iso);
+  const sameYear = then.getFullYear() === new Date().getFullYear();
+  return then.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}

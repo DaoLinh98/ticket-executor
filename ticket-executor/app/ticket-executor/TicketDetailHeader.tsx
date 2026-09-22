@@ -90,6 +90,16 @@ export default function TicketDetailHeader({
             </div>
           )}
         </div>
+        {/* On a phone the full chip is a label and a caret for one link. The
+            link itself is what gets used — pasted into a chat, opened in the
+            provider's own app — so the row carries just the copy, beside the
+            status. The meta row's chip is hidden below the breakpoint
+            (globals.css); only one of the two is ever on screen. */}
+        {t.url && (
+          <div className="te-open-ticket-mobile" style={{ display: "none", marginLeft: "auto" }}>
+            <CopyTicketLinkButton url={t.url} />
+          </div>
+        )}
       </div>
       <h1 className="te-detail-title" style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
       <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "#8A90A0", flexWrap: "wrap" }}>
@@ -97,11 +107,19 @@ export default function TicketDetailHeader({
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
         <span style={execPillStyle}><span style={{ ...runDot(st), width: "7px", height: "7px" }} />{RUN_LABEL[st]}</span>
         {t.url && (
-          <OpenTicketButton url={t.url} onOpenTicketLink={onOpenTicketLink} />
+          <span className="te-mobile-hide" style={{ display: "inline-flex" }}>
+            <OpenTicketButton url={t.url} onOpenTicketLink={onOpenTicketLink} />
+          </span>
         )}
       </div>
 
       <div className="te-tabbar" style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
+        {/* `display: contents` — above the breakpoint these seven buttons are
+            direct flex children of the bar exactly as they were. Below it the
+            wrapper becomes its own scrolling row (globals.css), so the tabs
+            take one line instead of three and the run buttons keep the line
+            under them rather than being scrolled out of reach. */}
+        <div className="te-tabbar-tabs" style={{ display: "contents" }}>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("overview"); }} style={tabStyle("overview", true)}>Overview</button>
         <button onClick={(e) => { if (execEnabled) { fireBoltFromEvent(e); setTab("execution"); } }} style={tabStyle("execution", execEnabled)}>Execution</button>
         {planEnabled && (
@@ -119,7 +137,15 @@ export default function TicketDetailHeader({
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
         <button onClick={(e) => { if (resultEnabled) { fireBoltFromEvent(e); setTab("result"); } }} style={tabStyle("result", resultEnabled)}>Result</button>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("ask"); }} style={tabStyle("ask", true)}>Ask Claude</button>
+        </div>
         <div style={{ flex: 1 }} />
+        {/* The run controls belong to the two tabs about the run itself:
+            Overview, where the ticket is read and the decision to start one is
+            made, and Execution, where the same button is "Running… (cancel)"
+            and the log you are watching is the reason to press it. On the rest
+            they were a row of chrome above content that has nothing to do with
+            a run — and on a phone that row costs a third of the fold. */}
+        {(tab === "overview" || tab === "execution") && (
         <div className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
             {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
@@ -134,8 +160,44 @@ export default function TicketDetailHeader({
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// The phone's whole ticket-link affordance: one icon that puts the URL on the
+// clipboard. No caret, no label — the desktop chip's `OpenTicketButton` covers
+// the rest, and there is no room for it beside a status pill at 390px.
+function CopyTicketLinkButton({ url }: { url: string }) {
+  const { fireBoltFromEvent } = useBoltsContext();
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      type="button"
+      aria-label={copied ? "Ticket link copied" : "Copy ticket link"}
+      title="Copy ticket link"
+      onClick={(e) => {
+        fireBoltFromEvent(e);
+        void navigator.clipboard.writeText(url).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto",
+        width: "32px", height: "32px", cursor: "pointer",
+        color: copied ? COLORS.success : COLORS.indigo,
+        ...ringBorder({ fill: "#1A1E33", ring: COLORS.indigo, highlight: "#d9defa", duration: 3, cornerPx: 7 }),
+      }}
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      )}
+    </button>
   );
 }
 

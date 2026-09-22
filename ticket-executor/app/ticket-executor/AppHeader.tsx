@@ -78,7 +78,10 @@ export default function AppHeader({
           <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} currentName={currentSprint} onSelect={onSprintChange} />
         )}
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
+        {/* A read-only counter, and the first thing to go when the toolbar has
+            to wrap: on a phone it took a whole row to say what the ticket rows
+            already show. */}
+        <div className="te-mobile-hide" style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
           <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
         </div>
       </PageToolbar>

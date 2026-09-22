@@ -126,7 +126,7 @@ export default function AskTab({
           {resuming && <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, letterSpacing: ".08em" }}>SESSION</span>}
           <span style={statusStyle}>{statusLabel}</span>
         </div>
-        <div ref={logRef} className="te-scroll" style={{ position: "relative", zIndex: 1, height: "420px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.75 }}>
+        <div ref={logRef} className="te-scroll te-ask-log" style={{ position: "relative", zIndex: 1, height: "420px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.75 }}>
           {logLines.length === 0 && <div style={{ color: "#5B6273" }}>Ask anything. It runs on the machine hosting this app, in {rootRepo}.</div>}
           {logLines.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: "12px" }}>
@@ -173,6 +173,7 @@ export default function AskTab({
           onChange={(e) => changePrompt(e.target.value)}
           onKeyDown={onKeyDown}
           rows={3}
+          className="te-ask-input"
           placeholder="Ask Claude to do something in this repo — or type / for a skill"
           aria-label="Prompt for Claude"
           style={{

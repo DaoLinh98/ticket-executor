@@ -23,6 +23,7 @@ const defaultLeading = (
 );
 export default function SprintPicker({
   label,
+  shortLabel = "",
   options,
   value,
   onSelect,
@@ -31,6 +32,10 @@ export default function SprintPicker({
   align = "left",
 }: {
   label: string;
+  /** What the chip says below the responsive breakpoint, when the full name
+   *  would not fit. Rendered alongside `label`; which of the two is visible is
+   *  CSS, so nothing guesses the viewport at hydration. */
+  shortLabel?: string;
   options: IterationOption[];
   value: string;
   onSelect: (name: string, e: { clientX: number; clientY: number }) => void;
@@ -77,6 +82,9 @@ export default function SprintPicker({
       >
         {leading}
         <span className="te-picker-label" style={{ fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
+        {shortLabel && (
+          <span className="te-picker-short" style={{ display: "none", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".04em", color: "#C7CCD8", whiteSpace: "nowrap" }}>{shortLabel}</span>
+        )}
         {hasOptions && (
           <svg
             width="12"

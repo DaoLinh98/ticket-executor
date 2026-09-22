@@ -199,7 +199,7 @@ test("an unrecognised scheduler outcome is dropped rather than guessed at", () =
 
 // ---- ordering ----
 
-test("actions sort ahead of info, and newest first within each", () => {
+test("newest first, whatever the severity", () => {
   const list = sortNotifications([
     ...fromRunEvents([
       { ticketId: "1", runId: "r1", state: "succeeded", at: "2026-09-06T12:00:00Z" },
@@ -209,7 +209,7 @@ test("actions sort ahead of info, and newest first within each", () => {
   ]);
   assert.deepEqual(
     list.map((n) => n.kind),
-    ["run.failed", "scheduler.released", "run.succeeded"]
+    ["scheduler.released", "run.succeeded", "run.failed"]
   );
 });
 

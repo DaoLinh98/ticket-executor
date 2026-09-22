@@ -13,7 +13,7 @@ type NavItem = { href: string; label: string; icon: ReactNode };
 
 const NAV: NavItem[] = [
   {
-    href: "/",
+    href: "/home",
     label: "Home",
     icon: <path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" />,
   },
@@ -112,7 +112,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
   useEffect(() => { setNavOpen(false); }, [pathname, setNavOpen]);
 
   const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
+    pathname === href || pathname.startsWith(href + "/");
 
   return (
     <>

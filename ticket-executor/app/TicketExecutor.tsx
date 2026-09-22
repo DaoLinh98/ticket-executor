@@ -546,6 +546,10 @@ export default function TicketExecutor() {
     if (!routeTicket) return;
     routeTicketRef.current = routeTicket;
     setSelectedId(routeTicket);
+    // A notification names one ticket, so the phone goes to it. Landing on the
+    // list with the row merely selected behind it is the same as not having
+    // followed the notification at all.
+    setMobilePane("detail");
     if (ROUTE_TABS.includes(routeTab as TabId)) setTab(routeTab as TabId);
     void ensureTicket(routeTicket);
   }, [routeTicket, routeTab, routeAt, ensureTicket]);

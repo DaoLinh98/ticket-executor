@@ -302,6 +302,15 @@ button:disabled{cursor:not-allowed;}
      390px viewport once the hamburger and the bell are in the row. */
   .te-page-kicker { display: none !important; }
 
+  /* The identity block is a label, not the page. At 34px + 20px type it ate a
+     third of a 390px header and pushed the bell against the edge. */
+  .te-page-tile { width: 26px !important; height: 26px !important; }
+  .te-page-tile svg { width: 13px; height: 13px; }
+  .te-page-title { font-size: 16px !important; }
+
+  /* Controls that are read-only or duplicated elsewhere give up their space. */
+  .te-mobile-hide { display: none !important; }
+
   /* The connected organization stays in the header — it is the only place it
      can be switched — but its name truncates instead of pushing the page title
      out. Pickers on the toolbar are left alone: that strip scrolls, so a full
@@ -312,6 +321,22 @@ button:disabled{cursor:not-allowed;}
     text-overflow: ellipsis;
     display: block;
   }
+
+  /* Neither the page title nor the organization chip has to give way, because
+     the chip stops carrying a name it cannot show. `orgInitials()` renders the
+     capitals beside the full label and this swaps which one is visible, so the
+     button is ~72px wide whatever the organization is called and the title is
+     never the thing that shrinks. The full names are in the dropdown.
+
+     NOTE: no `overflow: hidden` anywhere on this chain — the dropdown panel is
+     absolutely positioned inside it and an overflow ancestor clips it away,
+     which looks exactly like a button that does not respond to a tap. */
+  .te-page-heading { flex: 0 0 auto !important; }
+  .te-org-badge { flex: 0 0 auto !important; }
+  .te-org-badge > div { margin-left: 4px !important; }
+  .te-org-badge button { padding: 0 9px !important; gap: 6px !important; }
+  .te-org-badge .te-picker-label { display: none !important; }
+  .te-org-badge .te-picker-short { display: block !important; }
 
   /* The bell sits mid-header, so a panel anchored to it with `right: 0` runs
      off the LEFT edge of a 390px viewport — 372px of panel cannot hang from an
@@ -326,7 +351,10 @@ button:disabled{cursor:not-allowed;}
     left: 12px !important;
     right: 12px !important;
     width: auto !important;
-    max-height: calc(var(--te-app-h) - 100px - env(safe-area-inset-top)) !important;
+    /* Half the screen, not "as tall as the list happens to be". Twenty unread
+       rows used to cover the whole phone; the panel scrolls inside itself
+       instead — `dropdownPanelStyle` already sets `overflow-y: auto`. */
+    max-height: min(50vh, calc(var(--te-app-h) - 100px - env(safe-area-inset-top))) !important;
   }
 
   /* Six settings tabs in 362px: the row scrolls rather than stacking into a
@@ -386,6 +414,53 @@ button:disabled{cursor:not-allowed;}
   }
   .te-tabbar-actions { margin-left: auto; }
   .te-back-btn { display: inline-flex !important; }
+
+  /* Seven tabs at desktop padding wrapped onto three rows and took a third of
+     the screen before the tab's own content started. They scroll sideways on
+     one row instead — safe because a tab opens no dropdown — at a tighter
+     padding and a smaller step, with 40px of height keeping the tap target.
+     The run buttons stay on their own row under the strip, where they cannot
+     be scrolled out of reach. */
+  .te-tabbar-tabs {
+    display: flex !important;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .te-tabbar-tabs::-webkit-scrollbar { display: none; }
+  .te-tabbar-tabs > * { flex: 0 0 auto; }
+  .te-tabbar-tabs > button {
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+    font-size: 13px !important;
+    min-height: 40px;
+  }
+
+  /* Open Ticket rides up into the id/type/status row, where there is room left
+     over, instead of costing the meta row a line of its own. */
+  .te-open-ticket-mobile { display: inline-flex !important; }
+
+  /* ---- Ask Claude ----------------------------------------------------- */
+  /* A fixed 420px transcript plus a 3-row prompt is taller than the viewport,
+     so the box you type into was below the fold from the first reply onwards.
+     The transcript takes a share of the screen and scrolls; the prompt stays
+     on it. */
+  .te-ask-log { height: min(42vh, 320px) !important; }
+  .te-ask-input {
+    min-height: 56px !important;
+    max-height: 25vh;
+    /* Overrides the 16px anti-zoom rule above for this one field. 16px of
+       monospace is far wider than 16px of body text, so a pasted ticket URL
+       wrapped every twenty characters and filled the box. This matches the
+       transcript it sits under (FONT.base). The cost is that iOS zooms the
+       page when the field takes focus. */
+    font-size: 14px !important;
+    line-height: 1.45 !important;
+  }
+  .te-ask-input::placeholder { font-size: 12.5px; }
 
   /* ---- modals --------------------------------------------------------- */
   .te-modal-shell {
