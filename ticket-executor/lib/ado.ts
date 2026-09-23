@@ -1,4 +1,5 @@
-import type { Ticket, TicketComment, TicketActivity, ReviewData, ReviewComment, PullRequestOverview, PullRequestBrief, CommitSummary, CommitFile } from "./types";
+import { REACTION_KINDS } from "./types";
+import type { Ticket, TicketComment, TicketReaction, ReactionKind, TicketActivity, ReviewData, ReviewComment, PullRequestOverview, PullRequestBrief, CommitSummary, CommitFile } from "./types";
 import { isSamePerson, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
@@ -775,11 +776,51 @@ export async function resolveWorkItemState(id: string, desired: string): Promise
   return allWords ?? null;
 }
 
+type RawReaction = {
+  type?: string;
+  count?: number;
+  isCurrentUserEngaged?: boolean;
+};
+
 type RawComment = {
+  id?: number;
   text?: string;
   createdBy?: { displayName?: string };
   createdDate?: string;
+  reactions?: RawReaction[];
 };
+
+/** The reaction API version — one preview behind the comments endpoint's. */
+const REACTIONS_API = "api-version=7.0-preview.1";
+
+function mapReaction(r: RawReaction): TicketReaction | null {
+  const kind = REACTION_KINDS.find((k) => k === (r.type ?? "").toLowerCase());
+  if (!kind) return null;
+  return { kind, count: r.count ?? 0, mine: !!r.isCurrentUserEngaged };
+}
+
+function mapComment(c: RawComment): TicketComment {
+  return {
+    id: String(c.id ?? ""),
+    author: c.createdBy?.displayName ?? "Unknown",
+    date: shortDate(c.createdDate),
+    // Kept as rich text for the same reason Description is: a discussion
+    // comment is routinely a pasted screenshot, a list or a link, and
+    // flattening it to plain text left an image-only comment as the empty
+    // string — which the filter below then dropped altogether.
+    text: htmlToRich(c.text ?? ""),
+    reactions: (c.reactions ?? []).map(mapReaction).filter((r): r is TicketReaction => r !== null),
+  };
+}
+
+/** Turn what the developer typed into the HTML the work-item comment stores. */
+function plainTextToCommentHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped.replace(/\r?\n/g, "<br>");
+}
 
 /** Format an ISO date as a short "Mon D" label. */
 function shortDate(iso?: string): string {
@@ -817,20 +858,58 @@ export async function getWorkItemComments(id: string): Promise<TicketComment[]> 
     // Comments live behind a preview API version.
     const url = `https://dev.azure.com/${org}/${encodeURIComponent(
       proj
-    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
+    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3&$expand=reactions`;
     const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
     return (data.comments ?? [])
-      .map((c) => ({
-        author: c.createdBy?.displayName ?? "Unknown",
-        date: shortDate(c.createdDate),
-        // Kept as rich text for the same reason Description is: a discussion
-        // comment is routinely a pasted screenshot, a list or a link, and
-        // flattening it to plain text left an image-only comment as the empty
-        // string — which the filter below then dropped altogether.
-        text: htmlToRich(c.text ?? ""),
-      }))
+      .map(mapComment)
       .filter((c) => hasContent(c.text));
   });
+}
+
+/**
+ * Post a discussion comment on a work item.
+ *
+ * The comment is written straight to Azure DevOps — this app keeps no local
+ * copy of a discussion, so a post that fails must surface rather than appear to
+ * have landed. The cached comment list is dropped so the next read shows it.
+ */
+export async function addWorkItemComment(id: string, text: string): Promise<TicketComment> {
+  const { org, pat } = await loadCreds();
+  const proj = await workItemProject(org, pat, id);
+  if (!proj) throw new Error(`Work item ${id} could not be read at Azure DevOps.`);
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
+  )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
+  const raw = await adoSend<RawComment>(url, "POST", { text: plainTextToCommentHtml(text) }, "application/json", pat);
+  await invalidateWorkItems(org);
+  return mapComment(raw);
+}
+
+/**
+ * Add or remove one reaction on one comment.
+ *
+ * ADO models a reaction as a member-scoped sub-resource: PUT engages the PAT's
+ * own identity, DELETE disengages it, and either way the response carries the
+ * reaction's new count — which is what the caller renders, rather than
+ * incrementing its own copy and drifting from what everyone else sees.
+ */
+export async function setWorkItemCommentReaction(
+  id: string,
+  commentId: string,
+  kind: ReactionKind,
+  on: boolean
+): Promise<TicketReaction> {
+  const { org, pat } = await loadCreds();
+  const proj = await workItemProject(org, pat, id);
+  if (!proj) throw new Error(`Work item ${id} could not be read at Azure DevOps.`);
+  const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+    proj
+  )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments/${encodeURIComponent(
+    commentId
+  )}/reactions/${kind}?${REACTIONS_API}`;
+  const raw = await adoSend<RawReaction>(url, on ? "PUT" : "DELETE", {}, "application/json", pat);
+  await invalidateWorkItems(org);
+  return mapReaction(raw) ?? { kind, count: raw.count ?? 0, mine: on };
 }
 
 // ---- Pull request review (Resolve Review tab) ----

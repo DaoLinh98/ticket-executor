@@ -4,12 +4,16 @@ import type { CSSProperties, MouseEvent } from "react";
 import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
-import type { Ticket, TicketComment } from "@/lib/types";
+import { REACTION_KINDS, type ReactionKind, type Ticket, type TicketComment } from "@/lib/types";
 import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, initials, runDot, sectionCaption, tintedCard } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
 import type { Action, OverrideField, RunSummary } from "../types";
 import LoadingRing from "../LoadingRing";
+
+// The two reactions this app offers, and how they read on the page.
+const REACTION_GLYPH: Record<ReactionKind, string> = { like: "👍", heart: "❤️" };
+const REACTION_LABEL: Record<ReactionKind, string> = { like: "Like", heart: "Love" };
 
 type Props = {
   ticket: Ticket;
@@ -19,6 +23,13 @@ type Props = {
   translations: Record<string, string>;
   translating: Record<string, boolean>;
   onTranslateComment: (key: string, html: string) => void;
+  /** Reaction writes in flight, keyed `<commentId>:<kind>`. */
+  reacting: Record<string, boolean>;
+  posting: boolean;
+  onToggleReaction: (commentId: string, kind: ReactionKind, on: boolean) => void;
+  draft: string;
+  onDraftChange: (text: string) => void;
+  onPostComment: () => void;
   history: RunSummary[];
   onOpenRun: (ticketId: string, execId: string, e?: MouseEvent) => void;
   // resolved per-ticket config (override ?? default) + its editors
@@ -59,7 +70,9 @@ const sectionHeading: CSSProperties = {
 // Ticket detail: description, acceptance criteria, discussion, the per-run
 // configuration grid, the command preview, past runs and the CTA banner.
 export default function OverviewTab({
-  ticket: t, comments, translations, translating, onTranslateComment, history, onOpenRun,
+  ticket: t, comments, translations, translating, onTranslateComment,
+  reacting, posting, onToggleReaction, draft, onDraftChange, onPostComment,
+  history, onOpenRun,
   rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
@@ -97,8 +110,7 @@ export default function OverviewTab({
           </div>
         </section>
       )}
-      {comments.length > 0 && (
-        <section>
+      <section>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             {comments.map((cm, i) => {
               const key = `${t.id}:${i}`;
@@ -113,6 +125,28 @@ export default function OverviewTab({
                     <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
                   </div>
                   <div style={{ marginTop: "5px" }}><RichText html={cm.text} /></div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap", marginTop: "9px" }}>
+                  {/* A reaction is written straight to Azure DevOps, so the count
+                      shown is everybody's, not this page's. */}
+                  {REACTION_KINDS.map((kind) => {
+                    const reaction = cm.reactions.find((r) => r.kind === kind);
+                    const mine = !!reaction?.mine;
+                    const count = reaction?.count ?? 0;
+                    const pending = !!reacting[`${cm.id}:${kind}`];
+                    return (
+                      <button
+                        key={kind}
+                        onClick={() => onToggleReaction(cm.id, kind, !mine)}
+                        disabled={pending}
+                        aria-pressed={mine}
+                        title={mine ? `Remove your ${REACTION_LABEL[kind].toLowerCase()}` : REACTION_LABEL[kind]}
+                        style={{ ...ctaButtonStyle("ghost", { height: "26px", cornerPx: 6 }), fontSize: FONT.xs, color: mine ? COLORS.accent : COLORS.textDim, opacity: pending ? 0.6 : 1, cursor: pending ? "default" : "pointer" }}
+                      >
+                        <span aria-hidden style={{ fontSize: FONT.sm }}>{REACTION_GLYPH[kind]}</span>
+                        {count > 0 && count}
+                      </button>
+                    );
+                  })}
                   {/* The original is never replaced: a translation is a second
                       reading of somebody's words, and losing what they actually
                       wrote is how a misreading becomes the record. */}
@@ -120,7 +154,7 @@ export default function OverviewTab({
                     onClick={() => onTranslateComment(key, cm.text)}
                     disabled={busy}
                     title={vi ? "Hide the Vietnamese translation" : "Translate this comment into Vietnamese"}
-                    style={{ ...ctaButtonStyle("ghost", { height: "26px", cornerPx: 6 }), marginTop: "9px", fontSize: FONT.xs, color: vi ? COLORS.accent : COLORS.textDim, opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
+                    style={{ ...ctaButtonStyle("ghost", { height: "26px", cornerPx: 6 }), fontSize: FONT.xs, color: vi ? COLORS.accent : COLORS.textDim, opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
                   >
                     {busy ? <LoadingRing size={12} /> : (
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -130,6 +164,7 @@ export default function OverviewTab({
                     )}
                     {vi ? "Hide translation" : "Translate to Vietnamese"}
                   </button>
+                  </div>
                   {vi && (
                     <div style={{ marginTop: "9px", paddingTop: "9px", borderTop: `1px solid ${COLORS.borderSubtle}` }}>
                       <div style={{ ...sectionCaption(), marginBottom: "4px" }}>VIETNAMESE</div>
@@ -143,9 +178,37 @@ export default function OverviewTab({
               </div>
               );
             })}
+          {/* The composer posts to the tracker — there is no local draft of a
+              discussion, so what is sent is what everyone else reads. */}
+          <div style={{ ...card({ padding: "11px 14px", border: COLORS.borderSubtle }), display: "flex", flexDirection: "column", gap: "9px" }}>
+            <div style={sectionCaption()}>ADD A COMMENT</div>
+            <textarea
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              rows={3}
+              placeholder="Write a comment — it is posted to the ticket"
+              aria-label="New comment"
+              style={{
+                width: "100%", resize: "vertical", minHeight: "72px", padding: "10px 12px",
+                borderRadius: "9px", border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
+                color: COLORS.text, fontSize: FONT.md, lineHeight: 1.6, outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: "120px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                Posted as the identity behind the connected personal access token.
+              </span>
+              <button
+                onClick={onPostComment}
+                disabled={posting || !draft.trim()}
+                style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 6 }), opacity: posting || !draft.trim() ? 0.55 : 1, cursor: posting || !draft.trim() ? "default" : "pointer" }}
+              >
+                {posting ? "Posting…" : "Comment"}
+              </button>
+            </div>
           </div>
-        </section>
-      )}
+          </div>
+      </section>
       <section className="te-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
         <div style={{ ...fieldCard, ...(rootRepoMissing ? { border: `1px solid ${COLORS.warning}` } : null) }}>
           <div style={fieldLabel}>

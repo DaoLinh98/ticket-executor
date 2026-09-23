@@ -40,10 +40,24 @@ export type Ticket = {
   boardColumn?: string;
 };
 
+// The reactions this app offers. Azure DevOps stores six kinds; a developer
+// reading a ticket wants to acknowledge a comment, not grade it, so only the
+// two affirmative ones are surfaced.
+export const REACTION_KINDS = ["like", "heart"] as const;
+export type ReactionKind = (typeof REACTION_KINDS)[number];
+
+export type TicketReaction = {
+  kind: ReactionKind;
+  count: number;
+  mine: boolean; // the PAT owner is one of the engaged users
+};
+
 export type TicketComment = {
+  id: string; // the provider's comment id — what a reaction write addresses
   author: string;
   date: string; // short human date, e.g. "Jul 2"
   text: string; // sanitized HTML, like Ticket.description — render with RichText
+  reactions: TicketReaction[];
 };
 
 // Where a run is. This is the whole answer — there is deliberately no separate

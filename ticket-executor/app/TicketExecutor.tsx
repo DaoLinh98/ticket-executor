@@ -31,7 +31,7 @@ import { usePagePrefs } from "./pagePrefs";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
-import type { CommitFile, CommitSummary, FileChange, LogLine, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
+import type { CommitFile, CommitSummary, FileChange, LogLine, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
@@ -208,6 +208,13 @@ export default function TicketExecutor() {
   const [history, setHistory] = useState<Record<string, RunSummary[]>>({});
   const [diffFile, setDiffFile] = useState<FileChange | null>(null);
   const [comments, setComments] = useState<Record<string, TicketComment[]>>({});
+  // In-flight discussion writes, so a button cannot be double-fired. Reactions
+  // are keyed `<commentId>:<kind>`; posting is one composer at a time.
+  const [reacting, setReacting] = useState<Record<string, boolean>>({});
+  const [postingComment, setPostingComment] = useState(false);
+  // The composer's text, per ticket. It lives here rather than in the tab so
+  // switching tickets and coming back does not silently discard what was typed.
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   // Vietnamese translations of individual comments, keyed `<ticketId>:<index>`.
   // Held here rather than in OverviewTab because the container owns fetching,
   // and kept in memory rather than persisted: the source lives in the provider
@@ -1703,6 +1710,72 @@ export default function TicketExecutor() {
     }
   }, [translating, translations, showToast]);
 
+  // ---- discussion writes (both go straight to the provider) ----
+  // The provider owns the count, so a reaction re-renders from what the write
+  // answered rather than from an optimistic guess — two people reacting at once
+  // would otherwise leave this page showing a number nobody else sees.
+  const toggleReaction = useCallback(async (ticketId: string, commentId: string, kind: ReactionKind, on: boolean) => {
+    const key = `${commentId}:${kind}`;
+    setReacting((r) => ({ ...r, [key]: true }));
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/comments/${commentId}/reactions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: settings.provider, kind, on }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data?.reaction) {
+        showToast(data?.error || "The reaction could not be saved.", 7000, "error");
+        return;
+      }
+      const reaction = data.reaction as TicketComment["reactions"][number];
+      setComments((c) => ({
+        ...c,
+        [ticketId]: (c[ticketId] ?? []).map((cm) =>
+          cm.id !== commentId
+            ? cm
+            : {
+                ...cm,
+                reactions: [...cm.reactions.filter((x) => x.kind !== kind), reaction].filter((x) => x.count > 0),
+              }
+        ),
+      }));
+    } catch {
+      showToast("The reaction could not be saved.", 7000, "error");
+    } finally {
+      setReacting((r) => {
+        const next = { ...r };
+        delete next[key];
+        return next;
+      });
+    }
+  }, [settings.provider, showToast]);
+
+  const postComment = useCallback(async (ticketId: string): Promise<void> => {
+    const body = (commentDrafts[ticketId] ?? "").trim();
+    if (!body) return;
+    setPostingComment(true);
+    try {
+      const r = await fetch(`/api/tickets/${ticketId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: settings.provider, text: body }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data?.comment) {
+        showToast(data?.error || "The comment could not be posted.", 8000, "error");
+        return;
+      }
+      setComments((c) => ({ ...c, [ticketId]: [...(c[ticketId] ?? []), data.comment as TicketComment] }));
+      setCommentDrafts((d) => ({ ...d, [ticketId]: "" }));
+      showToast("Comment posted to the ticket.");
+    } catch {
+      showToast("The comment could not be posted.", 8000, "error");
+    } finally {
+      setPostingComment(false);
+    }
+  }, [commentDrafts, settings.provider, showToast]);
+
   const selectTicket = (id: string, e?: MouseEvent) => {
     fireBoltFromEvent(e);
     const ex = execs[id];
@@ -2106,6 +2179,12 @@ export default function TicketExecutor() {
                     translations={translations}
                     translating={translating}
                     onTranslateComment={translateComment}
+                    reacting={reacting}
+                    posting={postingComment}
+                    onToggleReaction={(commentId, kind, on) => toggleReaction(t.id, commentId, kind, on)}
+                    draft={commentDrafts[t.id] ?? ""}
+                    onDraftChange={(v) => setCommentDrafts((d) => ({ ...d, [t.id]: v }))}
+                    onPostComment={() => postComment(t.id)}
                     history={history[t.id] ?? []}
                     onOpenRun={openRun}
                     rootRepo={getRootRepo(t)}

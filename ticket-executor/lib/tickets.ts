@@ -1,6 +1,6 @@
-import type { CommitFile, CommitSummary, PullRequestBrief, Ticket, TicketActivity, TicketComment, ReviewData, ReviewSummaryEntry } from "./types";
+import type { CommitFile, CommitSummary, PullRequestBrief, ReactionKind, Ticket, TicketActivity, TicketComment, TicketReaction, ReviewData, ReviewSummaryEntry } from "./types";
 import {
-  adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
   type ProjectInfo,
@@ -252,6 +252,29 @@ export async function loadTicketDetail(
 export async function loadTicketComments(provider: ProviderId, id: string): Promise<TicketComment[]> {
   if (provider === "azure-devops") return getWorkItemComments(id);
   return [];
+}
+
+// Post a comment back to the provider. Unlike a read, an unwired provider
+// throws: a discussion that silently went nowhere is worse than an error.
+export async function postTicketComment(
+  provider: ProviderId,
+  id: string,
+  text: string
+): Promise<TicketComment> {
+  if (provider === "azure-devops") return addWorkItemComment(id, text);
+  throw new Error("Commenting is only wired for Azure DevOps.");
+}
+
+// Engage or disengage the connected identity's reaction on one comment.
+export async function setTicketCommentReaction(
+  provider: ProviderId,
+  id: string,
+  commentId: string,
+  kind: ReactionKind,
+  on: boolean
+): Promise<TicketReaction> {
+  if (provider === "azure-devops") return setWorkItemCommentReaction(id, commentId, kind, on);
+  throw new Error("Reactions are only wired for Azure DevOps.");
 }
 
 export type SprintLoadResult = {
