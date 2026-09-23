@@ -130,6 +130,63 @@ export async function cached<T>(key: string, ttlSeconds: number, load: () => Pro
   return run;
 }
 
+type Stamped<T> = { at: number; value: T };
+
+/**
+ * `cached()` with a stale window: the entry is fresh for `freshSeconds` and kept
+ * for `staleSeconds` more. With `serveStale`, a stale hit is returned at once
+ * (`stale: true`) while one background load refreshes it; without it a stale
+ * entry is a miss. Keys written here must only be read here.
+ */
+export async function cachedStale<T>(
+  key: string,
+  freshSeconds: number,
+  staleSeconds: number,
+  serveStale: boolean,
+  load: () => Promise<T>
+): Promise<{ value: T; stale: boolean }> {
+  const pending = inflight.get(key);
+  if (pending) return { value: (await pending) as T, stale: false };
+  const ttl = freshSeconds + staleSeconds;
+  const c = redis();
+  if (c) {
+    try {
+      const hit = await c.get(key);
+      const entry = hit === null ? null : (JSON.parse(hit) as Stamped<T>);
+      if (entry && typeof entry.at === "number") {
+        if (Date.now() - entry.at < freshSeconds * 1000) return { value: entry.value, stale: false };
+        if (serveStale) {
+          refreshStamped(key, ttl, load).catch(() => {});
+          return { value: entry.value, stale: true };
+        }
+      }
+    } catch {
+      /* unreachable cache is a miss */
+    }
+  }
+  return { value: await refreshStamped(key, ttl, load), stale: false };
+}
+
+function refreshStamped<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {
+  const existing = inflight.get(key);
+  if (existing) return existing as Promise<T>;
+  const run = (async () => {
+    const value = await load();
+    const c = redis();
+    if (c) {
+      try {
+        await c.set(key, JSON.stringify({ at: Date.now(), value } satisfies Stamped<T>), "EX", ttl);
+      } catch {
+        /* the answer is already computed; failing to store it changes nothing */
+      }
+    }
+    return value;
+  })();
+  inflight.set(key, run);
+  run.finally(() => inflight.delete(key)).catch(() => {});
+  return run;
+}
+
 /**
  * Drop every key under `prefix`. Called when the active organization changes:
  * the cached answers describe the organization the app is no longer acting as.

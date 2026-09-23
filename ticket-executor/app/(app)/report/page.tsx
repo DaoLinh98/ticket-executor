@@ -53,6 +53,7 @@ type ReportData = {
   day: string;
   identity?: { email: string; name: string };
   tickets: Ticket[];
+  handedOff?: string[];
   draft: ReportDraftState;
 };
 
@@ -160,6 +161,7 @@ export default function ReportPage() {
   // }, [load, day]);
 
   const tickets = data?.tickets ?? [];
+  const handedOff = new Set(data?.handedOff ?? []);
   // An untouched ticket has no stored entry — its defaults are computed here
   // rather than written into the draft, so nothing is persisted until something
   // is actually chosen, and a ticket that leaves the sprint leaves no residue.
@@ -210,11 +212,6 @@ export default function ReportPage() {
           aria-label="Reported by"
           style={{ ...fieldInput({ height: "32px" }), width: "clamp(150px, 45vw, 210px)" }}
         />
-        <div style={{ flex: 1 }} />
-        <button onClick={onExport} style={ctaButtonStyle("primary")}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
-          Export
-        </button>
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
@@ -275,6 +272,7 @@ export default function ReportPage() {
                                 `Ticket.project` — that is its *last* segment,
                                 which is a team or a component, not the project. */}
                             {projectOf(t) && <span style={pill({ color: COLORS.textDim, size: "xs" })}>{projectOf(t)}</span>}
+                            {handedOff.has(t.id) && <span style={pill({ color: COLORS.warning, size: "xs" })}>→ {t.assignee || "Unassigned"}</span>}
                           </div>
                         </div>
 
@@ -293,6 +291,7 @@ export default function ReportPage() {
                                 ariaLabel="Progress"
                                 variant="filter"
                                 alwaysGlow
+                                maxHeight="180px"
                               />
                             </div>
                           )}
@@ -308,7 +307,14 @@ export default function ReportPage() {
               </section>
 
               <section style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <span style={sectionCaption()}>Preview</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={sectionCaption()}>Preview</span>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={onExport} style={ctaButtonStyle("primary")}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
+                    Export
+                  </button>
+                </div>
                 <pre style={codeBlock({ padding: "14px 16px" })}>{text}</pre>
                 <span style={{ ...fieldLabel(), fontWeight: 500, color: COLORS.faint }}>
                   Export copies exactly this.

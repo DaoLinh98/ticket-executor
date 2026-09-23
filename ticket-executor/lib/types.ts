@@ -60,6 +60,14 @@ export type TicketComment = {
   reactions: TicketReaction[];
 };
 
+// A person a comment can @mention. `id` is the provider's identity id — what the
+// stored mention points at, so the tracker notifies them.
+export type MentionCandidate = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 // Where a run is. This is the whole answer — there is deliberately no separate
 // phase/planStatus pair to keep consistent with it; which *node* the run sits on
 // carries that, and the node comes from the graph.

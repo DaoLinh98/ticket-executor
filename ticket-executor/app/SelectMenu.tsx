@@ -16,6 +16,7 @@ export default function SelectMenu({
   ariaLabel,
   variant = "field",
   alwaysGlow = false,
+  maxHeight = "240px",
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -28,6 +29,7 @@ export default function SelectMenu({
    *  controls (e.g. the Dashboard's Provider/Project pickers) that should always read
    *  as a live control, unlike the sidebar's optional refinement filters. */
   alwaysGlow?: boolean;
+  maxHeight?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -114,7 +116,7 @@ export default function SelectMenu({
             right: variant === "filter" ? 0 : "-7px",
             zIndex: 30,
             animation: "fadeUp .16s ease-out both",
-            ...dropdownPanelStyle({ maxHeight: "240px" }),
+            ...dropdownPanelStyle({ maxHeight }),
           }}
         >
           {list.map((o) => {

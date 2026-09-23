@@ -1,6 +1,6 @@
-import type { CommitFile, CommitSummary, PullRequestBrief, ReactionKind, Ticket, TicketActivity, TicketComment, TicketReaction, ReviewData, ReviewSummaryEntry } from "./types";
+import type { CommitFile, CommitSummary, MentionCandidate, PullRequestBrief, ReactionKind, Ticket, TicketActivity, TicketComment, TicketReaction, ReviewData, ReviewSummaryEntry } from "./types";
 import {
-  adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
+  adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, searchIdentities, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
   type ProjectInfo,
@@ -23,6 +23,8 @@ export type TicketLoadResult = {
   /** The provider had more to give than the view's cap. Reported so a capped
    *  backlog or board does not read as a short one. */
   truncated?: boolean;
+  /** Served from an expired cache entry while a refresh runs; the caller re-asks. */
+  stale?: boolean;
 };
 
 // Dispatch ticket loading by provider. Azure DevOps is fully wired; the other
@@ -32,7 +34,8 @@ export async function loadTickets(
   provider: ProviderId,
   project?: string,
   sprintOverride?: string,
-  scope: TicketScope = "sprint"
+  scope: TicketScope = "sprint",
+  serveStale = false
 ): Promise<TicketLoadResult> {
   switch (provider) {
     case "azure-devops": {
@@ -51,8 +54,8 @@ export async function loadTickets(
       // query (`getScopedTickets`) — none of them is a filter this side could
       // apply to a sprint fetch, because a backlog item and most of a board sit
       // outside the iteration the sprint query is bounded by.
-      const { tickets, sprintName, truncated } = await getScopedTickets(project, scope, sprintOverride);
-      return { tickets, sprint: sprintName, connected: true, truncated };
+      const { tickets, sprintName, truncated, stale } = await getScopedTickets(project, scope, sprintOverride, serveStale);
+      return { tickets, sprint: sprintName, connected: true, truncated, stale };
     }
     case "github": {
       const creds = await githubCreds();
@@ -165,7 +168,8 @@ export async function loadMySprintTickets(
  */
 export async function loadMyOpenTickets(
   provider: ProviderId,
-  identity: DevIdentity
+  identity: DevIdentity,
+  since: string
 ): Promise<TicketLoadResult> {
   if (!hasIdentity(identity))
     return { tickets: [], sprint: "", connected: true, truncated: false, notice: "" };
@@ -178,7 +182,7 @@ export async function loadMyOpenTickets(
       notice: "Reporting across all projects is available for Azure DevOps only.",
     };
   try {
-    const found = await getMyOpenWorkItemsAnyProject(identity);
+    const found = await getMyOpenWorkItemsAnyProject(identity, since);
     return { tickets: found.tickets, sprint: "", connected: true, truncated: found.truncated, notice: "" };
   } catch (err) {
     return {
@@ -259,10 +263,17 @@ export async function loadTicketComments(provider: ProviderId, id: string): Prom
 export async function postTicketComment(
   provider: ProviderId,
   id: string,
-  text: string
+  text: string,
+  mentions: MentionCandidate[] = []
 ): Promise<TicketComment> {
-  if (provider === "azure-devops") return addWorkItemComment(id, text);
+  if (provider === "azure-devops") return addWorkItemComment(id, text, mentions);
   throw new Error("Commenting is only wired for Azure DevOps.");
+}
+
+// People a comment can @mention. Unwired providers offer nobody.
+export async function searchMentionCandidates(provider: ProviderId, query: string): Promise<MentionCandidate[]> {
+  if (provider === "azure-devops") return searchIdentities(query);
+  return [];
 }
 
 // Engage or disengage the connected identity's reaction on one comment.

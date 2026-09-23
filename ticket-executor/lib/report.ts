@@ -24,6 +24,8 @@ export const PROGRESS_OPTIONS = [
   "Code Review",
   "In QA",
   "Done",
+  "Review ticket",
+  "Investigate ticket",
 ] as const;
 
 export type Progress = (typeof PROGRESS_OPTIONS)[number];

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { hasIdentity, mineOnly } from "@/lib/identity";
+import { hasIdentity, isMine } from "@/lib/identity";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { emptyDraft, type ReportDraftState } from "@/lib/report";
 import { loadDraft, saveDraft } from "@/lib/reportDraft";
@@ -38,7 +38,10 @@ export async function GET(req: Request) {
       });
     }
 
-    const loaded = await loadMyOpenTickets(provider, identity);
+    const loaded = await loadMyOpenTickets(provider, identity, day);
+    const deliverables = deliverablesOnly(loaded.tickets, provider);
+    const mine = deliverables.filter((t) => isMine(t, identity));
+    const handedOff = deliverables.filter((t) => !isMine(t, identity));
     const draft = await loadDraft({ provider, org, day }, identity.name);
 
     return NextResponse.json({
@@ -52,7 +55,8 @@ export async function GET(req: Request) {
       // Hierarchy rows (an Epic or a Feature that happens to bear the
       // developer's name) are dropped before the identity filter, which is the
       // order every sprint read in this app uses.
-      tickets: mineOnly(deliverablesOnly(loaded.tickets, provider), identity),
+      tickets: [...mine, ...handedOff],
+      handedOff: handedOff.map((t) => t.id),
       draft,
     });
   } catch (err) {

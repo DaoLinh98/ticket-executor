@@ -31,7 +31,7 @@ import { usePagePrefs } from "./pagePrefs";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
-import type { CommitFile, CommitSummary, FileChange, LogLine, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
+import type { CommitFile, CommitSummary, FileChange, LogLine, MentionCandidate, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
@@ -215,6 +215,7 @@ export default function TicketExecutor() {
   // The composer's text, per ticket. It lives here rather than in the tab so
   // switching tickets and coming back does not silently discard what was typed.
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [commentMentions, setCommentMentions] = useState<Record<string, MentionCandidate[]>>({});
   // Vietnamese translations of individual comments, keyed `<ticketId>:<index>`.
   // Held here rather than in OverviewTab because the container owns fetching,
   // and kept in memory rather than persisted: the source lives in the provider
@@ -307,17 +308,23 @@ export default function TicketExecutor() {
   // The ticket the bell sent us to, while it is still being fetched. A board
   // load landing in that window must not reset the selection to its first row.
   const routeTicketRef = useRef("");
+  const ticketLoadSeqRef = useRef(0);
 
   // ---- data load ----
   // Fetch the ticket list for a given provider/project (and optional sprint override) and refresh the header sprint.
-  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean; scope?: TicketScope; preferTicket?: string }) => {
+  const reloadTickets = useCallback(async (provider: ProviderId, project?: string, sprint?: string, opts?: { notify?: boolean; scope?: TicketScope; preferTicket?: string; background?: boolean }): Promise<void> => {
     // The caller's scope wins over the ref: a switch calls this in the same tick
     // it sets the new scope, and reading state here would load the old view.
     // Everything else — mount, a project switch — means "the view I am on".
     const viewScope = opts?.scope ?? scopeRef.current;
-    setLoading(true);
-    setLoadError("");
-    setTicketsNotice("");
+    const seq = ++ticketLoadSeqRef.current;
+    const isLatest = () => seq === ticketLoadSeqRef.current;
+    let refreshStale = false;
+    if (!opts?.background) {
+      setLoading(true);
+      setLoadError("");
+      setTicketsNotice("");
+    }
     try {
       const qs = new URLSearchParams({ provider, scope: viewScope });
       if (project) qs.set("project", project);
@@ -327,6 +334,8 @@ export default function TicketExecutor() {
       if (sprint && viewScope === "sprint") qs.set("sprint", iterationPathFor(sprintOptionsRef.current, sprint));
       const r = await fetch(`/api/tickets?${qs.toString()}`);
       const data = await r.json();
+      if (!isLatest()) return;
+      if (opts?.background && data.error) return;
       if (data.error) setLoadError(data.error);
       if (data.notice) setTicketsNotice(data.notice);
       else if (data.truncated) setTicketsNotice(`Showing the first ${(data.tickets ?? []).length} work items — this ${SCOPE_LABEL[viewScope].toLowerCase()} has more.`);
@@ -353,13 +362,16 @@ export default function TicketExecutor() {
         else if (data.notice) showToast(data.notice, 8000, "error");
         else showToast(`Loaded ${list.length} ticket${list.length === 1 ? "" : "s"}`, 2600);
       }
+      refreshStale = Boolean(data.stale) && !opts?.background;
     } catch (e) {
+      if (!isLatest() || opts?.background) return;
       const msg = e instanceof Error ? e.message : String(e);
       setLoadError(msg);
       setTickets([]);
       if (opts?.notify) showToast(msg, 8000, "error");
     } finally {
-      setLoading(false);
+      if (isLatest() && !opts?.background) setLoading(false);
+      if (refreshStale) void reloadTickets(provider, project, sprint, { scope: viewScope, background: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showToast is declared later but stable (empty-dep useCallback)
   }, []);
@@ -446,12 +458,14 @@ export default function TicketExecutor() {
   const onSelectProject = async (value: string, e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);
     setSelectedProject(value);
-    const current = await loadSprintOptions(settings.provider, value);
-    reloadTickets(settings.provider, value, current || undefined, { notify: true });
+    await Promise.all([
+      loadSprintOptions(settings.provider, value),
+      reloadTickets(settings.provider, value, undefined, { notify: true }),
+    ]);
   };
 
-  // Settings → projects → sprints → tickets, in that order because each answer
-  // narrows the next. Run on mount and again whenever the header switches
+  // Settings → projects → sprints + tickets. Sprints and tickets run together:
+  // the server resolves the current sprint itself. Run on mount and again whenever the header switches
   // organization: every one of these calls is answered by the provider as the
   // active connection, so the whole screen is that organization's.
   const loadWorkspace = useCallback(async () => {
@@ -482,11 +496,15 @@ export default function TicketExecutor() {
       : "sprint";
     setScope(viewScope);
     scopeRef.current = viewScope;
-    const sprint = await loadSprintOptions(provider, project, remembered.sprint);
-    await reloadTickets(provider, project, viewScope === "sprint" ? sprint || undefined : undefined, {
-      scope: viewScope,
-      preferTicket: remembered.ticket,
-    });
+    const wanted = viewScope === "sprint" ? remembered.sprint || undefined : undefined;
+    sprintOptionsRef.current = [];
+    const [sprint] = await Promise.all([
+      loadSprintOptions(provider, project, remembered.sprint),
+      reloadTickets(provider, project, wanted, { scope: viewScope, preferTicket: remembered.ticket }),
+    ]);
+    if (wanted && sprint !== wanted) {
+      await reloadTickets(provider, project, sprint || undefined, { scope: viewScope, preferTicket: remembered.ticket });
+    }
   }, [loadProjectOptions, loadSprintOptions, reloadTickets]);
 
   // The sprint's plan, for the "Planned" filter and the queue badge.
@@ -1759,22 +1777,41 @@ export default function TicketExecutor() {
       const r = await fetch(`/api/tickets/${ticketId}/comments`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: settings.provider, text: body }),
+        body: JSON.stringify({ provider: settings.provider, text: body, mentions: commentMentions[ticketId] ?? [] }),
       });
       const data = await r.json();
       if (!r.ok || !data?.comment) {
         showToast(data?.error || "The comment could not be posted.", 8000, "error");
         return;
       }
-      setComments((c) => ({ ...c, [ticketId]: [...(c[ticketId] ?? []), data.comment as TicketComment] }));
       setCommentDrafts((d) => ({ ...d, [ticketId]: "" }));
+      setCommentMentions((m) => ({ ...m, [ticketId]: [] }));
       showToast("Comment posted to the ticket.");
+      let fresh: TicketComment[] | null = null;
+      try {
+        const qs = new URLSearchParams({ provider: settings.provider });
+        const lr = await fetch(`/api/tickets/${ticketId}/comments?${qs.toString()}`);
+        const ld = await lr.json();
+        if (lr.ok && Array.isArray(ld?.comments) && ld.comments.length) fresh = ld.comments;
+      } catch {}
+      setComments((c) => ({ ...c, [ticketId]: fresh ?? [data.comment as TicketComment, ...(c[ticketId] ?? [])] }));
     } catch {
       showToast("The comment could not be posted.", 8000, "error");
     } finally {
       setPostingComment(false);
     }
-  }, [commentDrafts, settings.provider, showToast]);
+  }, [commentDrafts, commentMentions, settings.provider, showToast]);
+
+  const searchMentions = useCallback(async (q: string): Promise<MentionCandidate[]> => {
+    try {
+      const qs = new URLSearchParams({ provider: settings.provider, q });
+      const r = await fetch(`/api/mentions?${qs.toString()}`);
+      const data = await r.json();
+      return Array.isArray(data?.people) ? data.people : [];
+    } catch {
+      return [];
+    }
+  }, [settings.provider]);
 
   const selectTicket = (id: string, e?: MouseEvent) => {
     fireBoltFromEvent(e);
@@ -2185,6 +2222,11 @@ export default function TicketExecutor() {
                     draft={commentDrafts[t.id] ?? ""}
                     onDraftChange={(v) => setCommentDrafts((d) => ({ ...d, [t.id]: v }))}
                     onPostComment={() => postComment(t.id)}
+                    onSearchMentions={searchMentions}
+                    onAddMention={(m) => setCommentMentions((all) => {
+                      const list = all[t.id] ?? [];
+                      return list.some((x) => x.id === m.id) ? all : { ...all, [t.id]: [...list, m] };
+                    })}
                     history={history[t.id] ?? []}
                     onOpenRun={openRun}
                     rootRepo={getRootRepo(t)}

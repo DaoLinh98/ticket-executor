@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { loadDeliveryFunnel, normalizeProvider } from "@/lib/tickets";
 import { activeConnection } from "@/lib/providerCredentials";
+import { cached, DB_CACHE_PREFIX } from "@/lib/redis";
+
+const FUNNEL_TTL = 60;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,19 +29,24 @@ export async function GET(req: Request) {
     // the query will run under, and only its runs are the history on screen.
     const active = await activeConnection(provider);
 
-    const rows = await prisma.run.findMany({
-      where: {
-        NOT: { prUrl: "" },
-        ...(days ? { startedAt: { gte: new Date(Date.now() - days * 86400000) } } : {}),
-        ...(providerParam ? { provider: providerParam } : {}),
-        ...(active?.org ? { org: active.org } : {}),
-        ...(project ? { project } : {}),
-      },
-      orderBy: { startedAt: "desc" },
-      select: { prUrl: true },
+    const key = `${DB_CACHE_PREFIX}funnelPrs:${JSON.stringify([
+      providerParam ?? "", active?.org ?? "", project ?? "", days,
+    ])}`;
+    const prUrls = await cached(key, FUNNEL_TTL, async () => {
+      const rows = await prisma.run.findMany({
+        where: {
+          NOT: { prUrl: "" },
+          ...(days ? { startedAt: { gte: new Date(Date.now() - days * 86400000) } } : {}),
+          ...(providerParam ? { provider: providerParam } : {}),
+          ...(active?.org ? { org: active.org } : {}),
+          ...(project ? { project } : {}),
+        },
+        orderBy: { startedAt: "desc" },
+        select: { prUrl: true },
+      });
+      // One PR can back several runs (a retry reuses it) — count each PR once.
+      return [...new Set(rows.map((r) => r.prUrl))];
     });
-    // One PR can back several runs (a retry reuses it) — count each PR once.
-    const prUrls: string[] = [...new Set(rows.map((r) => r.prUrl))];
 
     return NextResponse.json(await loadDeliveryFunnel(provider, prUrls));
   } catch (err) {

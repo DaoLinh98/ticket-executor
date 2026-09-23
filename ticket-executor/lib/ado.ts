@@ -1,11 +1,11 @@
 import { REACTION_KINDS } from "./types";
-import type { Ticket, TicketComment, TicketReaction, ReactionKind, TicketActivity, ReviewData, ReviewComment, PullRequestOverview, PullRequestBrief, CommitSummary, CommitFile } from "./types";
-import { isSamePerson, type DevIdentity } from "./identity";
+import type { MentionCandidate, Ticket, TicketComment, TicketReaction, ReactionKind, TicketActivity, ReviewData, ReviewComment, PullRequestOverview, PullRequestBrief, CommitSummary, CommitFile } from "./types";
+import { isMine, isSamePerson, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
 import { hasContent, markdownToHtml, sanitizeHtml } from "./richText";
 import type { TicketScope } from "./ticketScope";
-import { cached, invalidatePrefix } from "./redis";
+import { cached, cachedStale, invalidatePrefix } from "./redis";
 
 const API = "api-version=7.0";
 
@@ -31,6 +31,7 @@ const TTL = {
   // `invalidatePullRequests`), so a change the user just made is never served
   // from here. What the TTL bounds is a change made by *somebody else*.
   tickets: 30,
+  ticketsStale: 86_400,
   workItem: 30,
   workItemDetail: 300,
   comments: 60,
@@ -439,13 +440,18 @@ function wiqlFor(project: string, scope: Exclude<TicketScope, "sprint">): string
  *  all three scopes so a field added for one view is present in the others. */
 async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
   const { org, pat, project: proj } = creds;
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) chunks.push(ids.slice(i, i + BATCH_SIZE));
+  const batches = await Promise.all(
+    chunks.map((chunk) =>
+      adoGet<{ value: WorkItemDetail[] }>(
+        `https://dev.azure.com/${org}/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${TICKET_FIELDS}&${API}`,
+        pat
+      )
+    )
+  );
   const tickets: Ticket[] = [];
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const chunk = ids.slice(i, i + BATCH_SIZE);
-    const batchUrl = `https://dev.azure.com/${org}/_apis/wit/workitems?ids=${chunk.join(
-      ","
-    )}&fields=${TICKET_FIELDS}&${API}`;
-    const det = await adoGet<{ value: WorkItemDetail[] }>(batchUrl, pat);
+  for (const det of batches) {
     for (const w of det.value) {
       const f = w.fields;
       const area = (f["System.AreaPath"] as string) ?? "";
@@ -497,12 +503,13 @@ async function fetchWorkItems(creds: Creds, ids: number[]): Promise<Ticket[]> {
 export async function getScopedTickets(
   project: string,
   scope: TicketScope,
-  sprintOverride?: string
-): Promise<{ tickets: Ticket[]; sprintName: string; truncated: boolean }> {
+  sprintOverride?: string,
+  serveStale = false
+): Promise<{ tickets: Ticket[]; sprintName: string; truncated: boolean; stale: boolean }> {
   const creds = await loadCreds(project);
   const { org, pat, project: proj } = creds;
   const key = `${ADO_CACHE_PREFIX}tickets:${org}:scoped:${proj}:${scope}:${sprintOverride ?? ""}`;
-  return cached(key, TTL.tickets, async () => {
+  const { value, stale } = await cachedStale(key, TTL.tickets, TTL.ticketsStale, serveStale, async () => {
     if (scope === "sprint") {
       const { tickets, sprintName } = await getSprintTickets(project, sprintOverride);
       return { tickets, sprintName, truncated: false };
@@ -520,6 +527,7 @@ export async function getScopedTickets(
     // Neither view is an iteration, so there is no sprint name to claim.
     return { tickets: await fetchWorkItems(creds, ids), sprintName: "", truncated: found.length > ids.length };
   });
+  return { ...value, stale };
 }
 
 /**
@@ -592,19 +600,22 @@ export async function getMyOpenWorkItems(
  * `System.TeamProject` clause, spans every project the token can see.
  */
 export async function getMyOpenWorkItemsAnyProject(
-  identity: DevIdentity
+  identity: DevIdentity,
+  since: string
 ): Promise<{ tickets: Ticket[]; truncated: boolean }> {
   const who = [identity.email, identity.name].filter(Boolean);
   if (who.length === 0) return { tickets: [], truncated: false };
 
   const creds = await loadCreds();
   const { org, pat } = creds;
-  const key = `${ADO_CACHE_PREFIX}tickets:${org}:mine:__any__:${who.join("|")}`;
+  const key = `${ADO_CACHE_PREFIX}tickets:${org}:mine:__any__:${since}:${who.join("|")}`;
   return cached(key, TTL.tickets, async () => {
     const query =
       `SELECT [System.Id] FROM WorkItems WHERE ` +
-      `[System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
-      `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")}) ` +
+      `(([System.AssignedTo] IN (${who.map((w) => `'${wiqlQuoted(w)}'`).join(",")}) AND ` +
+      `[System.State] NOT IN (${CLOSED_STATES.map((st) => `'${st}'`).join(",")})) OR ` +
+      `((${who.map((w) => `[System.AssignedTo] EVER '${wiqlQuoted(w)}'`).join(" OR ")}) AND ` +
+      `[System.ChangedDate] >= '${wiqlQuoted(since)}')) ` +
       `ORDER BY [System.Id] DESC`;
 
     const wiqlUrl = `https://dev.azure.com/${org}/_apis/wit/wiql?${API}`;
@@ -617,8 +628,61 @@ export async function getMyOpenWorkItemsAnyProject(
     );
     const found = (res.workItems ?? []).map((w) => w.id);
     const ids = found.slice(0, MAX_TICKETS);
-    return { tickets: await fetchWorkItems(creds, ids), truncated: found.length > ids.length };
+    const tickets = await fetchWorkItems(creds, ids);
+    const touched = await Promise.all(
+      tickets.map((t) =>
+        isMine(t, identity) && !CLOSED_STATES.includes(t.status)
+          ? true
+          : changedByOn(org, pat, t.id, identity, since)
+      )
+    );
+    return { tickets: tickets.filter((_, i) => touched[i]), truncated: found.length > ids.length };
   });
+}
+
+type WorkItemUpdate = {
+  revisedBy?: { uniqueName?: string; displayName?: string };
+  fields?: Record<string, { newValue?: unknown }>;
+};
+
+const HANDED_OFF_WINDOW_DAYS = 5;
+
+async function changedByOn(
+  org: string,
+  pat: string,
+  id: string,
+  identity: DevIdentity,
+  day: string
+): Promise<boolean> {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const from = new Date(`${day}T00:00:00`).getTime();
+  const to = from + DAY_MS;
+  const heldSince = from - HANDED_OFF_WINDOW_DAYS * DAY_MS;
+  const url = `https://dev.azure.com/${org}/_apis/wit/workItems/${encodeURIComponent(id)}/updates?${API}`;
+  const res = await adoGet<{ value?: WorkItemUpdate[] }>(url, pat);
+  let assignedToMe = false;
+  for (const u of res.value ?? []) {
+    const at = Date.parse(String(u.fields?.["System.ChangedDate"]?.newValue ?? ""));
+    if (at >= to) break;
+    if (at >= heldSince && assignedToMe) return true;
+    const assignee = u.fields?.["System.AssignedTo"];
+    if (assignee) assignedToMe = isAssignee(assignee.newValue, identity);
+    if (at < heldSince) continue;
+    if (assignedToMe) return true;
+    if (at < from) continue;
+    if (isSamePerson(u.revisedBy?.uniqueName ?? "", u.revisedBy?.displayName ?? "", identity)) return true;
+  }
+  return assignedToMe;
+}
+
+function isAssignee(value: unknown, identity: DevIdentity): boolean {
+  if (!value) return false;
+  if (typeof value === "string") {
+    const m = value.match(/^(.*?)\s*<([^>]+)>$/);
+    return m ? isSamePerson(m[2], m[1], identity) : isSamePerson(value, value, identity);
+  }
+  const v = value as { uniqueName?: string; displayName?: string };
+  return isSamePerson(v.uniqueName ?? "", v.displayName ?? "", identity);
 }
 
 /** Fetch all tickets in a sprint, mapped to the UI Ticket shape. Defaults to
@@ -785,6 +849,7 @@ type RawReaction = {
 type RawComment = {
   id?: number;
   text?: string;
+  renderedText?: string;
   createdBy?: { displayName?: string };
   createdDate?: string;
   reactions?: RawReaction[];
@@ -808,18 +873,58 @@ function mapComment(c: RawComment): TicketComment {
     // comment is routinely a pasted screenshot, a list or a link, and
     // flattening it to plain text left an image-only comment as the empty
     // string — which the filter below then dropped altogether.
-    text: htmlToRich(c.text ?? ""),
+    text: htmlToRich(c.renderedText || c.text || ""),
     reactions: (c.reactions ?? []).map(mapReaction).filter((r): r is TicketReaction => r !== null),
   };
 }
 
-/** Turn what the developer typed into the HTML the work-item comment stores. */
-function plainTextToCommentHtml(text: string): string {
-  const escaped = text
+function escapeHtml(text: string): string {
+  return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return escaped.replace(/\r?\n/g, "<br>");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Turn what the developer typed into the HTML the work-item comment stores. */
+function plainTextToCommentHtml(text: string, mentions: MentionCandidate[] = []): string {
+  let html = escapeHtml(text);
+  const byName = new Map(mentions.map((m) => [m.name, m]));
+  const longestFirst = [...byName.values()].sort((a, b) => b.name.length - a.name.length);
+  for (const m of longestFirst) {
+    const label = `@${escapeHtml(m.name)}`;
+    const anchor = `<a href="#" data-vss-mention="version:2.0,${escapeHtml(m.id)}">${label}</a>`;
+    html = html.split(label).join(anchor);
+  }
+  return html.replace(/\r?\n/g, "<br>");
+}
+
+type RawPickerIdentity = { localId?: string; displayName?: string; mail?: string; signInAddress?: string };
+
+/** People in the organization whose name or address matches `query`. */
+export async function searchIdentities(query: string): Promise<MentionCandidate[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const { org, pat } = await loadCreds();
+  return cached(`${ADO_CACHE_PREFIX}mentions:${org}:${q.toLowerCase()}`, TTL.identity, async () => {
+    const url = `https://dev.azure.com/${org}/_apis/IdentityPicker/Identities?api-version=7.1-preview.1`;
+    const data = await adoSend<{ results?: { identities?: RawPickerIdentity[] }[] }>(
+      url,
+      "POST",
+      {
+        query: q,
+        identityTypes: ["user"],
+        operationScopes: ["ims", "source"],
+        properties: ["DisplayName", "Mail", "SignInAddress"],
+        options: { MinResults: 5, MaxResults: 10 },
+      },
+      "application/json",
+      pat
+    );
+    return (data.results?.[0]?.identities ?? [])
+      .filter((i) => i.localId && i.displayName)
+      .map((i) => ({ id: i.localId!, name: i.displayName!, email: i.mail || i.signInAddress || "" }));
+  });
 }
 
 /** Format an ISO date as a short "Mon D" label. */
@@ -858,7 +963,7 @@ export async function getWorkItemComments(id: string): Promise<TicketComment[]> 
     // Comments live behind a preview API version.
     const url = `https://dev.azure.com/${org}/${encodeURIComponent(
       proj
-    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3&$expand=reactions`;
+    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3&$expand=reactions,renderedText`;
     const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
     return (data.comments ?? [])
       .map(mapComment)
@@ -873,14 +978,14 @@ export async function getWorkItemComments(id: string): Promise<TicketComment[]> 
  * copy of a discussion, so a post that fails must surface rather than appear to
  * have landed. The cached comment list is dropped so the next read shows it.
  */
-export async function addWorkItemComment(id: string, text: string): Promise<TicketComment> {
+export async function addWorkItemComment(id: string, text: string, mentions: MentionCandidate[] = []): Promise<TicketComment> {
   const { org, pat } = await loadCreds();
   const proj = await workItemProject(org, pat, id);
   if (!proj) throw new Error(`Work item ${id} could not be read at Azure DevOps.`);
   const url = `https://dev.azure.com/${org}/${encodeURIComponent(
     proj
   )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
-  const raw = await adoSend<RawComment>(url, "POST", { text: plainTextToCommentHtml(text) }, "application/json", pat);
+  const raw = await adoSend<RawComment>(url, "POST", { text: plainTextToCommentHtml(text, mentions) }, "application/json", pat);
   await invalidateWorkItems(org);
   return mapComment(raw);
 }
@@ -1542,9 +1647,11 @@ const ACTIVITY_COMMENT_TOP = 10;
  * quiet instead.
  */
 async function authenticatedIdentityId(org: string, pat: string, identity: DevIdentity): Promise<string | null> {
-  const data = await adoGet<{
-    authenticatedUser?: { id?: string; providerDisplayName?: string; properties?: { Account?: { $value?: string } } };
-  }>(`https://dev.azure.com/${org}/_apis/connectionData?api-version=7.0-preview`, pat);
+  const data = await cached(`${ADO_CACHE_PREFIX}connectionData:${org}`, TTL.identity, () =>
+    adoGet<{
+      authenticatedUser?: { id?: string; providerDisplayName?: string; properties?: { Account?: { $value?: string } } };
+    }>(`https://dev.azure.com/${org}/_apis/connectionData?api-version=7.0-preview`, pat)
+  );
   const me = data.authenticatedUser;
   if (!me?.id) return null;
   const account = me.properties?.Account?.$value ?? "";

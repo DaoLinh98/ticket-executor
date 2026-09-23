@@ -1,11 +1,11 @@
 "use client";
 
-import type { CSSProperties, MouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
-import { REACTION_KINDS, type ReactionKind, type Ticket, type TicketComment } from "@/lib/types";
-import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, initials, runDot, sectionCaption, tintedCard } from "@/lib/ui";
+import { REACTION_KINDS, type MentionCandidate, type ReactionKind, type Ticket, type TicketComment } from "@/lib/types";
+import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, dropdownPanelStyle, initials, runDot, sectionCaption, tintedCard } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
 import type { Action, OverrideField, RunSummary } from "../types";
@@ -30,6 +30,8 @@ type Props = {
   draft: string;
   onDraftChange: (text: string) => void;
   onPostComment: () => void;
+  onSearchMentions: (query: string) => Promise<MentionCandidate[]>;
+  onAddMention: (person: MentionCandidate) => void;
   history: RunSummary[];
   onOpenRun: (ticketId: string, execId: string, e?: MouseEvent) => void;
   // resolved per-ticket config (override ?? default) + its editors
@@ -71,7 +73,7 @@ const sectionHeading: CSSProperties = {
 // configuration grid, the command preview, past runs and the CTA banner.
 export default function OverviewTab({
   ticket: t, comments, translations, translating, onTranslateComment,
-  reacting, posting, onToggleReaction, draft, onDraftChange, onPostComment,
+  reacting, posting, onToggleReaction, draft, onDraftChange, onPostComment, onSearchMentions, onAddMention,
   history, onOpenRun,
   rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
@@ -81,6 +83,69 @@ export default function OverviewTab({
   const fieldCard = card({ padding: "9px 11px" });
   // Root Repo has no default — a run can't start without it, so say so on the field.
   const rootRepoMissing = !rootRepo.trim();
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [people, setPeople] = useState<MentionCandidate[]>([]);
+  const [activePerson, setActivePerson] = useState(0);
+  const mentionQuery = mention?.query ?? null;
+  useEffect(() => {
+    if (!mentionQuery) {
+      setPeople([]);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      onSearchMentions(mentionQuery).then((found) => {
+        if (stale) return;
+        setPeople(found);
+        setActivePerson(0);
+      });
+    }, 200);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [mentionQuery, onSearchMentions]);
+
+  const trackMention = (text: string, caret: number) => {
+    const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+    setMention(m ? { start: caret - m[2].length - 1, query: m[2] } : null);
+  };
+
+  const pickPerson = (person: MentionCandidate) => {
+    if (!mention) return;
+    const end = mention.start + 1 + mention.query.length;
+    const inserted = `@${person.name} `;
+    const next = draft.slice(0, mention.start) + inserted + draft.slice(end);
+    onDraftChange(next);
+    onAddMention(person);
+    setMention(null);
+    const caret = mention.start + inserted.length;
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  };
+
+  const onComposerKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!mention || people.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActivePerson((i) => (i + 1) % people.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActivePerson((i) => (i - 1 + people.length) % people.length);
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      pickPerson(people[Math.min(activePerson, people.length - 1)]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setMention(null);
+    }
+  };
+  const showPeople = !!mention && people.length > 0;
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "28px", animation: "fadeUp .4s both" }}>
       {/* Description and Acceptance Criteria are rendered as the tracker's own
@@ -112,6 +177,81 @@ export default function OverviewTab({
       )}
       <section>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* The composer posts to the tracker — there is no local draft of a
+              discussion, so what is sent is what everyone else reads. */}
+          <div style={{ ...card({ padding: "11px 14px", border: COLORS.borderSubtle }), display: "flex", flexDirection: "column", gap: "9px" }}>
+            <div style={sectionCaption()}>ADD A COMMENT</div>
+            <div style={{ position: "relative" }}>
+            <textarea
+              ref={composerRef}
+              value={draft}
+              onChange={(e) => {
+                onDraftChange(e.target.value);
+                trackMention(e.target.value, e.target.selectionStart);
+              }}
+              onKeyDown={onComposerKeyDown}
+              onClick={(e) => trackMention(e.currentTarget.value, e.currentTarget.selectionStart)}
+              onBlur={() => setMention(null)}
+              rows={3}
+              placeholder="Write a comment — type @ to mention someone"
+              role="combobox"
+              aria-expanded={showPeople}
+              aria-autocomplete="list"
+              aria-label="New comment"
+              style={{
+                width: "100%", resize: "vertical", minHeight: "72px", padding: "10px 12px",
+                borderRadius: "9px", border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
+                color: COLORS.text, fontSize: FONT.md, lineHeight: 1.6, outline: "none",
+              }}
+            />
+            {showPeople && (
+              <div
+                role="listbox"
+                className="te-scroll"
+                style={{
+                  position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 30,
+                  ...dropdownPanelStyle({ maxHeight: "240px" }),
+                  animation: "fadeUp .16s ease-out both",
+                }}
+              >
+                {people.map((p, i) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="option"
+                    aria-selected={i === activePerson}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setActivePerson(i)}
+                    onClick={() => pickPerson(p)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "9px", width: "100%", minHeight: "40px",
+                      padding: "6px 9px", borderRadius: "7px", border: "none", cursor: "pointer", textAlign: "left",
+                      background: i === activePerson ? "rgba(251,114,80,.12)" : "transparent",
+                    }}
+                  >
+                    <span style={{ ...avatar(p.name), flex: "0 0 auto", width: "24px", height: "24px", fontSize: FONT.xs }}>{initials(p.name)}</span>
+                    <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <span style={{ fontSize: FONT.md, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      {p.email && <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: "120px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                Posted as the identity behind the connected personal access token.
+              </span>
+              <button
+                onClick={onPostComment}
+                disabled={posting || !draft.trim()}
+                style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 6 }), opacity: posting || !draft.trim() ? 0.55 : 1, cursor: posting || !draft.trim() ? "default" : "pointer" }}
+              >
+                {posting ? "Posting…" : "Comment"}
+              </button>
+            </div>
+          </div>
             {comments.map((cm, i) => {
               const key = `${t.id}:${i}`;
               const vi = translations[key];
@@ -178,35 +318,6 @@ export default function OverviewTab({
               </div>
               );
             })}
-          {/* The composer posts to the tracker — there is no local draft of a
-              discussion, so what is sent is what everyone else reads. */}
-          <div style={{ ...card({ padding: "11px 14px", border: COLORS.borderSubtle }), display: "flex", flexDirection: "column", gap: "9px" }}>
-            <div style={sectionCaption()}>ADD A COMMENT</div>
-            <textarea
-              value={draft}
-              onChange={(e) => onDraftChange(e.target.value)}
-              rows={3}
-              placeholder="Write a comment — it is posted to the ticket"
-              aria-label="New comment"
-              style={{
-                width: "100%", resize: "vertical", minHeight: "72px", padding: "10px 12px",
-                borderRadius: "9px", border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
-                color: COLORS.text, fontSize: FONT.md, lineHeight: 1.6, outline: "none",
-              }}
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <span style={{ flex: 1, minWidth: "120px", fontSize: FONT.sm, color: COLORS.textMuted }}>
-                Posted as the identity behind the connected personal access token.
-              </span>
-              <button
-                onClick={onPostComment}
-                disabled={posting || !draft.trim()}
-                style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 6 }), opacity: posting || !draft.trim() ? 0.55 : 1, cursor: posting || !draft.trim() ? "default" : "pointer" }}
-              >
-                {posting ? "Posting…" : "Comment"}
-              </button>
-            </div>
-          </div>
           </div>
       </section>
       <section className="te-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>

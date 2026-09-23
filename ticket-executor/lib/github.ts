@@ -7,6 +7,17 @@ import type {
   Ticket,
 } from "./types";
 import { markdownToHtml } from "./richText";
+import { cached, invalidatePrefix } from "./redis";
+
+const TTL = {
+  issues: 30,
+  review: 45,
+  commits: 60,
+  commitFiles: 86_400,
+  statusOptions: 3600,
+} as const;
+
+export const GITHUB_CACHE_PREFIX = "gh:";
 
 // Parse "https://github.com/owner/repo" (or ".../owner/repo/...") into owner+repo.
 export function parseRepo(url: string): { owner: string; repo: string } | null {
@@ -184,7 +195,13 @@ export async function getGithubPullRequestReview(
 ): Promise<ReviewData> {
   const ref = parsePrUrl(prUrl);
   if (!ref) return { pr: null, comments: [], unresolvedCount: 0 };
+  return cached(`${GITHUB_CACHE_PREFIX}review:${prUrl}`, TTL.review, () => fetchPullRequestReview(ref, token));
+}
 
+async function fetchPullRequestReview(
+  ref: { owner: string; repo: string; number: number },
+  token: string,
+): Promise<ReviewData> {
   const res = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
@@ -269,12 +286,17 @@ export async function getGithubPullRequestCommits(
 ): Promise<CommitSummary[]> {
   const ref = parsePrUrl(prUrl);
   if (!ref) return [];
-  const res = await fetch(
-    `https://api.github.com/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/commits?per_page=100`,
-    { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-  );
-  if (!res.ok) return [];
-  const data = (await res.json()) as GhCommitListNode[];
+  return cached(`${GITHUB_CACHE_PREFIX}commits:${prUrl}`, TTL.commits, async () => {
+    const res = await fetch(
+      `https://api.github.com/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/commits?per_page=100`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+    );
+    if (!res.ok) throw new Error(`GitHub ${res.status} ${res.statusText}`);
+    return (await res.json()) as GhCommitListNode[];
+  }).then(toCommitSummaries, () => []);
+}
+
+function toCommitSummaries(data: GhCommitListNode[]): CommitSummary[] {
   return data.map((c) => ({
     sha: c.sha,
     shortSha: c.sha.slice(0, 7),
@@ -307,13 +329,19 @@ export async function getGithubCommitFiles(
 ): Promise<CommitFile[]> {
   const ref = parsePrUrl(prUrl);
   if (!ref) return [];
-  const res = await fetch(
-    `https://api.github.com/repos/${ref.owner}/${ref.repo}/commits/${sha}`,
-    { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-  );
-  if (!res.ok) return [];
-  const data = (await res.json()) as { files?: GhCommitFileNode[] };
-  return (data.files ?? []).map((f) => ({
+  return cached(`${GITHUB_CACHE_PREFIX}commitFiles:${ref.owner}/${ref.repo}:${sha}`, TTL.commitFiles, async () => {
+    const res = await fetch(
+      `https://api.github.com/repos/${ref.owner}/${ref.repo}/commits/${sha}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+    );
+    if (!res.ok) throw new Error(`GitHub ${res.status} ${res.statusText}`);
+    const data = (await res.json()) as { files?: GhCommitFileNode[] };
+    return data.files ?? [];
+  }).then(toCommitFiles, () => []);
+}
+
+function toCommitFiles(files: GhCommitFileNode[]): CommitFile[] {
+  return files.map((f) => ({
     path: f.filename,
     changeType: GH_CHANGE_TYPE[f.status] ?? "modified",
     diff: f.patch ? `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch}` : "",
@@ -329,8 +357,13 @@ export async function getGithubIssues(
   const parsed = parseRepo(repoUrl);
   if (!parsed)
     throw new Error(`Could not parse a GitHub owner/repo from "${repoUrl}".`);
-  const { owner, repo } = parsed;
+  return cached(`${GITHUB_CACHE_PREFIX}issues:${parsed.owner}/${parsed.repo}`, TTL.issues, () => fetchIssues(parsed, token));
+}
 
+async function fetchIssues(
+  { owner, repo }: { owner: string; repo: string },
+  token: string,
+): Promise<Ticket[]> {
   const url = `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`;
   const res = await fetch(url, {
     headers: {
@@ -384,22 +417,24 @@ export async function getGithubStatusLabelOptions(
   if (!parsed)
     throw new Error(`Could not parse a GitHub owner/repo from "${repoUrl}".`);
   const { owner, repo } = parsed;
-  const url = `https://api.github.com/repos/${owner}/${repo}/labels?per_page=100`;
-  const res = await fetch(url, {
-    headers: githubHeaders(token),
-    cache: "no-store",
+  return cached(`${GITHUB_CACHE_PREFIX}labels:${owner}/${repo}`, TTL.statusOptions, async () => {
+    const url = `https://api.github.com/repos/${owner}/${repo}/labels?per_page=100`;
+    const res = await fetch(url, {
+      headers: githubHeaders(token),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(
+        `GitHub ${res.status} ${res.statusText} — ${t.slice(0, 200)}`,
+      );
+    }
+    const labels = (await res.json()) as GhLabel[];
+    return labels
+      .map((l) => l.name)
+      .filter((n) => STATUS_LABEL_PREFIX.test(n))
+      .map((n) => titleCase(n.replace(STATUS_LABEL_PREFIX, "").trim()));
   });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(
-      `GitHub ${res.status} ${res.statusText} — ${t.slice(0, 200)}`,
-    );
-  }
-  const labels = (await res.json()) as GhLabel[];
-  return labels
-    .map((l) => l.name)
-    .filter((n) => STATUS_LABEL_PREFIX.test(n))
-    .map((n) => titleCase(n.replace(STATUS_LABEL_PREFIX, "").trim()));
 }
 
 // Swap the issue's "status: X" label for the new one — a real write to GitHub, not a
@@ -546,9 +581,11 @@ export async function getGithubStatusOptions(
   token: string,
   issueNumber: string,
 ): Promise<string[]> {
-  const projectItem = await getIssueProjectStatusItem(repoUrl, token, issueNumber);
-  if (projectItem) return projectItem.options.map((o) => o.name);
-  return getGithubStatusLabelOptions(repoUrl, token);
+  return cached(`${GITHUB_CACHE_PREFIX}statusOptions:${repoUrl}:${issueNumber}`, TTL.statusOptions, async () => {
+    const projectItem = await getIssueProjectStatusItem(repoUrl, token, issueNumber);
+    if (projectItem) return projectItem.options.map((o) => o.name);
+    return getGithubStatusLabelOptions(repoUrl, token);
+  });
 }
 
 const UPDATE_PROJECT_STATUS_MUTATION = `
@@ -570,8 +607,13 @@ export async function updateGithubStatus(
   issueNumber: string,
   newStatus: string,
 ): Promise<void> {
+  const parsed = parseRepo(repoUrl);
   const projectItem = await getIssueProjectStatusItem(repoUrl, token, issueNumber);
-  if (!projectItem) return updateGithubIssueStatus(repoUrl, token, issueNumber, newStatus);
+  if (!projectItem) {
+    await updateGithubIssueStatus(repoUrl, token, issueNumber, newStatus);
+    if (parsed) await invalidatePrefix(`${GITHUB_CACHE_PREFIX}issues:${parsed.owner}/${parsed.repo}`);
+    return;
+  }
   const option = projectItem.options.find((o) => o.name.toLowerCase() === newStatus.trim().toLowerCase());
   if (!option) throw new Error(`"${newStatus}" is not a valid Status option on this project board.`);
   await githubGraphql(token, UPDATE_PROJECT_STATUS_MUTATION, {
@@ -580,4 +622,5 @@ export async function updateGithubStatus(
     fieldId: projectItem.fieldId,
     optionId: option.id,
   });
+  if (parsed) await invalidatePrefix(`${GITHUB_CACHE_PREFIX}issues:${parsed.owner}/${parsed.repo}`);
 }
