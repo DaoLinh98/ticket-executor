@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject } from "react";
 import type { Ticket, UiRunState } from "@/lib/types";
-import { COLORS, FONT, RUN_LABEL, avatar, dropdownPanelStyle, initials, pill, ringBorder, runDot, statusPillActive, typeBadge } from "@/lib/ui";
+import { motion } from "motion/react";
+import { COLORS, FONT, MOTION, RUN_LABEL, avatar, dropdownPanelStyle, initials, pill, ringBorder, runDot, statusPillActive, typeBadge, chipShape } from "@/lib/ui";
 import type { Action, TabId } from "./types";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
@@ -81,10 +82,10 @@ export default function TicketDetailHeader({
               {statusMenuLoading ? (
                 <div style={{ padding: "10px", display: "flex", justifyContent: "center" }}><LoadingRing size={20} /></div>
               ) : statusMenuOptions.length === 0 ? (
-                <div style={{ padding: "8px 10px", fontSize: FONT.sm, color: "#5B6273", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
+                <div style={{ padding: "8px 10px", fontSize: FONT.sm, color: "var(--te-faint)", maxWidth: "220px" }}>No provider statuses available for this ticket.</div>
               ) : (
                 statusMenuOptions.map((s) => (
-                  <button key={s} onClick={(e) => onSelectStatus(s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "#C7CCD8", fontSize: FONT.base, fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
+                  <button key={s} onClick={(e) => onSelectStatus(s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", ...chipShape(6), border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "var(--te-text-soft)", fontSize: FONT.base, fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
                 ))
               )}
             </div>
@@ -101,8 +102,17 @@ export default function TicketDetailHeader({
           </div>
         )}
       </div>
-      <h1 className="te-detail-title" style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "#F3F5F9", maxWidth: "820px" }}>{t.title}</h1>
-      <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "#8A90A0", flexWrap: "wrap" }}>
+      <motion.h1
+        key={t.id}
+        className="te-detail-title"
+        initial={{ opacity: 0, x: -40 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ ease: MOTION.easeExpo, duration: MOTION.enter }}
+        style={{ margin: 0, fontFamily: "var(--te-font-display)", fontSize: "24px", fontWeight: 700, lineHeight: 1.18, color: "var(--te-text)", maxWidth: "820px" }}
+      >
+        {t.title}
+      </motion.h1>
+      <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "var(--te-text-dim)", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
         <span style={execPillStyle}><span style={{ ...runDot(st), width: "7px", height: "7px" }} />{RUN_LABEL[st]}</span>
@@ -113,7 +123,7 @@ export default function TicketDetailHeader({
         )}
       </div>
 
-      <div className="te-tabbar" style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid #1E232C" }}>
+      <div className="te-tabbar" style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid var(--te-border-subtle)" }}>
         {/* `display: contents` — above the breakpoint these seven buttons are
             direct flex children of the bar exactly as they were. Below it the
             wrapper becomes its own scrolling row (globals.css), so the tabs
@@ -125,13 +135,13 @@ export default function TicketDetailHeader({
         {planEnabled && (
           <button onClick={(e) => { fireBoltFromEvent(e); setTab("plan"); }} style={{ ...tabStyle("plan", true), display: "flex", alignItems: "center", gap: "6px" }}>
             Plan
-            {planNeedsReview && <span style={{ ...pill({ color: "#0B0C10", background: COLORS.indigo, size: "xs", weight: 700 }), padding: "1px 6px" }}>review</span>}
+            {planNeedsReview && <span style={{ ...pill({ color: "var(--te-on-accent)", background: COLORS.indigo, size: "xs", weight: 700 }), padding: "1px 6px" }}>review</span>}
           </button>
         )}
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("resolve-review"); }} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
           Resolve Review
           {unresolvedCount > 0 && (
-            <span style={{ ...pill({ color: "#0B0C10", background: "var(--accent)", size: "xs", weight: 700 }), padding: "1px 6px" }}>{unresolvedCount}</span>
+            <span style={{ ...pill({ color: "var(--te-on-accent)", background: "var(--accent)", size: "xs", weight: 700 }), padding: "1px 6px" }}>{unresolvedCount}</span>
           )}
         </button>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
@@ -319,7 +329,7 @@ const menuItemStyle: CSSProperties = {
   border: "none",
   cursor: "pointer",
   background: "transparent",
-  color: "#C7CCD8",
+  color: "var(--te-text-soft)",
   fontSize: FONT.base,
   fontWeight: 500,
 };

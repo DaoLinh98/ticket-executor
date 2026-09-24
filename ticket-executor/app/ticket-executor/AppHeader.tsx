@@ -46,7 +46,7 @@ export default function AppHeader({
 }: Props) {
   return (
     <>
-      <header className="te-page-header" style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 30 }}>
+      <header className="te-page-header" style={{ height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", position: "relative", zIndex: 30 }}>
         <PageHeading title="Ticket Execution" kicker="D-AGENT · RUNS" icon={<path d="M8 5l8 7-8 7" />} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -81,8 +81,8 @@ export default function AppHeader({
         {/* A read-only counter, and the first thing to go when the toolbar has
             to wrap: on a phone it took a whole row to say what the ticket rows
             already show. */}
-        <div className="te-mobile-hide" style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "#8A90A0", whiteSpace: "nowrap", ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }) }}>
-          <span style={{ fontFamily: "var(--font-mono), monospace", color: "#C7CCD8", fontWeight: 600 }}>{activeCount}</span> active runs
+        <div className="te-mobile-hide" style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "var(--te-text-dim)", whiteSpace: "nowrap", ...ringBorder({ fill: "var(--te-raised-bg)", shape: "pill", duration: 3.4 }) }}>
+          <span style={{ fontFamily: "var(--font-mono), monospace", color: "var(--te-text-soft)", fontWeight: 600 }}>{activeCount}</span> active runs
         </div>
       </PageToolbar>
     </>

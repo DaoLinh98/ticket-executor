@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
+import { motion } from "motion/react";
 import { useBoltsContext } from "./BoltsContext";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
@@ -35,7 +36,7 @@ import type { CommitFile, CommitSummary, FileChange, LogLine, MentionCandidate, 
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
-import { FONT, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
+import { FONT, MOTION, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
@@ -2014,30 +2015,30 @@ export default function TicketExecutor() {
       transition: "background .3s, border-color .3s, color .3s",
     };
     let dotStyle: CSSProperties;
-    if (sst === "done") dotStyle = { ...db, background: "rgba(53,214,164,.14)", border: "1px solid #35D6A4", color: "#35D6A4" };
-    else if (sst === "active") dotStyle = { ...db, background: "rgba(245,179,65,.12)", border: "1px solid #F5B341", color: "#F5B341" };
-    else if (sst === "failed") dotStyle = { ...db, background: "rgba(255,107,107,.14)", border: "1px solid #FF6B6B", color: "#FF6B6B" };
-    else dotStyle = { ...db, background: "transparent", border: "1px solid #2A2F3A", color: "#5B6273" };
+    if (sst === "done") dotStyle = { ...db, background: "rgba(53,214,164,.14)", border: "1px solid var(--te-success)", color: "var(--te-success)" };
+    else if (sst === "active") dotStyle = { ...db, background: "rgba(245,179,65,.12)", border: "1px solid var(--te-warning)", color: "var(--te-warning)" };
+    else if (sst === "failed") dotStyle = { ...db, background: "rgba(255,107,107,.14)", border: "1px solid var(--te-danger)", color: "var(--te-danger)" };
+    else dotStyle = { ...db, background: "transparent", border: "1px solid var(--te-btn-outline-border)", color: "var(--te-faint)" };
     const connectorStyle: CSSProperties =
       sst === "done"
-        ? { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", borderRadius: "2px", background: "linear-gradient(#35D6A4, rgba(53,214,164,.12))", backgroundSize: "100% 200%", animation: "flow 1.3s linear infinite" }
-        : { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", background: "#23272F" };
+        ? { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", borderRadius: "2px", background: "linear-gradient(var(--te-success), rgba(53,214,164,.12))", backgroundSize: "100% 200%", animation: "flow 1.3s linear infinite" }
+        : { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", background: "var(--te-border)" };
     const labelStyle: CSSProperties = {
       fontSize: FONT.base, paddingBottom: last ? "0" : "20px", lineHeight: "1.3", paddingTop: "3px",
-      color: sst === "done" ? "#C7CCD8" : sst === "active" ? "#F3F5F9" : sst === "failed" ? "#FF8F8F" : "#5B6273",
+      color: sst === "done" ? "var(--te-text-soft)" : sst === "active" ? "var(--te-text)" : sst === "failed" ? "#FF8F8F" : "var(--te-faint)",
       fontWeight: sst === "active" ? 600 : 500,
     };
     return { label: n.label, num: i + 1, dotStyle, connectorStyle, labelStyle, showCheck: sst === "done", showSpinner: sst === "active", showX: sst === "failed", showNum: sst === "pending" };
   });
 
   const kindColor: Record<string, string> = {
-    cmd: ACCENT, step: "#E4E7EE", ok: "#35D6A4", muted: "#6B7283", file: "#9BA6E8",
-    diff: "#8A90A0", err: "#FF6B6B", fail: "#FF6B6B", done: "#35D6A4",
+    cmd: ACCENT, step: "var(--te-text)", ok: "var(--te-success)", muted: "var(--te-text-muted)", file: "var(--te-indigo)",
+    diff: "var(--te-text-dim)", err: "var(--te-danger)", fail: "var(--te-danger)", done: "var(--te-success)",
   };
   const logLines = (ex ? ex.logLines : []).map((l, i) => ({
     text: l.text, num: i + 1,
     style: {
-      color: kindColor[l.kind] || "#C7CCD8",
+      color: kindColor[l.kind] || "var(--te-text-soft)",
       fontWeight: (l.kind === "cmd" || l.kind === "done" || l.kind === "fail" ? 600 : 400) as number,
       whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, flex: 1, animation: "lineIn .3s ease-out both",
     } as CSSProperties,
@@ -2047,14 +2048,14 @@ export default function TicketExecutor() {
   const askLogLines = (ask?.logLines ?? []).map((l, i) => ({
     text: l.text, num: i + 1,
     style: {
-      color: kindColor[l.kind] || "#C7CCD8",
+      color: kindColor[l.kind] || "var(--te-text-soft)",
       fontWeight: (l.kind === "cmd" ? 600 : 400) as number,
       whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, flex: 1, animation: "lineIn .3s ease-out both",
     } as CSSProperties,
   }));
   const logStatusMap: Record<UiRunState, [string, string]> = {
-    running: ["running", "#F5B341"], waiting: ["your review", "#9BA6E8"], succeeded: ["done", "#35D6A4"],
-    failed: ["failed", "#FF6B6B"], cancelled: ["cancelled", "#5B6273"], none: ["idle", "#5B6273"],
+    running: ["running", "var(--te-warning)"], waiting: ["your review", "var(--te-indigo)"], succeeded: ["done", "var(--te-success)"],
+    failed: ["failed", "var(--te-danger)"], cancelled: ["cancelled", "var(--te-faint)"], none: ["idle", "var(--te-faint)"],
   };
   const [lsl, lsc] = logStatusMap[st];
   const logStatusStyle: CSSProperties = {
@@ -2103,7 +2104,7 @@ export default function TicketExecutor() {
     <div
       style={{
         position: "relative", height: "var(--te-app-h)", width: "100%", display: "flex", flexDirection: "column",
-        background: "transparent", color: "#ECEEF3", fontFamily: "var(--font-hanken), sans-serif",
+        background: "transparent", color: "var(--te-text)", fontFamily: "var(--te-font-ui)",
         overflow: "hidden", ["--accent" as string]: ACCENT,
       }}
     >
@@ -2172,9 +2173,9 @@ export default function TicketExecutor() {
         />
 
         {/* Main */}
-        <main className="te-pane-detail" style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+        <main className="te-pane-detail" style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "var(--te-page-veil)" }}>
           {!t ? (
-            <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "#5B6273", fontSize: FONT.md }}></span>}</div>
+            <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "var(--te-faint)", fontSize: FONT.md }}></span>}</div>
           ) : (
             <>
               <TicketDetailHeader
@@ -2209,6 +2210,12 @@ export default function TicketExecutor() {
               />
 
               <div className="te-scroll te-scroll--smooth te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", minHeight: 0, padding: "24px 28px 44px" }}>
+                <motion.div
+                  key={`${t.id}:${tab}`}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ ease: MOTION.easeExpo, duration: MOTION.nav }}
+                >
                 {tab === "overview" && (
                   <OverviewTab
                     ticket={t}
@@ -2323,6 +2330,7 @@ export default function TicketExecutor() {
                     onOpenPr={(e) => fireBoltFromEvent(e)}
                   />
                 )}
+                </motion.div>
               </div>
             </>
           )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import SelectMenu from "../../SelectMenu";
@@ -8,7 +9,7 @@ import LoadingRing from "../../ticket-executor/LoadingRing";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
 import { broadcastSettingsUpdated } from "../../settingsEvents";
 import { PROVIDERS, providerMeta, connectionLabel, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
-import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, MOTION, card, chipShape, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
 import type { ConnTest, SettingsView } from "../../ticket-executor/types";
 import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
@@ -53,9 +54,9 @@ function Toggle({ on, onToggle, title }: { on: boolean; onToggle: (e: React.Mous
       onClick={onToggle}
       aria-pressed={on}
       title={title}
-      style={{ position: "relative", flex: "0 0 auto", width: "42px", height: "24px", borderRadius: "999px", border: "none", cursor: "pointer", background: on ? "var(--accent)" : "#2A2F3A", transition: "background .18s" }}
+      style={{ position: "relative", flex: "0 0 auto", width: "42px", height: "24px", ...chipShape(6), border: "none", cursor: "pointer", background: on ? "var(--accent)" : "var(--te-btn-outline-border)", transition: "background .18s" }}
     >
-      <span style={{ position: "absolute", top: "3px", left: on ? "21px" : "3px", width: "18px", height: "18px", borderRadius: "50%", background: "#0B0C10", transition: "left .18s" }} />
+      <span style={{ position: "absolute", top: "3px", left: on ? "21px" : "3px", width: "18px", height: "18px", clipPath: clipCorner(6), background: "var(--te-on-accent)", transition: "left .18s var(--te-ease-expo)" }} />
     </button>
   );
 }
@@ -298,7 +299,7 @@ export default function SettingsPage() {
       style={{
         display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px",
         ...(c.isActive
-          ? ringBorder({ fill: "#14171D", duration: 4.4, shape: "none" })
+          ? ringBorder({ fill: "var(--te-raised-bg)", duration: 4.4, shape: "none" })
           : { border: `1px solid ${COLORS.border}`, background: COLORS.panelBg }),
         borderRadius: "12px",
       }}
@@ -344,7 +345,7 @@ export default function SettingsPage() {
       <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={fieldLabel()}>PROVIDER</span>
-          <div style={{ ...card({ padding: "0 13px", background: "#0E1015" }), height: "40px", display: "flex", alignItems: "center" }}>
+          <div style={{ ...card({ padding: "0 13px", background: "var(--te-inset-bg)" }), height: "40px", display: "flex", alignItems: "center" }}>
             <SelectMenu value={pm.name} onChange={onProviderChange} options={PROVIDERS.map((p) => p.name)} ariaLabel="Provider" />
           </div>
         </label>
@@ -374,7 +375,7 @@ export default function SettingsPage() {
       </div>
 
       {editor && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px", ...card({ padding: "16px", background: "#0E1015" }) }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", ...card({ padding: "16px", background: "var(--te-inset-bg)" }) }}>
           <span style={fieldLabel()}>{editor.id ? "EDIT ORGANIZATION" : "NEW ORGANIZATION"}</span>
           <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -418,7 +419,7 @@ export default function SettingsPage() {
               Cancel
             </button>
             {connTest.status !== "idle" && connTest.status !== "testing" && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: connTest.status === "ok" ? "#5BE8B8" : "#FF8F8F", lineHeight: 1.4 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: connTest.status === "ok" ? "var(--te-btn-success-text)" : "#FF8F8F", lineHeight: 1.4 }}>
                 <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: connTest.status === "ok" ? COLORS.success : COLORS.danger, boxShadow: "0 0 8px " + (connTest.status === "ok" ? COLORS.success : COLORS.danger), flex: "0 0 auto" }} />
                 {connTest.message}
               </span>
@@ -574,14 +575,14 @@ export default function SettingsPage() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Settings" kicker="D-AGENT · CONFIGURATION" icon={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
         <ProviderBadge provider={pm.id} />
       </header>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "22px 28px 28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "22px 28px 28px", background: "var(--te-page-veil)" }}>
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
@@ -594,7 +595,9 @@ export default function SettingsPage() {
               ))}
             </div>
 
-            {panes[tab]}
+            <motion.div key={tab} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ ease: MOTION.easeExpo, duration: MOTION.nav }}>
+              {panes[tab]}
+            </motion.div>
 
             {error && (
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>

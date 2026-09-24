@@ -19,7 +19,7 @@ export type IterationOption = {
 // from (non-ADO providers). Used for both the sprint picker (default green dot)
 // and the project picker (custom `leading` icon).
 const defaultLeading = (
-  <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#35D6A4", boxShadow: "0 0 8px #35D6A4", flex: "0 0 auto" }} />
+  <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--te-success)", boxShadow: "0 0 8px var(--te-success)", flex: "0 0 auto" }} />
 );
 export default function SprintPicker({
   label,
@@ -77,13 +77,13 @@ export default function SprintPicker({
           cursor: hasOptions ? "pointer" : "default",
           color: "inherit",
           font: "inherit",
-          ...ringBorder({ fill: "#14171D", shape: "pill", duration: 4 }),
+          ...ringBorder({ fill: "var(--te-raised-bg)", duration: 4, cornerPx: 7 }),
         }}
       >
         {leading}
-        <span className="te-picker-label" style={{ fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", whiteSpace: "nowrap" }}>{label || "—"}</span>
+        <span className="te-picker-label" style={{ fontSize: FONT.base, fontWeight: 600, color: "var(--te-text-soft)", whiteSpace: "nowrap" }}>{label || "—"}</span>
         {shortLabel && (
-          <span className="te-picker-short" style={{ display: "none", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".04em", color: "#C7CCD8", whiteSpace: "nowrap" }}>{shortLabel}</span>
+          <span className="te-picker-short" style={{ display: "none", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".04em", color: "var(--te-text-soft)", whiteSpace: "nowrap" }}>{shortLabel}</span>
         )}
         {hasOptions && (
           <svg
@@ -140,7 +140,7 @@ export default function SprintPicker({
                   border: "none",
                   cursor: "pointer",
                   background: isSel ? "rgba(251,114,80,.14)" : "transparent",
-                  color: isSel ? "var(--accent)" : "#C7CCD8",
+                  color: isSel ? "var(--accent)" : "var(--te-text-soft)",
                   fontSize: FONT.base,
                   fontWeight: isSel ? 700 : 500,
                   transition: "background .12s, color .12s",
@@ -156,7 +156,7 @@ export default function SprintPicker({
                 {o.name === currentName && (
                   <span
                     style={{
-                      ...pill({ color: "#35D6A4", background: "rgba(53,214,164,.12)", size: "xs", weight: 700 }),
+                      ...pill({ color: "var(--te-success)", background: "rgba(53,214,164,.12)", size: "xs", weight: 700 }),
                       fontSize: FONT.xs,
                       letterSpacing: ".05em",
                       flex: "0 0 auto",

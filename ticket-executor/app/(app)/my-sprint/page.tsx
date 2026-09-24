@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
+import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SelectMenu from "../../SelectMenu";
@@ -16,6 +18,7 @@ import {
   sectionCaption,
   statusPill,
   tintedCard,
+  displayText,
 } from "@/lib/ui";
 import ProviderBadge from "../ProviderBadge";
 import TriageReport from "./TriageReport";
@@ -571,13 +574,17 @@ export default function MySprintPage() {
   // work on different tickets and the banner has to name which is which.
   const reviewingRows = rows.filter((t) => t.reviewState === "running");
 
-  const tile = (label: string, value: string, sub?: string) => (
-    <div style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
+  let tileIndex = 0;
+  const tile = (label: string, value: string, sub?: string) => {
+    const i = tileIndex++;
+    return (
+    <motion.div {...reveal({ from: i % 2 ? "right" : "left", index: i })} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
       <span style={sectionCaption()}>{label}</span>
-      <span style={{ fontSize: FONT.xl, fontWeight: 800, color: COLORS.text, lineHeight: 1 }}>{value}</span>
+      <span style={{ ...displayText("stat"), whiteSpace: "nowrap" }}>{value}</span>
       {sub && <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>{sub}</span>}
-    </div>
-  );
+    </motion.div>
+    );
+  };
 
   const button = (
     label: string,
@@ -604,7 +611,7 @@ export default function MySprintPage() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="My Sprint" kicker="D-AGENT · SPRINT PLAN" icon={<><path d="M8 2v4M16 2v4M3 10h18" /><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -629,7 +636,7 @@ export default function MySprintPage() {
         </button>
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
         <div style={{ maxWidth: "1160px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
           {loading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
@@ -659,7 +666,7 @@ export default function MySprintPage() {
               )}
 
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>{data?.sprint || "Current sprint"}</span>
+                <motion.span initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} style={displayText("heading")}>{data?.sprint || "Current sprint"}</motion.span>
                 {data?.window?.startDate && (
                   <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>
                     {dayLabel(data.window.startDate)} → {dayLabel(data.window.finishDate)}

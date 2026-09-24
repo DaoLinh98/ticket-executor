@@ -40,8 +40,8 @@ export function useResolvedIsMobile() {
   return mobile;
 }
 
-/** Open state of the off-canvas nav drawer, shared by the trigger (which lives
- *  in every page header, via `PageHeading`) and the drawer itself. */
+/** Open state of the off-canvas nav drawer, shared by the floating trigger and
+ *  the drawer itself. */
 export function useMobileNav() {
   return useContext(Ctx);
 }
@@ -57,6 +57,39 @@ export default function MobileNavProvider({ children }: { children: ReactNode })
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
   }, [open]);
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    let start: { x: number; y: number; t: number } | null = null;
+    const scrollsX = (el: EventTarget | null) => {
+      for (let n = el as HTMLElement | null; n && n !== document.body; n = n.parentElement) {
+        const ox = getComputedStyle(n).overflowX;
+        if ((ox === "auto" || ox === "scroll") && n.scrollWidth > n.clientWidth) return true;
+      }
+      return false;
+    };
+    const onStart = (e: TouchEvent) => {
+      if (!mq.matches || e.touches.length !== 1 || scrollsX(e.target)) { start = null; return; }
+      const p = e.touches[0];
+      start = { x: p.clientX, y: p.clientY, t: e.timeStamp };
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!start) return;
+      const p = e.changedTouches[0];
+      const dx = p.clientX - start.x;
+      const dy = p.clientY - start.y;
+      const quick = e.timeStamp - start.t < 600;
+      start = null;
+      if (!quick || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      setOpenState(dx > 0);
+    };
+    document.addEventListener("touchstart", onStart, { passive: true });
+    document.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onStart);
+      document.removeEventListener("touchend", onEnd);
+    };
+  }, []);
 
   return <Ctx.Provider value={{ open, setOpen }}>{children}</Ctx.Provider>;
 }

@@ -1,43 +1,69 @@
 "use client";
 
 import Link from "next/link";
-import { COLORS, FONT, ctaButtonStyle, logoText, ringBorder } from "@/lib/ui";
+import { motion } from "motion/react";
+import { COLORS, FONT, MOTION, ctaButtonStyle, displayText, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
-import MobileNavToggle from "../MobileNavToggle";
+
+const HEADLINE: { text: string; color: string; align: "left" | "right"; x: number }[] = [
+  { text: "Ship", color: COLORS.text, align: "left", x: -400 },
+  { text: "Tickets", color: COLORS.accent, align: "right", x: 400 },
+  { text: "Not busywork", color: COLORS.text, align: "left", x: -400 },
+];
 
 export default function HomePage() {
   const { fireBoltFromEvent } = useBoltsContext();
+  const enter = (delay: number) => ({ ease: MOTION.easeExpo, duration: MOTION.enter, delay });
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      {/* Home is the only page without a header, so the drawer's trigger has
-          nowhere to sit — it floats in the corner instead. */}
-      <div style={{ position: "absolute", zIndex: 2, top: "calc(12px + env(safe-area-inset-top))", left: "calc(14px + env(safe-area-inset-left))" }}>
-        <MobileNavToggle />
-      </div>
-      <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "0 clamp(18px, 6vw, 32px)", gap: "clamp(18px, 4vw, 26px)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px", animation: "fadeUp .5s both" }}>
-          <div style={{ width: "clamp(44px, 13vw, 56px)", height: "clamp(44px, 13vw, 56px)", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 12px 40px -12px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "calc(14px + env(safe-area-inset-top)) clamp(18px, 5vw, 40px) 0 calc(clamp(18px, 5vw, 40px) + env(safe-area-inset-left))" }}>
+        <motion.div initial={{ opacity: 0, x: -60 }} animate={{ opacity: 1, x: 0 }} transition={{ ease: MOTION.easeExpo, duration: MOTION.nav }} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ width: "36px", height: "36px", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 12px 40px -12px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </div>
-          <span style={logoText("clamp(32px, 11vw, 46px)")}>D-Agent</span>
-        </div>
+          <span style={logoText("clamp(22px, 6vw, 32px)")}>D-Agent</span>
+        </motion.div>
+      </div>
 
-        <h1 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: "clamp(22px, 6.5vw, 30px)", fontWeight: 700, lineHeight: 1.2, maxWidth: "760px", animation: "fadeUp .5s both", animationDelay: "70ms" }}>
-          Ship tickets, not busywork.
+      <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "flex-end", width: "100%", maxWidth: "760px", padding: "0 clamp(18px, 5vw, 40px) calc(clamp(24px, 6vh, 64px) + env(safe-area-inset-bottom)) calc(clamp(18px, 5vw, 40px) + env(safe-area-inset-left))", gap: "clamp(18px, 3vh, 28px)" }}>
+        <h1 style={{ ...displayText("hero"), display: "flex", flexDirection: "column" }}>
+          {HEADLINE.map((line, i) => (
+            <motion.span
+              key={line.text}
+              initial={{ opacity: 0, x: line.x }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={enter(i * MOTION.stagger)}
+              style={{ display: "block", color: line.color, textAlign: line.align }}
+            >
+              {line.text}
+            </motion.span>
+          ))}
         </h1>
-        <p style={{ margin: 0, fontSize: FONT.lg, lineHeight: 1.6, color: COLORS.textDim, maxWidth: "620px", animation: "fadeUp .5s both", animationDelay: "140ms" }}>
+
+        <motion.p initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={enter(0.4)} style={{ margin: 0, fontSize: FONT.lg, lineHeight: 1.6, color: COLORS.textDim, maxWidth: "560px" }}>
           Point Claude Code at a ticket and watch it branch, implement, verify, and open a
           pull request — end to end, across every project in your organization.
-        </p>
+        </motion.p>
 
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "12px", marginTop: "6px", animation: "fadeUp .5s both", animationDelay: "210ms" }}>
-          <Link href="/projects" onClick={(e) => fireBoltFromEvent(e)} style={{ textDecoration: "none", color: "#0B0C10", ...ctaButtonStyle("primary", { height: "40px" }) }}>
-            Browse projects
-          </Link>
-          <Link href="/ticket-execution" onClick={(e) => fireBoltFromEvent(e)} style={{ textDecoration: "none", ...ctaButtonStyle("ghost", { height: "40px" }) }}>
-            Open Ticket Execution
-          </Link>
-        </div>
+        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={enter(0.5)} style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+          <motion.div initial="rest" animate="rest" whileHover="hover" whileTap={MOTION.tap} style={{ flex: "1 1 200px" }}>
+            <Link href="/projects" onClick={(e) => fireBoltFromEvent(e)} style={{ textDecoration: "none", color: "var(--te-on-accent)", ...ctaButtonStyle("primary", { height: "48px" }), justifyContent: "space-between", fontSize: FONT.lg }}>
+              Browse projects
+              <motion.svg
+                variants={{ rest: { rotate: -45 }, hover: { rotate: 0 } }}
+                transition={{ ease: MOTION.easeExpo, duration: 0.5 }}
+                width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+              >
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </motion.svg>
+            </Link>
+          </motion.div>
+          <motion.div whileTap={MOTION.tap} style={{ flex: "1 1 200px" }}>
+            <Link href="/ticket-execution" onClick={(e) => fireBoltFromEvent(e)} style={{ textDecoration: "none", ...ctaButtonStyle("ghost", { height: "48px" }), justifyContent: "center", fontSize: FONT.lg }}>
+              Open Ticket Execution
+            </Link>
+          </motion.div>
+        </motion.div>
       </div>
     </div>
   );

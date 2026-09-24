@@ -7,7 +7,7 @@ import { useBoltsContext } from "../../BoltsContext";
 import { SECTIONS } from "../../guide/content";
 import { DocsLink, SKILLS_CHANGED_EVENT, StatusBadge } from "../../guide/parts";
 import type { SectionStatus } from "../../guide/parts";
-import { COLORS, FONT, card, clipCorner, ctaButtonStyle, fieldLabel, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, SHAPE, card, clipCorner, ctaButtonStyle, fieldLabel, pill, ringBorder, tintedCard } from "@/lib/ui";
 import type { PreflightResult } from "@/lib/preflight";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
@@ -120,7 +120,7 @@ function GuidePageInner() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Guide" kicker="D-AGENT · SETUP PATH" icon={<><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -138,7 +138,7 @@ function GuidePageInner() {
         </Link>
       </PageToolbar>
 
-      <main className="te-scroll te-scroll--smooth te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-scroll--smooth te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
@@ -206,10 +206,10 @@ function GuidePageInner() {
                         justifyContent: "center",
                         fontSize: FONT.sm,
                         fontWeight: 700,
-                        color: isOpen ? "#0B0C10" : COLORS.textDim,
+                        color: isOpen ? "var(--te-on-accent)" : COLORS.textDim,
                         ...(isOpen
-                          ? ringBorder({ fill: COLORS.accent, variant: "filled", shape: "pill", duration: 3.4 })
-                          : { ...card({ padding: "0", radius: "999px" }) }),
+                          ? ringBorder({ fill: COLORS.accent, variant: "filled", duration: 3.4, cornerPx: 6 })
+                          : { ...card({ padding: "0", radius: SHAPE.radiusChip }), clipPath: clipCorner(6) }),
                       }}
                     >
                       {i + 1}

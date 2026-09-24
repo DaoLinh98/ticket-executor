@@ -122,7 +122,7 @@ export function Shot({ src, caption }: { src: string; caption: string }) {
       {open && (
         <div
           onClick={() => setOpen(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", background: "rgba(6,7,10,.82)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", animation: "fadeIn .18s both", cursor: "zoom-out" }}
+          style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", background: "var(--te-scrim)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", animation: "fadeIn .18s both", cursor: "zoom-out" }}
         >
           <div className="te-modal-shell" onClick={(e) => e.stopPropagation()} style={{ ...modalShellStyle(), padding: "10px", maxWidth: "min(1100px,92vw)", maxHeight: "88vh", overflow: "auto" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}

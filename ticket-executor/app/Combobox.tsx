@@ -50,7 +50,7 @@ export default function Combobox({
     padding: 0,
     fontFamily: "var(--font-mono), monospace",
     fontSize: FONT.base,
-    color: "#E4E7EE",
+    color: "var(--te-text)",
   };
 
   return (
@@ -100,7 +100,7 @@ export default function Combobox({
             padding: 0,
             border: "none",
             background: "transparent",
-            color: "#5B6273",
+            color: "var(--te-faint)",
             cursor: "pointer",
           }}
         >
@@ -154,7 +154,7 @@ export default function Combobox({
                   border: "none",
                   cursor: "pointer",
                   background: isActive || isSel ? "rgba(251,114,80,.12)" : "transparent",
-                  color: isSel ? "var(--accent)" : "#C7CCD8",
+                  color: isSel ? "var(--accent)" : "var(--te-text-soft)",
                   fontFamily: "var(--font-mono), monospace",
                   fontSize: FONT.base,
                   transition: "background .12s",

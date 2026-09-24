@@ -35,7 +35,8 @@ never a hex in a component. Three consequences, all of which have bitten:
 |---|---|
 | `COLORS` | Every colour: `accent`, `success`, `danger`, `warning`, `info`, `indigo`, `text`, `textSoft`, `textDim`, `textMuted`, `faint`, `border`, `borderSubtle`, `panelBg`, `panelBgDark`. Paragraphs use `textMuted`/`textDim`; `faint` is placeholders and disabled chrome only. |
 | `FONT` | Every font size. `xs` 11.5 (pills) · `sm` 12.5 (captions/meta) · `base` 14 (controls, rows, log) · `md` 15 (body) · `lg` 15 (card titles) · `xl` 20 (page titles). Never a size *between* two steps. |
-| `SURFACE` | The three themed surfaces: `app`, `inset` (inputs/code/dropdowns), `modal`. |
+| `SURFACE` | Themed surfaces: `app`, `inset` (code/dropdowns), `field` (inputs — brightens on focus via `--te-field-bg`), `raised` (opaque ring/chip fill), `modal`. |
+| `MOTION` | Easing (`easeExpo`, `easeOut`), durations, stagger, reveal margin and hover/tap presets for `motion/react`. CSS twins: `--te-ease-expo`, `--te-ease-out`. |
 | `SHAPE` | `radiusChip`, `radiusCard`, `radiusPanel`, `panelBlur`. |
 | `resolveColor(token, fallback?)` | A real hex for WebGL/canvas. Browser-only; returns the fallback during SSR. |
 | `chipShape(6\|7\|8)` | The chip shape, **both** halves — clip-path *and* radius. Prefer over bare `clipCorner`. |
@@ -44,7 +45,8 @@ never a hex in a component. Three consequences, all of which have bitten:
 | `card(opts?)` / `tintedCard(tone, opts?)` | Neutral bordered container / tinted banner (`success \| danger \| warning \| accent`). |
 | `tintFill(tone)` | Just the tint's fill, for a row highlighted rather than boxed. |
 | `modalShellStyle(opts?)` / `modalOverlayStyle(opts?)` | Modal panel shell, and the scrim + blur sheet it centres on. Always paired. |
-| `logoText(fontSize)` | The animated fire-gradient wordmark — pass only the size. |
+| `logoText(fontSize)` | The animated fire-gradient wordmark — pass only the size. Uppercase Barlow. |
+| `displayText(size, color?)` | Barlow Condensed 800 uppercase for headlines and big numbers: `hero` (Home) · `title` · `stat` (KPI values) · `heading` (card/section names). The only fluid `clamp()` sizes; body text stays on `FONT`. |
 | `fieldLabel()` / `fieldInput(opts?)` | Form caption / dark inset input chrome. |
 | `sectionCaption()` | Uppercase caption over read-only content; one step smaller than `fieldLabel()`. |
 | `codeBlock(opts?)` | Read-only mono code / command block. |
