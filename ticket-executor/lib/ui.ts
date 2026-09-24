@@ -187,6 +187,9 @@ export const COLORS = {
 export const SURFACE = {
   app: "var(--te-app-bg)",
   inset: "var(--te-inset-bg)",
+  /** An input's fill: `inset`, brightened while focused (see globals.css). */
+  field: "var(--te-field-bg, var(--te-inset-bg))",
+  raised: "var(--te-raised-bg)",
   modal: "var(--te-modal-bg)",
   /** The dimmed sheet a modal panel sits on. */
   scrim: "var(--te-scrim)",
@@ -199,6 +202,18 @@ export const SHAPE = {
   radiusCard: "var(--te-radius-card)",
   radiusPanel: "var(--te-radius-panel)",
   panelBlur: "var(--te-panel-blur)",
+} as const;
+
+export const MOTION = {
+  easeExpo: [0.16, 1, 0.3, 1],
+  easeOut: [0.25, 0.46, 0.45, 0.94],
+  enter: 0.85,
+  nav: 0.6,
+  stagger: 0.13,
+  revealMargin: "0px 0px -40px 0px",
+  hover: { scale: 1.03, y: -2 },
+  hoverIcon: { scale: 1.15, y: -3 },
+  tap: { scale: 0.97 },
 } as const;
 
 /**
@@ -387,7 +402,7 @@ export function modalShellStyle(opts?: { radius?: string }): CSSProperties {
     borderRadius: opts?.radius ?? "16px",
     background: SURFACE.modal,
     boxShadow: "0 40px 90px -30px #000",
-    animation: "slideIn .28s both",
+    animation: "slideIn .5s both",
   };
 }
 
@@ -414,10 +429,11 @@ export function modalOverlayStyle(opts?: { zIndex?: number }): CSSProperties {
 // gradient/animation is the part that must stay identical everywhere.
 export function logoText(fontSize: string): CSSProperties {
   return {
-    fontFamily: "var(--font-space), sans-serif",
-    fontWeight: 700,
+    fontFamily: "var(--te-font-display)",
+    fontWeight: 800,
     fontSize,
-    letterSpacing: ".01em",
+    letterSpacing: ".02em",
+    textTransform: "uppercase",
     background:
       "linear-gradient(90deg,var(--accent) 0%,#FFC15E 18%,#FF5F3D 36%,var(--accent) 54%,#FFC15E 72%,#FF5F3D 90%,var(--accent) 100%)",
     backgroundSize: "300% 100%",
@@ -429,14 +445,36 @@ export function logoText(fontSize: string): CSSProperties {
   };
 }
 
+const DISPLAY_SIZE = {
+  hero: "clamp(48px, 14vw, 72px)",
+  title: "clamp(36px, 11vw, 56px)",
+  stat: "clamp(32px, 9vw, 44px)",
+  heading: "clamp(20px, 5.5vw, 26px)",
+} as const;
+
+export function displayText(size: keyof typeof DISPLAY_SIZE, color: string = COLORS.text): CSSProperties {
+  return {
+    fontFamily: "var(--te-font-display)",
+    fontWeight: 800,
+    fontSize: DISPLAY_SIZE[size],
+    lineHeight: size === "heading" ? 1 : 0.82,
+    letterSpacing: ".01em",
+    textTransform: "uppercase",
+    color,
+    margin: 0,
+  };
+}
+
 // Form-field chrome — the small spaced uppercase caption above an input, and
 // the dark inset text input itself. Shared by every settings-style form field
 // (Settings page, System Check page) so field density stays uniform.
 export function fieldLabel(): CSSProperties {
   return {
-    fontSize: FONT.sm,
-    letterSpacing: ".1em",
-    fontWeight: 600,
+    fontFamily: "var(--te-font-display)",
+    fontSize: FONT.md,
+    letterSpacing: ".08em",
+    fontWeight: 800,
+    textTransform: "uppercase",
     color: COLORS.textDim,
   };
 }
@@ -446,7 +484,8 @@ export function fieldInput(opts?: {
   fontSize?: string;
 }): CSSProperties {
   return {
-    ...card({ padding: "0 13px", radius: "9px", background: SURFACE.inset }),
+    ...card({ padding: "0 13px", radius: SHAPE.radiusChip, background: SURFACE.field }),
+    clipPath: clipCorner(7),
     height: opts?.height ?? "40px",
     color: COLORS.text,
     fontFamily: "var(--font-mono), monospace",
@@ -483,9 +522,10 @@ export function codeBlock(opts?: {
 // a form input and is a step larger; this one labels read-only content.
 export function sectionCaption(): CSSProperties {
   return {
-    fontSize: FONT.xs,
-    letterSpacing: ".08em",
-    fontWeight: 700,
+    fontFamily: "var(--te-font-display)",
+    fontSize: FONT.base,
+    letterSpacing: ".1em",
+    fontWeight: 800,
     color: COLORS.faint,
     textTransform: "uppercase",
   };
@@ -692,7 +732,8 @@ export function statusPillActive(status: string): CSSProperties {
     ...pill({ color: statusColor(status), size: "md", weight: 700 }),
     cursor: "pointer",
     outline: "none",
-    ...ringBorder({ fill: "var(--te-tab-fill)", shape: "pill" }),
+    ...ringBorder({ fill: "var(--te-tab-fill)", cornerPx: 6 }),
+    borderRadius: SHAPE.radiusChip,
   };
 }
 

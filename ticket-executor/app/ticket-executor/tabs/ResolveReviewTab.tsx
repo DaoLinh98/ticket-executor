@@ -79,7 +79,7 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
           </section>
           {review.comments.length > 0 && (
             <section>
-              <h3 style={{ margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.sm, fontWeight: 700, letterSpacing: ".16em", color: COLORS.textDim }}>REVIEW COMMENTS</h3>
+              <h3 style={{ margin: "0 0 12px", fontFamily: "var(--te-font-display)", fontSize: FONT.sm, fontWeight: 700, letterSpacing: ".16em", color: COLORS.textDim }}>REVIEW COMMENTS</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
                 {review.comments.map((c) => (
                   <div key={c.id} style={{ ...card({ padding: "12px 14px", border: c.status === "open" ? "#4A2626" : COLORS.borderSubtle, background: c.status === "open" ? "rgba(255,107,107,.05)" : COLORS.panelBg }), opacity: c.status === "resolved" ? 0.6 : 1 }}>
@@ -96,7 +96,7 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
           )}
           <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard(review.unresolvedCount > 0 ? "danger" : "success", { padding: "18px 20px", radius: "13px" }) }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: "#F3F5F9" }}>
+              <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)" }}>
                 {review.unresolvedCount > 0 ? "Unresolved review comments" : "All review comments resolved"}
               </div>
               <div style={{ fontSize: FONT.base, color: "#9A9FAD", marginTop: "2px" }}>

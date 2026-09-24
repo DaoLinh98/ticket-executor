@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, RefObject } from "react";
 import type { AskState } from "@/lib/ask";
-import { COLORS, FONT, card, ctaButtonStyle, dropdownPanelStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, ctaButtonStyle, dropdownPanelStyle, pill, ringBorder, tintedCard, chipShape } from "@/lib/ui";
 import type { LogLineView } from "../types";
 import LoadingRing from "../LoadingRing";
 
@@ -25,9 +25,9 @@ type Props = {
 };
 
 const STATUS: Record<AskState, [string, string]> = {
-  idle: ["ready", "#5B6273"],
-  running: ["running", "#F5B341"],
-  failed: ["failed", "#FF6B6B"],
+  idle: ["ready", "var(--te-faint)"],
+  running: ["running", "var(--te-warning)"],
+  failed: ["failed", "var(--te-danger)"],
 };
 
 // A terminal you can type into from a phone: the same Claude CLI the Open
@@ -117,17 +117,17 @@ export default function AskTab({
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "14px", animation: "fadeUp .4s both" }}>
-      <div style={{ position: "relative", borderRadius: "13px", overflow: "hidden", boxShadow: "0 24px 60px -34px #000", ...ringBorder({ fill: "#0A0B0E", duration: 5.5, shape: "none" }) }}>
+      <div style={{ position: "relative", borderRadius: "13px", overflow: "hidden", boxShadow: "0 24px 60px -34px #000", ...ringBorder({ fill: "var(--te-panel-bg-dark)", duration: 5.5, shape: "none" }) }}>
         <div style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", background: "repeating-linear-gradient(0deg,rgba(255,255,255,.016) 0px,rgba(255,255,255,.016) 1px,transparent 1px,transparent 3px)" }} />
-        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: "10px", padding: "11px 15px", borderBottom: "1px solid #1A1E25", background: "#0E1015" }}>
+        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: "10px", padding: "11px 15px", borderBottom: "1px solid var(--te-btn-ghost-fill)", background: "var(--te-inset-bg)" }}>
           <span style={{ display: "flex", gap: "6px" }}><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#3A3030" }} /><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#3A3830" }} /><span style={{ width: "11px", height: "11px", borderRadius: "50%", background: "#2F3A32" }} /></span>
-          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#6B7283", marginLeft: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>claude — {rootRepo}</span>
+          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "var(--te-text-muted)", marginLeft: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>claude — {rootRepo}</span>
           <div style={{ flex: 1 }} />
           {resuming && <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, letterSpacing: ".08em" }}>SESSION</span>}
           <span style={statusStyle}>{statusLabel}</span>
         </div>
         <div ref={logRef} className="te-scroll te-ask-log" style={{ position: "relative", zIndex: 1, height: "420px", overflowY: "auto", padding: "14px 17px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, lineHeight: 1.75 }}>
-          {logLines.length === 0 && <div style={{ color: "#5B6273" }}>Ask anything. It runs on the machine hosting this app, in {rootRepo}.</div>}
+          {logLines.length === 0 && <div style={{ color: "var(--te-faint)" }}>Ask anything. It runs on the machine hosting this app, in {rootRepo}.</div>}
           {logLines.map((l, i) => (
             <div key={i} style={{ display: "flex", gap: "12px" }}>
               <span style={l.style}>{l.text}</span>
@@ -178,7 +178,7 @@ export default function AskTab({
           aria-label="Prompt for Claude"
           style={{
             width: "100%", resize: "vertical", minHeight: "72px", padding: "10px 12px",
-            borderRadius: "9px", border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
+            ...chipShape(7), border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
             color: COLORS.text, fontFamily: "var(--font-mono), monospace", fontSize: FONT.md, lineHeight: 1.6,
             outline: "none",
           }}

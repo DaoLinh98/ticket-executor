@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "motion/react";
+import { reveal } from "../../Motion";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SelectMenu from "../../SelectMenu";
 import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
@@ -12,7 +14,6 @@ import {
   codeBlock,
   ctaButtonStyle,
   fieldInput,
-  fieldLabel,
   pill,
   sectionCaption,
   statusPill,
@@ -190,7 +191,7 @@ export default function ReportPage() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Report" kicker="D-AGENT · DAILY" icon={<path d="M8 3h8l4 4v14H4V3zM8 12h8M8 16h5" />} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -214,7 +215,7 @@ export default function ReportPage() {
         />
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
         <div style={{ maxWidth: "980px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "18px" }}>
           {error && (
             <div style={tintedCard("danger")}>
@@ -237,7 +238,7 @@ export default function ReportPage() {
                   <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{selectedCount} of {tickets.length} in this report</span>
                 </div>
 
-                <div style={{ ...card({ padding: "6px 13px" }), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                <motion.div {...reveal({ from: "left" })} style={{ ...card({ padding: "6px 13px" }), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                   <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{SPRINT_PLANNING_LABEL}</span>
                   <div style={{ flex: 1 }} />
                   <Check
@@ -250,17 +251,17 @@ export default function ReportPage() {
                     checked={draft.sprintPlanning.tomorrow}
                     onChange={(v) => setDraft((d) => ({ ...d, sprintPlanning: { ...d.sprintPlanning, tomorrow: v } }))}
                   />
-                </div>
+                </motion.div>
 
                 {tickets.length === 0 ? (
                   <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textDim }}>
                     {data?.notice || "Nothing open is assigned to you right now."}
                   </div>
                 ) : (
-                  tickets.map((t) => {
+                  tickets.map((t, i) => {
                     const e = entryOf(t);
                     return (
-                      <div key={t.id} style={{ ...card({ padding: "11px 13px" }), display: "flex", flexDirection: "column", gap: "9px", opacity: isListed(e) ? 1 : 0.72 }}>
+                      <motion.div key={t.id} {...reveal({ index: i })} style={{ ...card({ padding: "11px 13px" }), display: "flex", flexDirection: "column", gap: "9px", opacity: isListed(e) ? 1 : 0.72 }}>
                         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "5px" }}>
                           <span style={{ fontSize: FONT.md, fontWeight: 600, color: COLORS.text, lineHeight: 1.45, overflowWrap: "anywhere" }}>{ticketLine(t)}</span>
                           <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
@@ -300,13 +301,13 @@ export default function ReportPage() {
                           <Check label="Comment" checked={e.comment} onChange={(v) => patch(t, { comment: v })} />
                           <Check label="Block" checked={e.block} onChange={(v) => patch(t, { block: v })} />
                         </div>
-                      </div>
+                      </motion.div>
                     );
                   })
                 )}
               </section>
 
-              <section style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <motion.section {...reveal()} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={sectionCaption()}>Preview</span>
                   <div style={{ flex: 1 }} />
@@ -316,10 +317,10 @@ export default function ReportPage() {
                   </button>
                 </div>
                 <pre style={codeBlock({ padding: "14px 16px" })}>{text}</pre>
-                <span style={{ ...fieldLabel(), fontWeight: 500, color: COLORS.faint }}>
+                <span style={{ fontSize: FONT.sm, color: COLORS.faint }}>
                   Export copies exactly this.
                 </span>
-              </section>
+              </motion.section>
             </>
           )}
         </div>

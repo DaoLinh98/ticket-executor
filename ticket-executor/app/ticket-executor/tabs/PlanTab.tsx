@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { COLORS, FONT, card, ctaButtonStyle, pill, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, ctaButtonStyle, pill, ringBorder, tintedCard, chipShape } from "@/lib/ui";
 import { useBoltsContext } from "../../BoltsContext";
 import LoadingRing from "../LoadingRing";
 
@@ -95,7 +95,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeWidth="2.2" style={{ stroke: COLORS.accent }}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
         </span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>
+          <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: COLORS.text }}>
             {awaiting ? "Plan ready for your review" : hasPlan ? "Implementation plan" : "Drafting the plan…"}
           </div>
           <div style={{ fontSize: FONT.base, color: COLORS.textDim, marginTop: "2px" }}>
@@ -197,9 +197,9 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
             placeholder="e.g. don't touch the settings API — the mapping belongs in lib/tickets.ts instead"
             style={{
               width: "100%", minHeight: "90px", resize: "vertical", outline: "none",
-              fontFamily: "var(--font-hanken), sans-serif", fontSize: FONT.base, lineHeight: 1.6,
+              fontFamily: "var(--te-font-ui)", fontSize: FONT.base, lineHeight: 1.6,
               color: COLORS.text, background: "transparent", border: `1px solid ${COLORS.border}`,
-              borderRadius: "9px", padding: "10px 12px",
+              ...chipShape(7), padding: "10px 12px",
             }}
           />
           <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>
@@ -261,7 +261,7 @@ export default function PlanTab({ plan, awaiting, busy, busyAction, onApprove, o
 
       {!awaiting && !draft.trim() && (
         <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
-          <span style={{ ...pill({ color: COLORS.warning, border: COLORS.border, size: "md" }), ...ringBorder({ fill: "#1A1E25", ring: COLORS.warning, highlight: COLORS.warning, duration: 3, shape: "pill" }) }}>
+          <span style={{ ...pill({ color: COLORS.warning, border: COLORS.border, size: "md" }), ...ringBorder({ fill: "var(--te-btn-ghost-fill)", ring: COLORS.warning, highlight: COLORS.warning, duration: 3, shape: "pill" }) }}>
             Analyzing…
           </span>
         </div>

@@ -5,7 +5,7 @@ import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
 import { REACTION_KINDS, type MentionCandidate, type ReactionKind, type Ticket, type TicketComment } from "@/lib/types";
-import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, dropdownPanelStyle, initials, runDot, sectionCaption, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, dropdownPanelStyle, initials, runDot, sectionCaption, tintedCard, chipShape } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
 import type { Action, OverrideField, RunSummary } from "../types";
@@ -65,7 +65,7 @@ type Props = {
 // text a developer has to read closely before starting a run, so headings and
 // body both step up one size and one contrast level.
 const sectionHeading: CSSProperties = {
-  margin: "0 0 12px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.sm,
+  margin: "0 0 12px", fontFamily: "var(--te-font-display)", fontSize: FONT.sm,
   fontWeight: 700, letterSpacing: ".16em", color: COLORS.textDim,
 };
 
@@ -200,7 +200,7 @@ export default function OverviewTab({
               aria-label="New comment"
               style={{
                 width: "100%", resize: "vertical", minHeight: "72px", padding: "10px 12px",
-                borderRadius: "9px", border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
+                ...chipShape(7), border: `1px solid ${COLORS.borderSubtle}`, background: COLORS.panelBgDark,
                 color: COLORS.text, fontSize: FONT.md, lineHeight: 1.6, outline: "none",
               }}
             />
@@ -262,7 +262,7 @@ export default function OverviewTab({
                 <div style={{ flex: 1, minWidth: 0, ...card({ padding: "11px 14px", border: COLORS.borderSubtle }) }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
                     <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{cm.author}</span>
-                    <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "#2A2F3A" }}>commented {cm.date}</span>
+                    <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, textDecoration: "underline", textDecorationColor: "var(--te-btn-outline-border)" }}>commented {cm.date}</span>
                   </div>
                   <div style={{ marginTop: "5px" }}><RichText html={cm.text} /></div>
                   <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap", marginTop: "9px" }}>
@@ -332,7 +332,7 @@ export default function OverviewTab({
         <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={skill} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
         <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model, modelOptions)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v, modelOptions))} options={modelOptions.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
-        <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#9BA6E8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
+        <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "var(--te-indigo)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
         {rootRepoMissing && (
           <div style={{ gridColumn: "1 / -1", display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2" style={{ stroke: COLORS.warning, flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
@@ -359,9 +359,9 @@ export default function OverviewTab({
             Open Terminal
           </button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, ...card({ padding: "15px 18px", radius: "12px", border: "#23272F", background: COLORS.panelBgDark }) }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "#5B6273" }}>$</span><span style={{ color: "#8A90A0" }}>{cdCommand}</span></div>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "#C7CCD8" }}>{command}</span></div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, ...card({ padding: "15px 18px", radius: "12px", border: "var(--te-border)", background: COLORS.panelBgDark }) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--te-faint)" }}>$</span><span style={{ color: "var(--te-text-dim)" }}>{cdCommand}</span></div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "var(--te-text-soft)" }}>{command}</span></div>
         </div>
       </section>
       {history.length > 0 && (
@@ -371,8 +371,8 @@ export default function OverviewTab({
             {history.map((run) => (
               <button key={run.id} onClick={(e) => onOpenRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s", ...card({ padding: "10px 13px", border: COLORS.borderSubtle }) }}>
                 <span style={{ ...runDot(run.state), width: "8px", height: "8px" }} />
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "#C7CCD8", flex: "0 0 auto" }}>{run.skill}</span>
-                <span style={{ fontSize: FONT.sm, color: "#5B6273", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "var(--te-text-soft)", flex: "0 0 auto" }}>{run.skill}</span>
+                <span style={{ fontSize: FONT.sm, color: "var(--te-faint)", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
                 <span style={{ fontSize: FONT.sm, fontWeight: 600, color: RUN_COLOR[run.state] }}>{RUN_LABEL[run.state]}</span>
               </button>
             ))}
@@ -381,7 +381,7 @@ export default function OverviewTab({
       )}
       <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard("accent", { padding: "20px 22px", radius: "14px" }) }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: "#F3F5F9", marginBottom: "3px" }}>{ctaTitle}</div>
+          <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)", marginBottom: "3px" }}>{ctaTitle}</div>
           <div style={{ fontSize: FONT.base, color: "#9A9FAD" }}>{ctaSub}</div>
         </div>
         <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={bannerCtaStyle}>

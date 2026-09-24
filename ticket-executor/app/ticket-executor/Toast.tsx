@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { COLORS, FONT, toastStyle } from "@/lib/ui";
+import { COLORS, FONT, toastStyle, chipShape } from "@/lib/ui";
 
 /** One notification. `id` exists so the caller can mount a fresh Toast per
  *  message (`key={toast.id}`) — that is what restarts both the slide-in and the
@@ -41,7 +41,7 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
     <div
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, maxWidth: "min(560px, calc(100vw - 48px))", display: "flex", alignItems: "flex-start", gap: "11px", padding: "14px 16px 14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "#14171D", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}
+      style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, maxWidth: "min(560px, calc(100vw - 48px))", display: "flex", alignItems: "flex-start", gap: "11px", padding: "14px 16px 14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "var(--te-raised-bg)", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}
     >
       {toast.kind === "error" ? (
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}><path d="M6 6l12 12M18 6L6 18" style={{ strokeDasharray: 34, strokeDashoffset: 34, animation: "draw .5s .1s ease forwards" }} /></svg>
@@ -62,7 +62,7 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
         <button
           onClick={onClose}
           title="Dismiss"
-          style={{ flex: "0 0 auto", width: "20px", height: "20px", marginTop: "1px", display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "6px", background: "transparent", color: COLORS.textDim, cursor: "pointer" }}
+          style={{ flex: "0 0 auto", width: "20px", height: "20px", marginTop: "1px", display: "flex", alignItems: "center", justifyContent: "center", border: "none", ...chipShape(6), background: "transparent", color: COLORS.textDim, cursor: "pointer" }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>

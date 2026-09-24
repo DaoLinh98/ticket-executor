@@ -92,7 +92,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
   const pathname = usePathname();
   const { fireBoltFromEvent } = useBoltsContext();
   // Below the breakpoint the rail is an off-canvas drawer (globals.css), opened
-  // from the hamburger every page header carries.
+  // from the floating toggle or an edge swipe.
   const isMobile = useIsMobile();
   const { open: navOpen, setOpen: setNavOpen } = useMobileNav();
   // Collapsed rail: icons only. Remembered so it survives navigation/reload.
@@ -146,7 +146,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         gap: "6px",
         padding: "20px 14px",
         borderRight: "1px solid rgba(255,255,255,.06)",
-        background: "rgba(12,14,19,.82)",
+        background: "var(--te-sidebar-bg)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
         ["--accent" as string]: COLORS.accent,
@@ -160,7 +160,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         {!railCollapsed && (
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, minWidth: 0 }}>
             <span style={logoText(FONT.xl)}>D-Agent</span>
-            <span style={{ fontSize: "11px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
+            <span style={{ fontSize: "11px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,var(--te-faint) 0%,var(--te-faint) 30%,#FFD9BE 45%,var(--accent) 52%,var(--te-faint) 65%,var(--te-faint) 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
           </div>
         )}
       </div>
@@ -188,7 +188,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
           // a visible one.
           pointerEvents: hovered ? "auto" : "none",
           transition: "color .15s, opacity .15s ease",
-          ...ringBorder({ fill: "#14171D", shape: "pill", duration: 3.4 }),
+          ...ringBorder({ fill: "var(--te-raised-bg)", duration: 3.4, cornerPx: 6 }),
         }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = COLORS.textDim; }}
@@ -217,7 +217,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
             transition: "color .15s, background .15s",
           };
           const style: CSSProperties = active
-            ? { ...baseStyle, ...ringBorder({ fill: "#1A1E25", duration: 4, cornerPx: 8 }) }
+            ? { ...baseStyle, ...ringBorder({ fill: "var(--te-btn-ghost-fill)", duration: 4, cornerPx: 8 }) }
             : { ...baseStyle, clipPath: clipCorner(8) };
           return (
             <Link
@@ -265,7 +265,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
           fontWeight: 600,
           color: COLORS.textDim,
           cursor: "pointer",
-          border: "1.5px solid #2A2F3A",
+          border: "1.5px solid var(--te-btn-outline-border)",
           background: "transparent",
           clipPath: clipCorner(8),
           transition: "color .15s, border-color .15s",

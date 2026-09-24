@@ -10,26 +10,34 @@
 :root {
   /* palette — mirrors COLORS in lib/ui.ts, one for one */
   --te-accent: #FB7250;
+  --te-on-accent: #0B0C10;
   --te-success: #35D6A4;
   --te-danger: #FF6B6B;
   --te-warning: #F5B341;
   --te-info: #5B9DFF;
   --te-indigo: #9BA6E8;
-  --te-text: #ECEEF3;
-  --te-text-soft: #C7CCD8;
-  --te-text-dim: #8A90A0;
-  --te-text-muted: #6B7283;
-  --te-faint: #5B6273;
-  --te-border: #262B36;
-  --te-border-subtle: #1E232C;
-  --te-panel-bg: #111419;
-  --te-panel-bg-dark: #0A0B0E;
+  --te-text: #FFFFFF;
+  --te-text-soft: #D8DDE0;
+  --te-text-dim: #B0B8BC;
+  --te-text-muted: #8C999F;
+  --te-faint: #6B7A80;
+  --te-border: rgba(255,255,255,.10);
+  --te-border-subtle: rgba(255,255,255,.06);
+  --te-panel-bg: #132733;   /* opaque: ringBorder fills must not let the conic show through */
+  --te-panel-bg-dark: #07161F;
 
-  /* surfaces that were inline literals before the theme layer existed */
-  --te-app-bg: #06070A;
-  --te-inset-bg: #0E1015;   /* inputs, code blocks, dropdown panels */
-  --te-modal-bg: #14171D;   /* modal + toast shells */
-  --te-scrim: rgba(6,7,9,.72); /* the dimmed sheet a modal sits on */
+  /* surfaces */
+  --te-app-bg: #0A1F2B;
+  --te-inset-bg: #1E313C;   /* inputs, code blocks, dropdown panels — rgba(255,255,255,.08) over app-bg, opaque */
+  --te-inset-bg-focus: #2A3C46; /* the same field focused — .14 over app-bg */
+  --te-modal-bg: #0F2735;   /* modal + toast shells */
+  --te-raised-bg: #13293A;  /* opaque chip / ring fill one step above the page */
+  --te-header-bg: rgba(15,39,53,.72);  /* page header strip over the backdrop */
+  --te-sidebar-bg: rgba(8,24,33,.86);  /* nav rail / drawer over the backdrop */
+  --te-page-veil: linear-gradient(110deg,rgba(10,31,43,.55) 0%,rgba(10,31,43,.25) 52%,rgba(10,31,43,0) 100%);
+  --te-scrim: rgba(4,14,20,.72); /* the dimmed sheet a modal sits on */
+  --te-menu-bg: #6682C2;    /* the phone's full-screen nav overlay */
+  --te-sunset: linear-gradient(180deg,#C8C7B3 0%,#F0B172 50%,#EA7C58 100%);
 
   /* shape */
   --te-clip-6: polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
@@ -43,67 +51,78 @@
   --te-panel-blur: none;
 
   /* type */
-  --te-font-ui: var(--font-hanken), 'Hanken Grotesk', sans-serif;
-  --te-font-display: var(--font-space), 'Space Grotesk', sans-serif;
+  --te-font-ui: Helvetica, Arial, sans-serif;
+  --te-font-display: var(--font-barlow), 'Barlow Condensed', Helvetica, Arial, sans-serif;
   --te-font-mono: var(--font-mono), 'JetBrains Mono', monospace;
+
+  /* motion — mirrors MOTION in lib/ui.ts */
+  --te-ease-expo: cubic-bezier(.16,1,.3,1);
+  --te-ease-out: cubic-bezier(.25,.46,.45,.94);
 
   --te-selection-bg: rgba(251,114,80,.35);
 
   /* tinted banner cards (tintedCard) and toast shells */
-  --te-tint-success-bd: #24382F;
-  --te-tint-success-bg: linear-gradient(120deg,rgba(53,214,164,.08),rgba(53,214,164,.02));
-  --te-tint-danger-bd: #4A2626;
-  --te-tint-danger-bg: rgba(255,107,107,.06);
-  --te-tint-warning-bd: #3A2F22;
-  --te-tint-warning-bg: rgba(245,179,65,.06);
-  --te-tint-accent-bd: #2A2018;
+  --te-tint-success-bd: rgba(53,214,164,.28);
+  --te-tint-success-bg: rgba(53,214,164,.08);
+  --te-tint-danger-bd: rgba(255,107,107,.30);
+  --te-tint-danger-bg: rgba(255,107,107,.08);
+  --te-tint-warning-bd: rgba(245,179,65,.30);
+  --te-tint-warning-bg: rgba(245,179,65,.08);
+  --te-tint-accent-bd: rgba(251,114,80,.28);
   --te-tint-accent-bg: linear-gradient(120deg,rgba(251,114,80,.09),rgba(251,114,80,.02));
 
   /* Semantic data hues — ADO work-item types and ticket statuses. Named by hue
      rather than by role because one hue serves several roles (amber is both
      "Active" and "Running"), and a status map that pointed at role tokens would
      collapse distinctions the board relies on. */
-  --te-hue-purple: #9B8CFF;   --te-hue-purple-tint: rgba(155,140,255,.13);
-  --te-hue-red: #FF6B6B;      --te-hue-red-tint: rgba(255,107,107,.13);
-  --te-hue-blue: #5B9DFF;     --te-hue-blue-tint: rgba(91,157,255,.13);
-  --te-hue-green: #35D6A4;    --te-hue-green-tint: rgba(53,214,164,.13);
-  --te-hue-amber: #F5B341;    --te-hue-amber-tint: rgba(245,179,65,.13);
-  --te-hue-orange: #FF9F45;   --te-hue-orange-tint: rgba(255,159,69,.13);
-  --te-hue-neutral: #8A90A0;
+  --te-hue-purple: #9B8CFF;   --te-hue-purple-tint: rgba(155,140,255,.14);
+  --te-hue-red: #FF6B6B;      --te-hue-red-tint: rgba(255,107,107,.14);
+  --te-hue-blue: #5B9DFF;     --te-hue-blue-tint: rgba(91,157,255,.14);
+  --te-hue-green: #35D6A4;    --te-hue-green-tint: rgba(53,214,164,.14);
+  --te-hue-amber: #F5B341;    --te-hue-amber-tint: rgba(245,179,65,.14);
+  --te-hue-orange: #FF9F45;   --te-hue-orange-tint: rgba(255,159,69,.14);
+  --te-hue-neutral: #B0B8BC;
 
   /* Button chrome. Each variant is a {fill, text} pair plus the ring colours
-     ringBorder() sweeps. */
+     ringBorder() sweeps. Fills stay opaque: a translucent fill lets the
+     spinning conic bleed through the whole button. */
   --te-btn-primary-fill: var(--te-accent);
-  --te-btn-primary-text: #0B0C10;
+  --te-btn-primary-text: var(--te-on-accent);
   --te-btn-primary-shadow: none;
-  --te-btn-success-fill: #162F2C;
+  --te-btn-success-fill: #0F3A36;
   --te-btn-success-text: #5BE8B8;
   --te-btn-success-sheen: #baf5e3;
-  --te-btn-warning-fill: #2A2E38;
-  --te-btn-warning-text: #C7CCD8;
-  --te-btn-danger-fill: #2E1A1C;
+  --te-btn-warning-fill: #243844;
+  --te-btn-warning-text: #D8DDE0;
+  --te-btn-danger-fill: #33222A;
   --te-btn-danger-text: #FFB3AD;
   --te-btn-danger-sheen: #ffd3ce;
-  --te-btn-outline-border: #2A2F3A;
-  --te-btn-outline-text: #C7CCD8;
-  --te-btn-ghost-fill: #1A1E25;
-  --te-btn-ghost-text: #ECEEF3;
-  --te-tab-fill: #171A21;
-  --te-tab-text: #F3F5F9;
-  --te-tab-disabled-text: #3A4150;
+  --te-btn-outline-border: #2A4452;
+  --te-btn-outline-text: #D8DDE0;
+  --te-btn-ghost-fill: #1E313C;
+  --te-nav-toggle-fill: rgba(30,49,60,.55);
+  --te-btn-ghost-text: #FFFFFF;
+  --te-tab-fill: #172B37;
+  --te-tab-text: #FFFFFF;
+  --te-tab-disabled-text: #4A5C64;
 
   /* scrollbars */
-  --te-scroll: #2A2F3A;
-  --te-scroll-hover: #39404E;
+  --te-scroll: rgba(255,255,255,.14);
+  --te-scroll-hover: rgba(255,255,255,.24);
 }
 
 /* Ported verbatim from the prototype (Ticket Executor.dc.html) — do not restyle. */
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;height:100%;background:var(--te-app-bg);}
+html,body{margin:0;padding:0;height:100%;background:var(--te-app-bg);color:var(--te-text);}
 body{font-family:var(--te-font-ui);-webkit-font-smoothing:antialiased;}
 ::selection{background:var(--te-selection-bg);color:#fff;}
 button{font-family:inherit;}
 input{font-family:inherit;}
+input[type=checkbox],input[type=radio]{accent-color:var(--te-accent);}
+/* Field focus (MOTION): fieldInput() paints var(--te-field-bg), so focus only
+   swaps the variable and nudges the scale — no !important over the inline style. */
+input:not([type=checkbox]):not([type=radio]),textarea,select{transition:transform .25s var(--te-ease-expo),background-color .25s ease;}
+input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:var(--te-inset-bg-focus);transform:scale(1.01);}
 ::-webkit-scrollbar{width:10px;height:10px;}
 ::-webkit-scrollbar-thumb{background:var(--te-scroll);border-radius:8px;border:2px solid transparent;background-clip:padding-box;}
 ::-webkit-scrollbar-thumb:hover{background:var(--te-scroll-hover);}
@@ -115,27 +134,28 @@ input{font-family:inherit;}
 .te-scroll{scrollbar-width:thin;scrollbar-color:var(--te-scroll) transparent;overscroll-behavior:contain;}
 .te-scroll::-webkit-scrollbar{width:10px;height:10px;}
 .te-scroll::-webkit-scrollbar-track{background:transparent;margin:4px 0;}
-.te-scroll::-webkit-scrollbar-thumb{background:#2A2F3A;border-radius:999px;border:3px solid transparent;background-clip:padding-box;min-height:40px;transition:background .2s ease;}
-.te-scroll:hover::-webkit-scrollbar-thumb{background:#39404E;}
-.te-scroll::-webkit-scrollbar-thumb:hover{background:#4A5262;}
+.te-scroll::-webkit-scrollbar-thumb{background:var(--te-btn-outline-border);border-radius:999px;border:3px solid transparent;background-clip:padding-box;min-height:40px;transition:background .2s ease;}
+.te-scroll:hover::-webkit-scrollbar-thumb{background:var(--te-scroll-hover);}
+.te-scroll::-webkit-scrollbar-thumb:hover{background:var(--te-text-muted);}
 .te-scroll::-webkit-scrollbar-corner{background:transparent;}
 .te-scroll--smooth{scroll-behavior:smooth;}
 @media (prefers-reduced-motion: reduce){.te-scroll--smooth{scroll-behavior:auto;}}
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
-@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
-@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
-@keyframes slideIn{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeIn{from{opacity:0;animation-timing-function:var(--te-ease-out);}to{opacity:1;}}
+@keyframes slideIn{from{opacity:0;transform:translateY(24px) scale(.97);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0) scale(1);}}
 @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.82);}}
 @keyframes gridScroll{to{background-position:44px 44px;}}
 @keyframes meshFloat{0%,100%{transform:translate(0,0);}50%{transform:translate(-28px,26px);}}
 @keyframes ringPulse{0%{transform:scale(.55);opacity:.7;}100%{transform:scale(1.8);opacity:0;}}
 @keyframes corePulse{0%,100%{transform:scale(.82);opacity:.55;}50%{transform:scale(1.22);opacity:1;}}
 @keyframes flow{0%{background-position:0 0;}100%{background-position:0 20px;}}
-@keyframes lineIn{from{opacity:0;transform:translateX(-7px);}to{opacity:1;transform:translateX(0);}}
+@keyframes lineIn{from{opacity:0;transform:translateX(-12px);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateX(0);}}
 @keyframes growX{from{transform:scaleX(0);}to{transform:scaleX(1);}}
 @keyframes sheen{0%{transform:translateX(0);}55%,100%{transform:translateX(620%);}}
 @keyframes draw{to{stroke-dashoffset:0;}}
+@keyframes navItemIn{from{opacity:0;transform:translateX(-28px);}to{opacity:1;transform:translateX(0);}}
 /* Marching-ants flow along a dashed SVG path — the Guide page's two-lane
    "app REST vs Claude MCP" diagram. Pair with stroke-dasharray:6 4. */
 @keyframes dashFlow{to{stroke-dashoffset:-20;}}
@@ -157,26 +177,26 @@ input{font-family:inherit;}
 html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border),var(--te-btn-outline-border));}
 
 /* markdown (Result tab, Plan tab) — inherits prototype palette */
-.md-body{font-size:14.5px;line-height:1.75;color:#C7CCD8;}
+.md-body{font-size:14.5px;line-height:1.75;color:var(--te-text-soft);}
 .md-body>*:first-child{margin-top:0;}
-.md-body h1,.md-body h2,.md-body h3{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:26px 0 12px;line-height:1.25;}
+.md-body h1,.md-body h2,.md-body h3{font-family:var(--te-font-display);color:var(--te-text);margin:26px 0 12px;line-height:1.25;}
 .md-body h1{font-size:20px;}
 .md-body h2{font-size:15px;letter-spacing:.02em;text-transform:uppercase;padding-left:11px;border-left:3px solid var(--accent);}
-.md-body h3{font-size:14.5px;color:#DEE1E9;}
+.md-body h3{font-size:14.5px;color:var(--te-text);}
 .md-body p{margin:0 0 12px;}
 .md-body ul,.md-body ol{margin:0 0 12px;padding-left:22px;}
 .md-body li{margin:5px 0;}
-.md-body li::marker{color:#5B6273;}
-.md-body hr{border:none;border-top:1px solid #1E232C;margin:22px 0;}
-.md-body blockquote{margin:0 0 12px;padding:9px 14px;border-left:3px solid #2A2F3A;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:#8A90A0;}
-.md-body a{color:#9BA6E8;}
-.md-body code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:#0A0B0E;border:1px solid #23272F;border-radius:5px;padding:1px 5px;color:#C7CCD8;}
-.md-body pre{background:#0A0B0E;border:1px solid #23272F;border-radius:12px;padding:15px 17px;overflow-x:auto;margin:0 0 14px;}
+.md-body li::marker{color:var(--te-faint);}
+.md-body hr{border:none;border-top:1px solid var(--te-border-subtle);margin:22px 0;}
+.md-body blockquote{margin:0 0 12px;padding:9px 14px;border-left:3px solid var(--te-btn-outline-border);background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:var(--te-text-dim);}
+.md-body a{color:var(--te-indigo);}
+.md-body code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:5px;padding:1px 5px;color:var(--te-text-soft);}
+.md-body pre{background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:12px;padding:15px 17px;overflow-x:auto;margin:0 0 14px;}
 .md-body pre code{border:none;background:none;padding:0;}
-.md-body strong{color:#E4E7EE;}
-.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:14px;border-radius:9px;overflow:hidden;border:1px solid #1E232C;}
-.md-body th,.md-body td{border:1px solid #1E232C;padding:8px 12px;text-align:left;}
-.md-body th{background:#151922;color:#C7CCD8;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
+.md-body strong{color:var(--te-text);}
+.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:14px;border-radius:9px;overflow:hidden;border:1px solid var(--te-border-subtle);}
+.md-body th,.md-body td{border:1px solid var(--te-border-subtle);padding:8px 12px;text-align:left;}
+.md-body th{background:var(--te-raised-bg);color:var(--te-text-soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
 .md-body tbody tr:nth-child(even){background:rgba(255,255,255,.015);}
 
 /* Global interaction feedback — every button/link across the app gets the
@@ -184,9 +204,9 @@ html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border)
    ever feels inert. Pseudo-classes only (no JS mouse handlers needed):
    inline per-element "transition"/"transform" styles still win where set,
    this just guarantees a consistent baseline everywhere else. */
-button:not(:disabled),a[href]{transition:transform .32s cubic-bezier(.16,1,.3,1),filter .32s ease,box-shadow .3s ease;}
-button:not(:disabled):hover,a[href]:hover{transform:translateY(-1px) scale(1.025);filter:brightness(1.12);}
-button:not(:disabled):active,a[href]:active{transform:scale(.94);transition:transform .08s cubic-bezier(.34,1.56,.64,1),filter .08s ease;filter:brightness(.95);}
+button:not(:disabled),a[href]{transition:transform .32s var(--te-ease-expo),filter .32s ease,box-shadow .3s ease,background-color .25s ease;}
+button:not(:disabled):hover,a[href]:hover{transform:translateY(-2px) scale(1.03);filter:brightness(1.08);}
+button:not(:disabled):active,a[href]:active{transform:scale(.97);transition:transform .08s var(--te-ease-out),filter .08s ease;filter:brightness(.95);}
 button:disabled{cursor:not-allowed;}
 @media (prefers-reduced-motion: reduce){
   button:not(:disabled):hover,a[href]:hover,button:not(:disabled):active,a[href]:active{transform:none;}
@@ -198,11 +218,11 @@ button:disabled{cursor:not-allowed;}
    lib/richText.ts. The rules below only style it; nothing here may assume a
    tag is present, since the source is whoever wrote the ticket.
    Sizes come from the FONT scale in lib/ui.ts (base 14 / md 15 / sm 12.5). */
-.te-rich{font-size:15px;line-height:1.7;color:#C7CCD8;overflow-wrap:anywhere;}
+.te-rich{font-size:15px;line-height:1.7;color:var(--te-text-soft);overflow-wrap:anywhere;}
 .te-rich>*:first-child{margin-top:0;}
 .te-rich>*:last-child{margin-bottom:0;}
 .te-rich p,.te-rich div{margin:0 0 10px;}
-.te-rich h1,.te-rich h2,.te-rich h3,.te-rich h4,.te-rich h5,.te-rich h6{font-family:var(--font-space),'Space Grotesk',sans-serif;color:#F3F5F9;margin:20px 0 10px;line-height:1.3;}
+.te-rich h1,.te-rich h2,.te-rich h3,.te-rich h4,.te-rich h5,.te-rich h6{font-family:var(--te-font-display);color:var(--te-text);margin:20px 0 10px;line-height:1.3;}
 .te-rich h1{font-size:20px;}
 .te-rich h2{font-size:15px;}
 .te-rich h3,.te-rich h4,.te-rich h5,.te-rich h6{font-size:15px;}
@@ -210,27 +230,27 @@ button:disabled{cursor:not-allowed;}
    each level gets its own marker style instead of collapsing to plain dots. */
 .te-rich ul,.te-rich ol{margin:0 0 10px;padding-left:26px;}
 .te-rich li{margin:5px 0;}
-.te-rich li::marker{color:#8A90A0;}
+.te-rich li::marker{color:var(--te-text-dim);}
 .te-rich ol{list-style:decimal;}
 .te-rich ol ol{list-style:lower-alpha;}
 .te-rich ol ol ol{list-style:lower-roman;}
 .te-rich ul{list-style:disc;}
 .te-rich ul ul{list-style:circle;}
 .te-rich ul ul ul{list-style:square;}
-.te-rich strong,.te-rich b{color:#ECEEF3;}
-.te-rich a{color:#9BA6E8;}
-.te-rich code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:#0A0B0E;border:1px solid #23272F;border-radius:5px;padding:1px 5px;color:#C7CCD8;}
-.te-rich pre{background:#0A0B0E;border:1px solid #23272F;border-radius:11px;padding:13px 15px;overflow-x:auto;margin:0 0 12px;}
+.te-rich strong,.te-rich b{color:var(--te-text);}
+.te-rich a{color:var(--te-indigo);}
+.te-rich code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:5px;padding:1px 5px;color:var(--te-text-soft);}
+.te-rich pre{background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:11px;padding:13px 15px;overflow-x:auto;margin:0 0 12px;}
 .te-rich pre code{border:none;background:none;padding:0;}
-.te-rich blockquote{margin:0 0 10px;padding:8px 13px;border-left:3px solid #2A2F3A;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:#8A90A0;}
-.te-rich hr{border:none;border-top:1px solid #1E232C;margin:16px 0;}
-.te-rich table{border-collapse:collapse;width:100%;margin:0 0 12px;font-size:14px;border:1px solid #1E232C;border-radius:9px;overflow:hidden;}
-.te-rich th,.te-rich td{border:1px solid #1E232C;padding:7px 11px;text-align:left;vertical-align:top;}
-.te-rich th{background:#151922;color:#C7CCD8;font-weight:700;}
+.te-rich blockquote{margin:0 0 10px;padding:8px 13px;border-left:3px solid var(--te-btn-outline-border);background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:var(--te-text-dim);}
+.te-rich hr{border:none;border-top:1px solid var(--te-border-subtle);margin:16px 0;}
+.te-rich table{border-collapse:collapse;width:100%;margin:0 0 12px;font-size:14px;border:1px solid var(--te-border-subtle);border-radius:9px;overflow:hidden;}
+.te-rich th,.te-rich td{border:1px solid var(--te-border-subtle);padding:7px 11px;text-align:left;vertical-align:top;}
+.te-rich th{background:var(--te-raised-bg);color:var(--te-text-soft);font-weight:700;}
 /* Screenshots are usually wider than the pane and carry the width/height the
    author pasted — cap them to the column and drop the fixed height, or the
    image renders squashed. */
-.te-rich img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid #23272F;border-radius:9px;background:#0A0B0E;}
+.te-rich img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid var(--te-border);border-radius:9px;background:var(--te-panel-bg-dark);}
 
 /* ============================================================================
    RESPONSIVE LAYER — phones and small tablets (iPhone 13 · iPhone 17 Pro).
@@ -277,19 +297,42 @@ button:disabled{cursor:not-allowed;}
     height: var(--te-app-h) !important;
     overflow-y: auto;
     transform: translateX(-100%);
-    transition: transform .24s cubic-bezier(.2,.8,.2,1) !important;
+    transition: transform .6s var(--te-ease-expo) !important;
     padding-top: calc(20px + env(safe-area-inset-top)) !important;
     padding-left: calc(14px + env(safe-area-inset-left)) !important;
     padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important;
   }
   .te-sidebar[data-mobile-open="true"] { transform: translateX(0); }
+  .te-sidebar[data-mobile-open="true"] nav > a { animation: navItemIn .6s var(--te-ease-expo) both; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(2) { animation-delay: .05s; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(3) { animation-delay: .1s; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(4) { animation-delay: .15s; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(5) { animation-delay: .2s; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(6) { animation-delay: .25s; }
+  .te-sidebar[data-mobile-open="true"] nav > a:nth-child(n+7) { animation-delay: .3s; }
+  @media (prefers-reduced-motion: reduce) {
+    .te-sidebar { transition: none !important; }
+    .te-sidebar[data-mobile-open="true"] nav > a { animation-name: fadeIn; }
+  }
   .te-nav-scrim {
     display: block;
     position: fixed; inset: 0; z-index: 59;
     background: var(--te-scrim);
     animation: fadeIn .18s ease-out both;
   }
-  .te-nav-toggle { display: inline-flex !important; }
+  .te-nav-toggle {
+    display: inline-flex !important;
+    position: fixed;
+    top: calc(50% + 100% / 6); left: calc(8px + env(safe-area-inset-left));
+    z-index: 58;
+    opacity: .6;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transform: translateY(-50%);
+    transition: opacity .25s ease, transform .4s var(--te-ease-expo);
+  }
+  .te-nav-toggle:active { opacity: 1; transform: translateY(-50%) scale(.92); }
+  .te-nav-toggle[data-open="true"] { opacity: 0; pointer-events: none; transform: translateY(-50%) translateX(-120%); }
 
   /* ---- page chrome ---------------------------------------------------- */
   .te-page-header {

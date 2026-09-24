@@ -35,7 +35,7 @@ const RANGES: Record<string, number> = {
 };
 
 const sectionHeading: CSSProperties = {
-  margin: "0 0 14px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xs,
+  margin: "0 0 14px", fontFamily: "var(--te-font-display)", fontSize: FONT.xs,
   fontWeight: 700, letterSpacing: ".16em", color: COLORS.faint,
 };
 
@@ -45,7 +45,7 @@ function TierHeading({ n, title, blurb }: { n: string; title: string; blurb: str
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: "6px 0 -8px" }}>
       <span style={{ ...pill({ color: COLORS.accent, border: COLORS.border, size: "xs", weight: 700 }) }}>{n}</span>
-      <span style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
+      <span style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
       <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, flex: 1, minWidth: 0 }}>{blurb}</span>
     </div>
   );
@@ -70,7 +70,7 @@ function KpiTile({
       onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
     >
       <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: big ? "34px" : "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontFamily: "var(--te-font-display)", fontSize: big ? "34px" : "26px", fontWeight: 700, color: tone ?? COLORS.text, lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{sub}</div>}
       {/* The comparison baseline, stated on the tile itself — a leverage number
           means nothing without saying what it is leverage *over*. */}
@@ -380,7 +380,7 @@ function DashboardPageInner() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", background: "transparent", color: COLORS.text, display: "flex", flexDirection: "column", ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(14,17,23,.72)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
+      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "16px", padding: "0 22px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
         <PageHeading title="Run Metrics" kicker="D-AGENT · ANALYTICS" icon={<path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />} />
         <div style={{ flex: 1 }} />
         <NotificationCenter />
@@ -400,7 +400,7 @@ function DashboardPageInner() {
         </div>
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "linear-gradient(110deg,rgba(6,7,10,.5) 0%,rgba(6,7,10,.22) 52%,rgba(6,7,10,0) 100%)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "var(--te-page-veil)" }}>
         <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>
           {error && (
             <div style={{ ...tintedCard("danger"), animation: "fadeUp .4s both" }}>
@@ -467,7 +467,7 @@ function DashboardPageInner() {
                     ].map((t) => (
                       <div key={t.l}>
                         <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{t.l}</div>
-                        <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xl, fontWeight: 700, color: t.c }}>{t.v}</div>
+                        <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.xl, fontWeight: 700, color: t.c }}>{t.v}</div>
                       </div>
                     ))}
                   </div>
@@ -542,7 +542,7 @@ function DashboardPageInner() {
                       ].map((s) => (
                         <div key={s.l}>
                           <div style={{ fontSize: FONT.xs, letterSpacing: ".13em", color: COLORS.faint, fontWeight: 600, marginBottom: "6px" }}>{s.l}</div>
-                          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.xl, fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
+                          <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.xl, fontWeight: 700, color: COLORS.text }}>{data.speed.count ? fmtMs(s.v) : "—"}</div>
                         </div>
                       ))}
                     </div>

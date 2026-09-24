@@ -3,12 +3,12 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Reactor from "../Reactor";
-import { COLORS, FONT, ctaButtonStyle, logoText, modalShellStyle, ringBorder, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, ctaButtonStyle, logoText, modalShellStyle, ringBorder, tintedCard, chipShape } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 
 const fieldInputStyle: CSSProperties = {
-  height: "42px", padding: "0 40px 0 13px", border: `1px solid ${COLORS.border}`, borderRadius: "9px",
-  background: "#0E1015", color: COLORS.text, fontFamily: "var(--font-mono), monospace",
+  height: "42px", padding: "0 40px 0 13px", border: `1px solid ${COLORS.border}`, ...chipShape(7),
+  background: "var(--te-inset-bg)", color: COLORS.text, fontFamily: "var(--font-mono), monospace",
   fontSize: FONT.base, outline: "none", width: "100%", transition: "border-color .18s, box-shadow .18s",
 };
 const labelStyle: CSSProperties = {
@@ -54,7 +54,7 @@ export default function LoginPage() {
       style={{
         ["--accent" as string]: COLORS.accent,
         position: "relative", minHeight: "var(--te-app-h)", display: "flex", alignItems: "center", justifyContent: "center",
-        background: "#06070A", padding: "24px", overflow: "hidden",
+        background: "var(--te-app-bg)", padding: "24px", overflow: "hidden",
       }}
     >
       <Reactor accent={COLORS.accent} />
@@ -81,7 +81,7 @@ export default function LoginPage() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
             <span style={logoText(FONT.xl)}>D-Agent</span>
-            <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "5px", background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SIGN IN TO CONTINUE</span>
+            <span style={{ fontSize: FONT.xs, letterSpacing: ".16em", fontWeight: 600, marginTop: "5px", background: "linear-gradient(90deg,var(--te-faint) 0%,var(--te-faint) 30%,#FFD9BE 45%,var(--accent) 52%,var(--te-faint) 65%,var(--te-faint) 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SIGN IN TO CONTINUE</span>
           </div>
         </div>
 

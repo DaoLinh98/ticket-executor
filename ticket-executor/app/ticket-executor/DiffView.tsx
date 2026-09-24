@@ -104,7 +104,7 @@ export default function DiffView({ diff }: { diff: string }) {
   let firstChangeAssigned = false;
 
   if (!rows.length) {
-    return <div style={{ padding: "0 20px", color: "#5B6273", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm }}>No diff content available for this file.</div>;
+    return <div style={{ padding: "0 20px", color: "var(--te-faint)", fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm }}>No diff content available for this file.</div>;
   }
 
   return (
@@ -127,7 +127,7 @@ export default function DiffView({ diff }: { diff: string }) {
               padding: "1px 20px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
-              color: isAdd ? "#5BE8B8" : isDel ? "#FF8F8F" : isHunk ? "#9BA6E8" : isMeta ? "#5B6273" : "#C7CCD8",
+              color: isAdd ? "var(--te-btn-success-text)" : isDel ? "#FF8F8F" : isHunk ? "var(--te-indigo)" : isMeta ? "var(--te-faint)" : "var(--te-text-soft)",
               background: isAdd ? "rgba(53,214,164,.08)" : isDel ? "rgba(255,107,107,.08)" : "transparent",
             }}
           >

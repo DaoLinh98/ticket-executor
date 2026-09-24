@@ -31,7 +31,7 @@ export default function ProviderTag() {
   return (
     <span
       title="Connected work-tracking provider"
-      style={{ whiteSpace: "nowrap", fontSize: "9.5px", letterSpacing: ".14em", fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}
+      style={{ whiteSpace: "nowrap", fontSize: "9.5px", letterSpacing: ".14em", fontWeight: 600, background: "linear-gradient(90deg,var(--te-faint) 0%,var(--te-faint) 30%,#FFD9BE 45%,var(--accent) 52%,var(--te-faint) 65%,var(--te-faint) 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}
     >
       CONNECTING · {providerMeta(id).short}
     </span>

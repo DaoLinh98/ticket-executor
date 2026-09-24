@@ -100,10 +100,10 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "26px", animation: "fadeUp .35s both" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "14px", ...tintedCard("success", { padding: "16px 18px", radius: "13px" }) }}>
-        <span style={{ flex: "0 0 auto", width: "40px", height: "40px", borderRadius: "11px", background: "rgba(53,214,164,.14)", border: "1px solid #35D6A4", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#35D6A4" strokeWidth="2.6"><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .6s .2s ease forwards" }} /></svg></span>
+        <span style={{ flex: "0 0 auto", width: "40px", height: "40px", borderRadius: "11px", background: "rgba(53,214,164,.14)", border: "1px solid var(--te-success)", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#35D6A4" strokeWidth="2.6"><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .6s .2s ease forwards" }} /></svg></span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.lg, fontWeight: 700, color: "#F3F5F9" }}>Implementation complete</div>
-          <div style={{ fontSize: FONT.base, color: "#8A90A0", marginTop: "2px" }}>Finished{ex.duration ? <> in <span style={{ color: "#C7CCD8", fontWeight: 600 }}>{ex.duration}</span></> : ""} · Claude Code output below</div>
+          <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)" }}>Implementation complete</div>
+          <div style={{ fontSize: FONT.base, color: "var(--te-text-dim)", marginTop: "2px" }}>Finished{ex.duration ? <> in <span style={{ color: "var(--te-text-soft)", fontWeight: 600 }}>{ex.duration}</span></> : ""} · Claude Code output below</div>
           {hasUsage && (
             <div style={{ display: "flex", gap: "7px", marginTop: "9px", flexWrap: "wrap" }}>
               {ex.duration && (
@@ -160,7 +160,7 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
               height: "32px",
               padding: "0 14px",
               textDecoration: "none",
-              color: "#5BE8B8",
+              color: "var(--te-btn-success-text)",
               fontSize: FONT.sm,
               fontWeight: 700,
               cursor: "pointer",
@@ -202,7 +202,7 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
       {sections.map((rs) => (
         <div key={rs.key}>
           {showSectionHeader && (
-            <h2 style={{ margin: "0 0 10px", fontFamily: "var(--font-space), sans-serif", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".06em", color: "var(--accent)", textTransform: "uppercase" }}>{rs.title}</h2>
+            <h2 style={{ margin: "0 0 10px", fontFamily: "var(--te-font-display)", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".06em", color: "var(--accent)", textTransform: "uppercase" }}>{rs.title}</h2>
           )}
           <div className="md-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{rs.markdown}</ReactMarkdown>
@@ -214,15 +214,15 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
                 <button
                   key={fc.path}
                   onClick={(e) => { fireBoltFromEvent(e); onOpenDiff(fc); }}
-                  style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 11px", borderRadius: "9px", cursor: "pointer", ...ringBorder({ fill: "#111419", duration: 4.5, cornerPx: 7 }) }}
+                  style={{ display: "flex", alignItems: "center", gap: "9px", width: "100%", textAlign: "left", padding: "8px 11px", borderRadius: "9px", cursor: "pointer", ...ringBorder({ fill: "var(--te-raised-bg)", duration: 4.5, cornerPx: 7 }) }}
                 >
                   <span style={{
                     fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, fontWeight: 700, flex: "0 0 auto", width: "16px", textAlign: "center",
-                    color: fc.changeType === "added" ? "#35D6A4" : fc.changeType === "deleted" ? "#FF6B6B" : fc.changeType === "renamed" ? "#9BA6E8" : "#F5B341",
+                    color: fc.changeType === "added" ? "var(--te-success)" : fc.changeType === "deleted" ? "var(--te-danger)" : fc.changeType === "renamed" ? "var(--te-indigo)" : "var(--te-warning)",
                   }}>
                     {fc.changeType === "added" ? "A" : fc.changeType === "deleted" ? "D" : fc.changeType === "renamed" ? "R" : "M"}
                   </span>
-                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "#C7CCD8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{fc.path}</span>
+                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "var(--te-text-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{fc.path}</span>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2" style={{ flex: "0 0 auto" }}><path d="M9 6l6 6-6 6" /></svg>
                 </button>
               ))}

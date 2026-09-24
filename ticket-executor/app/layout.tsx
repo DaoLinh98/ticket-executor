@@ -1,20 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { BoltsProvider } from "./BoltsContext";
 import RingAnimation from "./RingAnimation";
 import SettingsProvider from "./SettingsProvider";
+import { MotionProvider } from "./Motion";
 import { getOrCreateSetting } from "@/lib/settings";
 
-const spaceGrotesk = Space_Grotesk({
+const barlowCondensed = Barlow_Condensed({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-space",
-});
-const hankenGrotesk = Hanken_Grotesk({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-hanken",
+  weight: ["800"],
+  variable: "--font-barlow",
 });
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -47,7 +43,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#06070A",
+  themeColor: "#0A1F2B",
 };
 
 // The settings row is read here rather than left to a client fetch because two
@@ -71,15 +67,15 @@ export default async function RootLayout({
     // html-attribute-only mismatch React cannot see coming.
     <html
       lang="en"
-      className={settings.ringAnimation ? undefined : "te-ring-static"}
+      className={`${barlowCondensed.variable} ${jetbrainsMono.variable}${settings.ringAnimation ? "" : " te-ring-static"}`}
       suppressHydrationWarning
     >
-      <body
-        className={`${spaceGrotesk.variable} ${hankenGrotesk.variable} ${jetbrainsMono.variable}`}
-      >
+      <body>
         <SettingsProvider initial={settings}>
           <RingAnimation />
-          <BoltsProvider>{children}</BoltsProvider>
+          <MotionProvider>
+            <BoltsProvider>{children}</BoltsProvider>
+          </MotionProvider>
         </SettingsProvider>
       </body>
     </html>

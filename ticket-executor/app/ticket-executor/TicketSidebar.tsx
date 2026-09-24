@@ -4,11 +4,13 @@ import { useCallback, useRef } from "react";
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
 import type { Ticket, UiRunState } from "@/lib/types";
-import { COLORS, FONT, RUN_COLOR, avatar, card, ctaButtonStyle, initials, pill, ringBorder, runDot, statusPill, tintedCard, typeBadge } from "@/lib/ui";
+import { COLORS, FONT, MOTION, RUN_COLOR, displayText, avatar, card, ctaButtonStyle, initials, pill, ringBorder, runDot, statusPill, tintedCard, typeBadge, chipShape } from "@/lib/ui";
 import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
 import { ACCENT } from "./constants";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
+import { motion } from "motion/react";
+import { reveal } from "../Motion";
 
 /** The board view's rows, grouped under their kanban column.
  *
@@ -112,10 +114,9 @@ export default function TicketSidebar({
     const rowStyle: CSSProperties = {
       position: "relative", overflow: "hidden", flexShrink: 0, display: "flex", flexDirection: "column",
       gap: "6px", padding: "12px 13px 12px 15px", borderRadius: "11px", cursor: "pointer", textAlign: "left",
-      transition: "transform .22s cubic-bezier(.2,.8,.2,1), border-color .2s, background .2s, box-shadow .22s",
-      animation: "fadeUp .45s both", animationDelay: i * 45 + "ms",
-      border: highlighted ? "1px solid " + ACCENT : "1px solid #1A1E25",
-      background: highlighted ? "rgba(251,114,80,.07)" : "#111419",
+      transition: "border-color .2s, background .2s, box-shadow .22s",
+      border: highlighted ? "1px solid " + ACCENT : "1px solid var(--te-btn-ghost-fill)",
+      background: highlighted ? "rgba(251,114,80,.07)" : "var(--te-raised-bg)",
       boxShadow: highlighted ? "0 10px 34px -18px " + ACCENT : "none",
     };
     const railStyle: CSSProperties = {
@@ -125,8 +126,11 @@ export default function TicketSidebar({
       transition: "transform .3s cubic-bezier(.2,.8,.2,1)",
     };
     return (
-      <button
+      <motion.button
         key={tk.id}
+        {...reveal({ index: i })}
+        whileHover={{ y: -2 }}
+        whileTap={MOTION.tap}
         ref={sel ? selectedRowRef : undefined}
         onClick={(e) => {
           if (selectMode) {
@@ -181,28 +185,28 @@ export default function TicketSidebar({
             <span style={{ ...runDot(est) }} />
           )}
         </div>
-        <div style={{ fontSize: FONT.md, fontWeight: 600, color: "#E4E7EE", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
+        <div style={{ fontSize: FONT.md, fontWeight: 600, color: "var(--te-text)", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "1px" }}>
           <span style={statusPill(getStatus(tk))}>{getStatus(tk)}</span>
           <div style={{ flex: 1 }} />
           <span style={avatar(tk.assignee)}>{initials(tk.assignee)}</span>
-          <span style={{ fontSize: FONT.sm, color: "#6B7283" }}>{tk.assignee}</span>
+          <span style={{ fontSize: FONT.sm, color: "var(--te-text-muted)" }}>{tk.assignee}</span>
         </div>
-      </button>
+      </motion.button>
     );
   };
 
   return (
-    <aside className="te-pane-list" style={{ width: "388px", flex: "0 0 388px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,.05)", background: "rgba(12,15,20,.74)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", minHeight: 0 }}>
+    <aside className="te-pane-list" style={{ width: "388px", flex: "0 0 388px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,.05)", background: "var(--te-sidebar-bg)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", minHeight: 0 }}>
       <div style={{ padding: "18px 18px 12px", display: "flex", flexDirection: "column", gap: "12px", flex: "0 0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-space), sans-serif", fontSize: FONT.md, fontWeight: 700, letterSpacing: ".01em", color: "#ECEEF3" }}>{SCOPE_LABEL[scope]}</h2>
-          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, background: "linear-gradient(90deg,#5B6273 0%,#5B6273 30%,#FFD9BE 45%,var(--accent) 52%,#5B6273 65%,#5B6273 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
+          <motion.h2 key={scope} initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }} style={displayText("heading")}>{SCOPE_LABEL[scope]}</motion.h2>
+          <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 600, background: "linear-gradient(90deg,var(--te-faint) 0%,var(--te-faint) 30%,#FFD9BE 45%,var(--accent) 52%,var(--te-faint) 65%,var(--te-faint) 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>{(activeFilters > 0 || q) ? `${filtered.length}/${tickets.length}` : tickets.length} tickets</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           {selectMode ? (
             <>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: FONT.base, fontWeight: 600, color: "#C7CCD8", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", height: "36px", padding: "0 13px", fontSize: FONT.base, fontWeight: 600, color: "var(--te-text-soft)", ...ringBorder({ fill: "var(--te-raised-bg)", duration: 4.2 }) }}>
                 {selectedIds.size} selected
               </div>
               <button onClick={(e) => { fireBoltFromEvent(e); onCancelSelect(); }} style={{ ...ctaButtonStyle("outline"), height: "36px" }}>Cancel</button>
@@ -216,13 +220,13 @@ export default function TicketSidebar({
             </>
           ) : (
             <>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "#14171D", duration: 4.2 }) }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "9px", height: "36px", padding: "0 12px", ...ringBorder({ fill: "var(--te-raised-bg)", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6273" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "#ECEEF3", fontSize: FONT.base }} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets, people…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: "var(--te-text)", fontSize: FONT.base }} />
               </div>
-              <button onClick={(e) => { fireBoltFromEvent(e); setFiltersOpen((o) => !o); }} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}>
+              <button onClick={(e) => { fireBoltFromEvent(e); setFiltersOpen((o) => !o); }} title="Filters" style={{ position: "relative", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: (filtersOpen || activeFilters > 0) ? "var(--accent)" : "var(--te-text-dim)", cursor: "pointer", ...ringBorder({ fill: (filtersOpen || activeFilters > 0) ? "rgba(251,114,80,.14)" : "var(--te-raised-bg)", duration: 4.2 }) }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
-                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "#0B0C10", fontSize: FONT.xs, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
+                {activeFilters > 0 && <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: "var(--accent)", color: "var(--te-on-accent)", fontSize: FONT.xs, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{activeFilters}</span>}
               </button>
             </>
           )}
@@ -230,7 +234,7 @@ export default function TicketSidebar({
             <button
               onClick={(e) => { fireBoltFromEvent(e); onToggleSelectMode(); }}
               title="Select multiple tickets"
-              style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "#8A90A0", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "#14171D", duration: 4.2 }) }}
+              style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "var(--te-text-dim)", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "var(--te-raised-bg)", duration: 4.2 }) }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
             </button>
@@ -262,7 +266,7 @@ export default function TicketSidebar({
               </div>
             ))}
             {activeFilters > 0 && (
-              <button onClick={(e) => { fireBoltFromEvent(e); clearFilters(); }} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #262B36", borderRadius: "9px", background: "transparent", color: "#8A90A0", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+              <button onClick={(e) => { fireBoltFromEvent(e); clearFilters(); }} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--te-border)", ...chipShape(6), background: "transparent", color: "var(--te-text-dim)", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             )}
           </div>
         )}
@@ -275,12 +279,12 @@ export default function TicketSidebar({
         )}
         {!loading && loadError && <div style={{ color: "#FF8F8F", fontSize: FONT.base, lineHeight: 1.5, ...tintedCard("danger", { padding: "14px", radius: "10px" }) }}>{loadError}</div>}
         {!loading && !loadError && ticketsNotice && <div style={{ color: "#C7A98A", fontSize: FONT.base, lineHeight: 1.5, ...tintedCard("warning", { padding: "14px", radius: "10px" }) }}>{ticketsNotice}</div>}
-        {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "#5B6273", fontSize: FONT.base, padding: "18px 6px" }}>No tickets match.</div>}
+        {!loading && !loadError && !ticketsNotice && filtered.length === 0 && <div style={{ color: "var(--te-faint)", fontSize: FONT.base, padding: "18px 6px" }}>No tickets match.</div>}
         {!loading && scope !== "board" && filtered.map(renderRow)}
         {!loading && scope === "board" && byBoardColumn(filtered).map(([column, rows]) => (
           <div key={column} style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 4px 2px" }}>
-              <span style={{ fontFamily: "var(--font-space), sans-serif", fontSize: FONT.sm, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.textDim }}>{column}</span>
+              <span style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.sm, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.textDim }}>{column}</span>
               <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, color: COLORS.textMuted }}>{rows.length}</span>
               <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,.06)" }} />
             </div>
