@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  buildNotifications, markAllRead, markRead, notificationKey,
+  buildNotifications, markAllRead, markRead, mergeWithHistory, notificationKey,
   type AppNotification, type AutomationSource, type PullRequestSource, type ReadEntry, type ReadMap,
   type RunEventSource, type ReviewSource, type TicketActivitySource,
 } from "@/lib/notifications";
@@ -22,6 +22,8 @@ const NOTIFY_MIN_GAP_MS = 20_000;
 // unread on the phone. This channel is the instant hop between two tabs of the
 // same browser; another device converges on its next poll or resume.
 const NOTIFY_READ_CHANNEL = "te:notifications-read";
+
+const HISTORY_PAGE = 30;
 
 /** The sources only the Ticket Execution screen can answer for: the board-scoped
  *  review poll, the runs this session is watching, and the titles of the tickets
@@ -43,6 +45,9 @@ type NotificationsContextValue = {
   markOneRead: (n: AppNotification) => void;
   markEveryRead: () => void;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   setLocalSources: (sources: LocalNotificationSources) => void;
 };
 
@@ -69,6 +74,11 @@ export default function NotificationsProvider({ children }: { children: ReactNod
   const [planReviews, setPlanReviews] = useState<ReviewSource[]>([]);
   const [local, setLocal] = useState<LocalNotificationSources>({});
   const [read, setRead] = useState<ReadMap>({});
+  const [history, setHistory] = useState<AppNotification[]>([]);
+  const [historyNext, setHistoryNext] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const historyStarted = useRef(false);
+  const loadingMoreRef = useRef(false);
 
   const channel = useRef<BroadcastChannel | null>(null);
   // The mark handlers derive the next map from the current one, and they are
@@ -153,6 +163,51 @@ export default function NotificationsProvider({ children }: { children: ReactNod
 
   const fetchedAt = useRef(0);
 
+  const fetchHistory = useCallback(async (before: string | null) => {
+    const qs = new URLSearchParams({ limit: String(HISTORY_PAGE) });
+    if (before) qs.set("before", before);
+    const r = await fetch(`/api/notifications/history?${qs}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`GET /api/notifications/history -> ${r.status}`);
+    const data = await r.json();
+    return {
+      items: Array.isArray(data?.items) ? (data.items as AppNotification[]) : [],
+      next: typeof data?.next === "string" ? data.next : null,
+    };
+  }, []);
+
+  // The newest page, re-read on every poll. Older pages already loaded stay, and
+  // so does the cursor into them — only the first read sets it.
+  const refreshHistory = useCallback(async () => {
+    try {
+      const page = await fetchHistory(null);
+      setHistory((prev) => mergeWithHistory(page.items, prev));
+      if (!historyStarted.current) {
+        historyStarted.current = true;
+        setHistoryNext(page.next);
+      }
+    } catch (err) {
+      console.error("[notifications] history refresh failed", err);
+    }
+  }, [fetchHistory]);
+
+  const loadMore = useCallback(() => {
+    if (!historyNext || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    void (async () => {
+      try {
+        const page = await fetchHistory(historyNext);
+        setHistory((prev) => mergeWithHistory(prev, page.items));
+        setHistoryNext(page.next);
+      } catch (err) {
+        console.error("[notifications] loading older notifications failed", err);
+      } finally {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    })();
+  }, [fetchHistory, historyNext]);
+
   // No provider parameter: the route falls back to the saved connection, which
   // is the only answer a page without a provider picker could give anyway.
   const refresh = useCallback(async (opts?: { force?: boolean }) => {
@@ -179,10 +234,12 @@ export default function NotificationsProvider({ children }: { children: ReactNod
       // means every notification is about to look unread again.
       console.error("[notifications] refresh failed", err);
     }
+    // After the sources read, which is what records new events into the history.
+    await refreshHistory();
     // Any mark whose write never landed is retried here, which is what makes
     // the state converge after the phone comes back online.
     await flushPending();
-  }, [applyRead, flushPending]);
+  }, [applyRead, flushPending, refreshHistory]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -228,15 +285,15 @@ export default function NotificationsProvider({ children }: { children: ReactNod
 
   const notifications = useMemo(
     () =>
-      buildNotifications({
+      mergeWithHistory(buildNotifications({
         reviews: mergedReviews,
         pullRequests,
         ticketActivity,
         waitingRuns: local.waitingRuns ?? [],
         runEvents: local.runEvents ?? [],
         automation,
-      }),
-    [mergedReviews, pullRequests, ticketActivity, automation, local.waitingRuns, local.runEvents]
+      }), history),
+    [mergedReviews, pullRequests, ticketActivity, automation, local.waitingRuns, local.runEvents, history]
   );
 
   const titleOf = useCallback((ticketId: string) => local.titles?.[ticketId] ?? "", [local.titles]);
@@ -264,9 +321,12 @@ export default function NotificationsProvider({ children }: { children: ReactNod
       markOneRead,
       markEveryRead,
       refresh,
+      hasMore: historyNext !== null,
+      loadingMore,
+      loadMore,
       setLocalSources,
     }),
-    [notifications, read, local.degraded, titleOf, markOneRead, markEveryRead, refresh, setLocalSources]
+    [notifications, read, local.degraded, titleOf, markOneRead, markEveryRead, refresh, historyNext, loadingMore, loadMore, setLocalSources]
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

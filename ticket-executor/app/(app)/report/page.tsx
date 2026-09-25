@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SelectMenu from "../../SelectMenu";
-import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
+import { useToast } from "../ToastProvider";
 import { useBoltsContext } from "../../BoltsContext";
 import {
   COLORS,
@@ -56,6 +56,7 @@ type ReportData = {
   tickets: Ticket[];
   handedOff?: string[];
   draft: ReportDraftState;
+  slack?: boolean;
 };
 
 /** The project a work item belongs to: the first segment of its area path. */
@@ -75,15 +76,13 @@ export default function ReportPage() {
   const [draft, setDraft] = useState<ReportDraftState>(emptyDraft(""));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [toast, setToast] = useState<ToastMessage | null>(null);
-  const toastSeq = useRef(0);
+  const [sending, setSending] = useState(false);
   // What the server is known to hold, so an edit is saved and a reload is not
   // saved straight back.
   const savedRef = useRef("");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = (msg: string, kind: "success" | "error" | "warning" = "success") =>
-    setToast({ id: ++toastSeq.current, msg, kind });
+  const showToast = useToast();
 
   useEffect(() => { setDay(localDay()); }, []);
 
@@ -96,11 +95,7 @@ export default function ReportPage() {
       const res: ReportData = await fetch("/api/report?" + qs.toString(), { cache: "no-store" }).then((r) => r.json());
       if (res.error) setError(res.error);
       setData(res);
-      // Draft persistence is parked while the page itself is being settled.
-      // The stored draft is ignored and the page starts from the identity's
-      // name; restore `res.draft` here to turn it back on.
-      // const loaded = res.draft ?? emptyDraft(res.identity?.name ?? "");
-      const loaded = emptyDraft(res.identity?.name ?? "");
+      const loaded = res.draft ?? emptyDraft(res.identity?.name ?? "");
       setDraft(loaded);
       savedRef.current = JSON.stringify(loaded);
     } catch (e) {
@@ -123,43 +118,43 @@ export default function ReportPage() {
   // on one has to reach the other. Written on a short delay — a checkbox is
   // clicked in bursts — and re-read whenever this copy comes back into view,
   // but never while an edit of its own is still on its way to the server.
-  // useEffect(() => {
-  //   if (!day) return;
-  //   const body = JSON.stringify(draft);
-  //   if (body === savedRef.current) return;
-  //   if (saveTimer.current) clearTimeout(saveTimer.current);
-  //   saveTimer.current = setTimeout(async () => {
-  //     saveTimer.current = null;
-  //     try {
-  //       const qs = new URLSearchParams({ day });
-  //       const r = await fetch("/api/report?" + qs.toString(), {
-  //         method: "PUT",
-  //         headers: { "content-type": "application/json" },
-  //         body,
-  //       });
-  //       if (!r.ok) throw new Error(`PUT /api/report -> ${r.status}`);
-  //       savedRef.current = body;
-  //     } catch (e) {
-  //       // Not swallowed: an unsaved draft is one that will not be there on the
-  //       // phone, which is the whole reason it is on the server.
-  //       showToast(`Draft not saved — ${e instanceof Error ? e.message : String(e)}`, "error");
-  //     }
-  //   }, 600);
-  //   return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  // }, [draft, day]);
+  useEffect(() => {
+    if (!day || loading) return;
+    const body = JSON.stringify(draft);
+    if (body === savedRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      saveTimer.current = null;
+      try {
+        const qs = new URLSearchParams({ day });
+        const r = await fetch("/api/report?" + qs.toString(), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ draft }),
+        });
+        if (!r.ok) throw new Error(`PUT /api/report -> ${r.status}`);
+        savedRef.current = body;
+      } catch (e) {
+        // Not swallowed: an unsaved draft is one that will not be there on the
+        // phone, which is the whole reason it is on the server.
+        showToast(`Draft not saved — ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    }, 600);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [draft, day, loading, showToast]);
 
-  // useEffect(() => {
-  //   const onShow = () => {
-  //     if (document.hidden || saveTimer.current) return;
-  //     load(day);
-  //   };
-  //   document.addEventListener("visibilitychange", onShow);
-  //   window.addEventListener("pageshow", onShow);
-  //   return () => {
-  //     document.removeEventListener("visibilitychange", onShow);
-  //     window.removeEventListener("pageshow", onShow);
-  //   };
-  // }, [load, day]);
+  useEffect(() => {
+    const onShow = () => {
+      if (document.hidden || saveTimer.current) return;
+      load(day);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("pageshow", onShow);
+    };
+  }, [load, day]);
 
   const tickets = data?.tickets ?? [];
   const handedOff = new Set(data?.handedOff ?? []);
@@ -180,11 +175,31 @@ export default function ReportPage() {
     [day, name, tickets, draft]
   );
 
-  const onExport = async (e: { clientX: number; clientY: number }) => {
+  const onCopy = async (e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);
     const ok = await copyText(text);
     if (ok) showToast("Report copied — paste it into the group.");
     else showToast("Could not reach the clipboard. Copy the preview below by hand.", "warning");
+  };
+
+  const onSendSlack = async (e: { clientX: number; clientY: number }) => {
+    if (sending) return;
+    fireBoltFromEvent(e);
+    setSending(true);
+    try {
+      const r = await fetch("/api/report/slack", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const res = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(res.error || `POST /api/report/slack -> ${r.status}`);
+      showToast("Report sent to Slack.");
+    } catch (err) {
+      showToast(`Not sent — ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setSending(false);
+    }
   };
 
   const selectedCount = tickets.filter((t) => isListed(entryOf(t))).length;
@@ -311,22 +326,29 @@ export default function ReportPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={sectionCaption()}>Preview</span>
                   <div style={{ flex: 1 }} />
-                  <button onClick={onExport} style={ctaButtonStyle("primary")}>
+                  {data?.slack && (
+                    <button onClick={onSendSlack} disabled={sending} style={{ ...ctaButtonStyle("primary"), opacity: sending ? 0.55 : 1, cursor: sending ? "default" : "pointer" }}>
+                      <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}>
+                        {sending ? <LoadingRing size={14} /> : (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" /></svg>
+                        )}
+                      </span>
+                      <span style={{ position: "relative", zIndex: 1 }}>Send to Slack</span>
+                    </button>
+                  )}
+                  <button onClick={onCopy} style={ctaButtonStyle(data?.slack ? "outline" : "primary")}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
-                    Export
                   </button>
                 </div>
                 <pre style={codeBlock({ padding: "14px 16px" })}>{text}</pre>
                 <span style={{ fontSize: FONT.sm, color: COLORS.faint }}>
-                  Export copies exactly this.
+                  Copy and Send to Slack both use exactly this.
                 </span>
               </motion.section>
             </>
           )}
         </div>
       </main>
-
-      {toast && <Toast key={toast.id} toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

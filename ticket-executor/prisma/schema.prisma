@@ -716,3 +716,23 @@ model ReportDraft {
 
   @@index([reportDay])
 }
+
+/// Every event notification the bell has reported, kept so the panel shows the
+/// full record rather than only what the live sources still hold.
+model NotificationHistory {
+  key         String
+  scope       String
+  kind        String
+  ticketId    String
+  refId       String
+  severity    String
+  summary     String
+  tab         String
+  href        String   @default("")
+  fingerprint String
+  at          DateTime
+  createdAt   DateTime @default(now())
+
+  @@id([scope, key])
+  @@index([scope, at])
+}

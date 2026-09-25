@@ -457,3 +457,28 @@ export function buildNotifications(sources: {
     ...fromAutomation(sources.automation ?? []),
   ]);
 }
+
+/** Kinds that are a moment rather than a standing condition — the ones kept in
+ *  the bell's history once reported. */
+const HISTORY_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
+  "ticket.mention",
+  "ticket.comment",
+  "scheduler.started",
+  "scheduler.released",
+  "scheduler.review-fixed",
+  "scheduler.failed",
+  "plan.drift",
+]);
+
+export function historyWorthy(list: AppNotification[]): AppNotification[] {
+  return list.filter((n) => HISTORY_KINDS.has(n.kind) && n.at !== "");
+}
+
+/** Live notifications laid over the stored history: one row per key, the live
+ *  one winning, newest first. */
+export function mergeWithHistory(live: AppNotification[], history: AppNotification[]): AppNotification[] {
+  const byKey = new Map<string, AppNotification>();
+  for (const n of history) byKey.set(notificationKey(n), n);
+  for (const n of live) byKey.set(notificationKey(n), n);
+  return sortNotifications([...byKey.values()]);
+}

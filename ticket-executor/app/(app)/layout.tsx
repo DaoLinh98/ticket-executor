@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import AppReactor from "./AppReactor";
 import NotificationsProvider from "./NotificationsProvider";
+import ToastProvider from "./ToastProvider";
 import MobileNavProvider from "./MobileNav";
 import MobileNavToggle from "./MobileNavToggle";
 import { COLORS } from "@/lib/ui";
@@ -13,6 +14,7 @@ import { authDisabled } from "@/lib/auth";
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <NotificationsProvider>
+      <ToastProvider>
       <MobileNavProvider>
         <div style={{ position: "relative", display: "flex", height: "var(--te-app-h)", width: "100%", overflow: "hidden", ["--accent" as string]: COLORS.accent }}>
           <AppReactor />
@@ -23,6 +25,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </MobileNavProvider>
+      </ToastProvider>
     </NotificationsProvider>
   );
 }

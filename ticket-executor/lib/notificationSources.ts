@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { hasIdentity, isMyPullRequest, myVoteOn, type DevIdentity } from "@/lib/identity";
-import type { PullRequestSource, ReviewSource } from "@/lib/notifications";
+import { buildNotifications, type PullRequestSource, type ReviewSource } from "@/lib/notifications";
+import { historyScope, recordHistory } from "@/lib/notificationHistory";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
 import { loadPullRequestInbox, loadReviewsSummary, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
@@ -234,5 +235,22 @@ export async function collectNotificationSources(providerParam?: string): Promis
     planReviewSources(provider, org, identity),
   ]);
 
+  try {
+    await recordHistory(
+      historyScope(provider, org, identity.email),
+      buildNotifications({ automation, ticketActivity }),
+    );
+  } catch (err) {
+    console.error("[notifications] history not saved", err);
+  }
+
   return { automation, pullRequests, ticketActivity, reviews };
+}
+
+/** Whose history the bell reads, or null when there is no identity to scope by. */
+export async function notificationHistoryScope(providerParam?: string): Promise<string | null> {
+  const setting = await getOrCreateSetting();
+  const provider = normalizeProvider(providerParam || setting.provider);
+  const { org, identity } = await resolveCredential(provider);
+  return hasIdentity(identity) ? historyScope(provider, org, identity.email) : null;
 }

@@ -4,6 +4,7 @@ import { resolveCredential } from "@/lib/providerCredentials";
 import { emptyDraft, type ReportDraftState } from "@/lib/report";
 import { loadDraft, saveDraft } from "@/lib/reportDraft";
 import { getOrCreateSetting } from "@/lib/settings";
+import { slackReportChannel } from "@/lib/slack";
 import { deliverablesOnly } from "@/lib/sprintPlan";
 import { loadMyOpenTickets, normalizeProvider } from "@/lib/tickets";
 
@@ -58,6 +59,7 @@ export async function GET(req: Request) {
       tickets: [...mine, ...handedOff],
       handedOff: handedOff.map((t) => t.id),
       draft,
+      slack: !!slackReportChannel(),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

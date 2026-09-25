@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type MouseEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
 import { COLORS, FONT, SURFACE, dropdownPanelStyle, ringBorder, tabStyle, tintFill, tintedCard } from "@/lib/ui";
 import {
   isUnread,
@@ -11,6 +11,7 @@ import {
   unreadCount,
 } from "@/lib/notifications";
 import { timeAgoOrDate } from "./helpers";
+import LoadingRing from "./LoadingRing";
 
 type Props = {
   bellRef: RefObject<HTMLDivElement | null>;
@@ -27,7 +28,13 @@ type Props = {
   titleOf: (ticketId: string) => string;
   onOpen: (n: AppNotification, e: MouseEvent) => void;
   onMarkAllRead: () => void;
+  /** Older notifications exist on the server beyond what is loaded. */
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 };
+
+const LOAD_MORE_THRESHOLD_PX = 60;
 
 /** The short chip on each row. Kept next to the rendering rather than in the
  *  pure module: it is wording, and the module owns behaviour. */
@@ -53,8 +60,15 @@ type Filter = "action" | "all";
 
 export default function NotificationBell({
   bellRef, open, onToggle, notifications, read, degraded, titleOf, onOpen, onMarkAllRead,
+  hasMore, loadingMore, onLoadMore,
 }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const nearBottom = () => {
+    const el = panelRef.current;
+    return !!el && el.scrollTop + el.clientHeight >= el.scrollHeight - LOAD_MORE_THRESHOLD_PX;
+  };
 
   // Everything unread, not just what needs doing. The badge counted `action`
   // only, which made it silent for the case it is most often right about: three
@@ -64,6 +78,12 @@ export default function NotificationBell({
   const badge = unreadCount(notifications, read);
   const shown = filter === "action" ? notifications.filter((n) => n.severity === "action") : notifications;
   const anyUnread = notifications.some((n) => isUnread(n, read));
+
+  // A page that does not fill the panel leaves nothing to scroll, so keep
+  // loading until it does or the history runs out.
+  useEffect(() => {
+    if (open && hasMore && !loadingMore && nearBottom()) onLoadMore();
+  }, [open, hasMore, loadingMore, shown.length, filter, onLoadMore]);
 
   return (
     <div ref={bellRef} style={{ position: "relative" }}>
@@ -78,7 +98,11 @@ export default function NotificationBell({
         )}
       </button>
       {open && (
-        <div className="te-scroll te-notif-panel" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
+        <div
+          ref={panelRef}
+          onScroll={() => { if (hasMore && !loadingMore && nearBottom()) onLoadMore(); }}
+          className="te-scroll te-notif-panel"
+          style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
           {/* Two views, not a per-kind filter list. The panel opens on "All" —
               the whole record of what the app did on your behalf, which is what
               the badge counts; "Needs you" narrows it to the actionable half. */}
@@ -100,7 +124,7 @@ export default function NotificationBell({
               Could not reach the provider on the last check — this list may be out of date.
             </div>
           )}
-          {shown.length === 0 && !degraded && (
+          {shown.length === 0 && !degraded && !hasMore && !loadingMore && (
             <div style={{ padding: "16px 12px", fontSize: FONT.base, color: COLORS.faint, textAlign: "center" }}>
               {filter === "action" ? "Nothing needs you right now." : "No notifications."}
             </div>
@@ -135,6 +159,11 @@ export default function NotificationBell({
               </button>
             );
           })}
+          {loadingMore && (
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+              <LoadingRing size={22} />
+            </div>
+          )}
         </div>
       )}
     </div>

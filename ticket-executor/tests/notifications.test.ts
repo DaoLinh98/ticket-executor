@@ -16,9 +16,11 @@ import {
   fromTicketActivity,
   fromRunEvents,
   fromWaitingRuns,
+  historyWorthy,
   isUnread,
   markAllRead,
   markRead,
+  mergeWithHistory,
   notificationKey,
   sortNotifications,
   unreadCount,
@@ -411,4 +413,25 @@ test("a failed review fix is named as the fix failing, not the review", () => {
 
 test("a skipped review decision stays in the sprint log and off the bell", () => {
   assert.equal(fromAutomation([automation({ action: "review", outcome: "skipped", reason: "no-new-comments" })]).length, 0);
+});
+
+test("history keeps moments, not standing conditions", () => {
+  const list = buildNotifications({
+    reviews: [review()],
+    waitingRuns: [{ ticketId: "101", runId: "r1" }],
+    ticketActivity: [activity()],
+    automation: [automation({ outcome: "failed" })],
+  });
+  const kinds = historyWorthy(list).map((n) => n.kind).sort();
+  assert.deepEqual(kinds, ["scheduler.failed", "ticket.comment"]);
+});
+
+test("merging history dedupes by key, live wins, newest first", () => {
+  const [live] = fromTicketActivity([activity({ commentId: "c1", at: "2026-09-06T10:00:00Z" })]);
+  const stale = { ...live, summary: "old" };
+  const [older] = fromTicketActivity([activity({ commentId: "c0", at: "2026-09-01T10:00:00Z" })]);
+  const merged = mergeWithHistory([live], [older, stale]);
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].summary, live.summary);
+  assert.equal(notificationKey(merged[1]), notificationKey(older));
 });

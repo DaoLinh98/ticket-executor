@@ -12,7 +12,7 @@ import DiffModal from "./ticket-executor/DiffModal";
 import LoadingRing from "./ticket-executor/LoadingRing";
 import TicketDetailHeader from "./ticket-executor/TicketDetailHeader";
 import TicketSidebar from "./ticket-executor/TicketSidebar";
-import Toast, { type ToastMessage } from "./ticket-executor/Toast";
+import { useToast } from "./(app)/ToastProvider";
 import { htmlToPlainText } from "@/lib/richText";
 import AskTab from "./ticket-executor/tabs/AskTab";
 import CommitsTab from "./ticket-executor/tabs/CommitsTab";
@@ -199,7 +199,6 @@ export default function TicketExecutor() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuOptions, setStatusMenuOptions] = useState<string[]>([]);
   const [statusMenuLoading, setStatusMenuLoading] = useState(false);
-  const [toast, setToast] = useState<ToastMessage | null>(null);
   // The ad-hoc Claude session of whichever ticket is selected, plus its unsent
   // draft per ticket so switching tickets does not eat what was being typed.
   // Lives on the server (lib/ask.ts) — this is a view of it, not a copy.
@@ -286,7 +285,6 @@ export default function TicketExecutor() {
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseConnections = useRef<Record<string, EventSource>>({});
-  const toastSeq = useRef(0);
   // Batch "Run selected" scheduler: tickets waiting for a free slot, and
   // tickets currently occupying one — capped by settings.concurrentRuns.
   const batchQueueRef = useRef<string[]>([]);
@@ -921,11 +919,10 @@ export default function TicketExecutor() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [statusMenuOpen]);
 
-  // The Toast owns its own countdown (and pauses it while hovered), so this only
-  // hands it a fresh message — `id` is what makes each one a new mount.
+  const pushToast = useToast();
   const showToast = useCallback((msg: string, ms = 7000, kind: "success" | "error" = "success") => {
-    setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
-  }, []);
+    pushToast(msg, kind, ms);
+  }, [pushToast]);
 
   // Ask for notification permission (best-effort) and fire a desktop notification
   // when a run finishes while the tab is not focused.
@@ -2346,8 +2343,6 @@ export default function TicketExecutor() {
           onClose={() => { setOpenCommit(null); setCommitFiles(null); }}
         />
       )}
-
-      {toast && <Toast key={toast.id} toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }

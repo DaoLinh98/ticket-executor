@@ -18,7 +18,7 @@ import type { AppNotification } from "@/lib/notifications";
 export default function NotificationCenter() {
   const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
-  const { notifications, read, degraded, titleOf, markOneRead, markEveryRead } = useNotifications();
+  const { notifications, read, degraded, titleOf, markOneRead, markEveryRead, hasMore, loadingMore, loadMore } = useNotifications();
   const [open, setOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
 
@@ -58,6 +58,9 @@ export default function NotificationCenter() {
       titleOf={titleOf}
       onOpen={onOpen}
       onMarkAllRead={markEveryRead}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      onLoadMore={loadMore}
     />
   );
 }

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import Toast, { type ToastMessage } from "../../ticket-executor/Toast";
+import { useToast } from "../ToastProvider";
 import { broadcastSettingsUpdated } from "../../settingsEvents";
 import { PROVIDERS, providerMeta, connectionLabel, DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
 import { COLORS, FONT, MOTION, card, chipShape, clipCorner, ctaButtonStyle, fieldInput, fieldLabel, pill, ringBorder, tabStyle, tintedCard } from "@/lib/ui";
@@ -88,8 +88,6 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsView>(DEFAULTS);
   const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [error, setError] = useState("");
-  const [toast, setToast] = useState<ToastMessage | null>(null);
-  const toastSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   // Every organization saved for the selected provider. The active one is what
   // the whole app runs as; the header picker switches it.
@@ -97,10 +95,7 @@ export default function SettingsPage() {
   const [editor, setEditor] = useState<ConnectionEditor | null>(null);
   const [connBusy, setConnBusy] = useState(false);
   const pm = providerMeta(settings.provider);
-  // The Toast owns its own countdown (and pauses it on hover), so all this does
-  // is hand it a fresh message.
-  const showToast = (msg: string, kind: "success" | "error" | "warning" = "success", ms = 7000) =>
-    setToast({ id: ++toastSeq.current, msg, kind, durationMs: ms });
+  const showToast = useToast();
 
   const loadConnections = async (provider: ProviderId) => {
     try {
@@ -612,7 +607,6 @@ export default function SettingsPage() {
           </div>
         )}
       </main>
-      {toast && <Toast key={toast.id} toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }
