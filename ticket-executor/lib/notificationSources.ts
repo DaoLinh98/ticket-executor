@@ -1,8 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { hasIdentity, isMyPullRequest, myVoteOn, type DevIdentity } from "@/lib/identity";
-import { buildNotifications, type PullRequestSource, type ReviewSource } from "@/lib/notifications";
+import {
+  buildNotifications, REPORT_REMINDER_START_MINUTE, type PullRequestSource, type ReportReminderSource, type ReviewSource,
+} from "@/lib/notifications";
 import { historyScope, recordHistory } from "@/lib/notificationHistory";
 import { resolveCredential } from "@/lib/providerCredentials";
+import { loadSent } from "@/lib/reportDraft";
+import { slackReportChannel } from "@/lib/slack";
 import { getOrCreateSetting } from "@/lib/settings";
 import { loadPullRequestInbox, loadReviewsSummary, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
 import type { ProviderId } from "@/lib/providers";
@@ -13,6 +17,7 @@ export type NotificationSources = {
   pullRequests: PullRequestSource[];
   ticketActivity: TicketActivity[];
   reviews: ReviewSource[];
+  reportReminder: ReportReminderSource | null;
 };
 
 /** How far back the bell looks. The scheduler's log is an audit trail and keeps
@@ -216,6 +221,21 @@ async function automationSources(provider: ProviderId, org: string, identity: De
  * The three are fetched together but fail apart: each holds an independent
  * claim, and one being unavailable is not evidence about the others.
  */
+async function reportReminderSource(provider: ProviderId, org: string): Promise<ReportReminderSource | null> {
+  if (!slackReportChannel()) return null;
+  const now = new Date();
+  const minuteOfDay = now.getHours() * 60 + now.getMinutes();
+  if (minuteOfDay < REPORT_REMINDER_START_MINUTE) return null;
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  try {
+    const sent = await loadSent({ provider, org, day });
+    return { day, minuteOfDay, at: now.toISOString(), sent: !!sent };
+  } catch (err) {
+    console.error("[notifications] report reminder read failed", err);
+    return null;
+  }
+}
+
 export async function collectNotificationSources(providerParam?: string): Promise<NotificationSources> {
   const setting = await getOrCreateSetting();
   const provider = normalizeProvider(providerParam || setting.provider);
@@ -225,14 +245,15 @@ export async function collectNotificationSources(providerParam?: string): Promis
   // an unscoped read here would hand this developer the whole team's automation
   // and every pull request in the organization.
   if (!hasIdentity(identity)) {
-    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [] };
+    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [], reportReminder: null };
   }
 
-  const [automation, pullRequests, ticketActivity, reviews] = await Promise.all([
+  const [automation, pullRequests, ticketActivity, reviews, reportReminder] = await Promise.all([
     automationSources(provider, org, identity),
     pullRequestSources(provider, identity),
     ticketActivitySources(provider, org, identity),
     planReviewSources(provider, org, identity),
+    reportReminderSource(provider, org),
   ]);
 
   try {
@@ -244,7 +265,7 @@ export async function collectNotificationSources(providerParam?: string): Promis
     console.error("[notifications] history not saved", err);
   }
 
-  return { automation, pullRequests, ticketActivity, reviews };
+  return { automation, pullRequests, ticketActivity, reviews, reportReminder };
 }
 
 /** Whose history the bell reads, or null when there is no identity to scope by. */

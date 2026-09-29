@@ -4,7 +4,7 @@
 // database; this file is only the row it is stored in.
 
 import { prisma } from "@/lib/prisma";
-import { emptyDraft, type ReportDraftState } from "@/lib/report";
+import { REPORT_TASKS, emptyDraft, emptyTasks, type ReportDraftState } from "@/lib/report";
 
 export type DraftKey = {
   provider: string;
@@ -43,6 +43,50 @@ export async function saveDraft(k: DraftKey, state: ReportDraftState): Promise<v
   });
 }
 
+export type SentReport = {
+  day: string;
+  text: string;
+  sentAt: string;
+};
+
+export async function markSent(k: DraftKey, state: ReportDraftState, text: string): Promise<SentReport> {
+  const key = rowKey(k);
+  const value = normalize(state, state.name);
+  const sentAt = new Date();
+  await prisma.reportDraft.upsert({
+    where: { key },
+    create: { key, reportDay: k.day, state: value, sentText: text, sentAt },
+    update: { state: value, sentText: text, sentAt },
+  });
+  return { day: k.day, text, sentAt: sentAt.toISOString() };
+}
+
+export async function loadSent(k: DraftKey): Promise<SentReport | null> {
+  const row = await prisma.reportDraft.findUnique({
+    where: { key: rowKey(k) },
+    select: { reportDay: true, sentText: true, sentAt: true },
+  });
+  return toSent(row);
+}
+
+export async function loadPreviousSent(k: DraftKey): Promise<SentReport | null> {
+  const row = await prisma.reportDraft.findFirst({
+    where: {
+      key: { startsWith: [k.provider, k.org, ""].join("::") },
+      reportDay: { lt: k.day },
+      sentAt: { not: null },
+    },
+    orderBy: { reportDay: "desc" },
+    select: { reportDay: true, sentText: true, sentAt: true },
+  });
+  return toSent(row);
+}
+
+function toSent(row: { reportDay: string; sentText: string | null; sentAt: Date | null } | null): SentReport | null {
+  if (!row?.sentText || !row.sentAt) return null;
+  return { day: row.reportDay, text: row.sentText, sentAt: row.sentAt.toISOString() };
+}
+
 /**
  * A stored draft is JSON the database does not type, and it was written by a
  * page that may since have changed shape — so every field is re-established
@@ -50,8 +94,17 @@ export async function saveDraft(k: DraftKey, state: ReportDraftState): Promise<v
  * typed over the identity's own is part of the draft.
  */
 function normalize(raw: unknown, name: string): ReportDraftState {
-  const d = (raw ?? {}) as Partial<ReportDraftState>;
-  const planning = d.sprintPlanning ?? { today: false, tomorrow: false };
+  const d = (raw ?? {}) as Partial<ReportDraftState> & {
+    sprintPlanning?: { today?: boolean; tomorrow?: boolean };
+  };
+  const storedTasks: Partial<Record<string, { today?: boolean; tomorrow?: boolean }>> = {
+    sprintPlanning: d.sprintPlanning,
+    ...d.tasks,
+  };
+  const tasks = emptyTasks();
+  for (const { id } of REPORT_TASKS) {
+    tasks[id] = { today: !!storedTasks[id]?.today, tomorrow: !!storedTasks[id]?.tomorrow };
+  }
   const entries: ReportDraftState["entries"] = {};
   for (const [id, e] of Object.entries(d.entries ?? {})) {
     entries[id] = {
@@ -64,7 +117,7 @@ function normalize(raw: unknown, name: string): ReportDraftState {
   }
   return {
     name: typeof d.name === "string" && d.name ? d.name : name,
-    sprintPlanning: { today: !!planning.today, tomorrow: !!planning.tomorrow },
+    tasks,
     entries,
   };
 }

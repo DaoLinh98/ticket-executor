@@ -712,6 +712,8 @@ model ReportDraft {
   reportDay String
   /// `ReportDraftState` from lib/report.ts.
   state     Json
+  sentText  String?
+  sentAt    DateTime?
   updatedAt DateTime @updatedAt
 
   @@index([reportDay])

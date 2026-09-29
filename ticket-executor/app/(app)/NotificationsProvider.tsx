@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   buildNotifications, markAllRead, markRead, mergeWithHistory, notificationKey,
   type AppNotification, type AutomationSource, type PullRequestSource, type ReadEntry, type ReadMap,
-  type RunEventSource, type ReviewSource, type TicketActivitySource,
+  type ReportReminderSource, type RunEventSource, type ReviewSource, type TicketActivitySource,
 } from "@/lib/notifications";
 
 // How often the bell re-asks its own sources. Minutes rather than seconds: a
@@ -72,6 +72,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
   const [pullRequests, setPullRequests] = useState<PullRequestSource[]>([]);
   const [ticketActivity, setTicketActivity] = useState<TicketActivitySource[]>([]);
   const [planReviews, setPlanReviews] = useState<ReviewSource[]>([]);
+  const [reportReminder, setReportReminder] = useState<ReportReminderSource | null>(null);
   const [local, setLocal] = useState<LocalNotificationSources>({});
   const [read, setRead] = useState<ReadMap>({});
   const [history, setHistory] = useState<AppNotification[]>([]);
@@ -226,6 +227,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
       if (Array.isArray(data.pullRequests)) setPullRequests(data.pullRequests);
       if (Array.isArray(data.ticketActivity)) setTicketActivity(data.ticketActivity);
       if (Array.isArray(data.reviews)) setPlanReviews(data.reviews);
+      if ("reportReminder" in data) setReportReminder(data.reportReminder ?? null);
       if (!readRes.ok) throw new Error(`GET /api/notifications/read -> ${readRes.status}`);
       const readData = await readRes.json();
       if (readData?.read) applyRead(readData.read as ReadMap);
@@ -292,8 +294,9 @@ export default function NotificationsProvider({ children }: { children: ReactNod
         waitingRuns: local.waitingRuns ?? [],
         runEvents: local.runEvents ?? [],
         automation,
+        reportReminder,
       }), history),
-    [mergedReviews, pullRequests, ticketActivity, automation, local.waitingRuns, local.runEvents, history]
+    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, local.waitingRuns, local.runEvents, history]
   );
 
   const titleOf = useCallback((ticketId: string) => local.titles?.[ticketId] ?? "", [local.titles]);

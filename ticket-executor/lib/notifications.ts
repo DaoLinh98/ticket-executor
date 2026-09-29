@@ -28,7 +28,8 @@ export type NotificationKind =
   | "scheduler.released"
   | "scheduler.review-fixed"
   | "scheduler.failed"
-  | "plan.drift";
+  | "plan.drift"
+  | "report.unsent";
 
 /** `action` means the developer has to do something; `info` is a record of
  *  something the app did on their behalf. It splits the panel into its two
@@ -439,6 +440,35 @@ export function fromTicketActivity(rows: TicketActivitySource[]): AppNotificatio
   }));
 }
 
+export const REPORT_REMINDER_START_MINUTE = 17 * 60 + 15;
+export const REPORT_REMINDER_EVERY_MINUTES = 5;
+
+export type ReportReminderSource = {
+  day: string;
+  minuteOfDay: number;
+  at: string;
+  sent: boolean;
+};
+
+export function fromReportReminder(r: ReportReminderSource | null): AppNotification[] {
+  if (!r || r.sent || r.minuteOfDay < REPORT_REMINDER_START_MINUTE) return [];
+  const elapsed = r.minuteOfDay - REPORT_REMINDER_START_MINUTE;
+  const slot = Math.floor(elapsed / REPORT_REMINDER_EVERY_MINUTES);
+  const slotAt = new Date(Date.parse(r.at) - (elapsed % REPORT_REMINDER_EVERY_MINUTES) * 60_000);
+  slotAt.setSeconds(0, 0);
+  return [{
+    kind: "report.unsent",
+    ticketId: "",
+    refId: r.day,
+    severity: "action",
+    summary: "Today's report has not been sent to Slack yet",
+    at: slotAt.toISOString(),
+    tab: "overview",
+    href: "/report",
+    fingerprint: `report::${r.day}::${slot}`,
+  }];
+}
+
 /** Every source merged into the one list the bell renders. */
 export function buildNotifications(sources: {
   reviews?: ReviewSource[];
@@ -447,6 +477,7 @@ export function buildNotifications(sources: {
   waitingRuns?: WaitingRunSource[];
   runEvents?: RunEventSource[];
   automation?: AutomationSource[];
+  reportReminder?: ReportReminderSource | null;
 }): AppNotification[] {
   return sortNotifications([
     ...fromReviews(sources.reviews ?? []),
@@ -455,6 +486,7 @@ export function buildNotifications(sources: {
     ...fromWaitingRuns(sources.waitingRuns ?? []),
     ...fromRunEvents(sources.runEvents ?? []),
     ...fromAutomation(sources.automation ?? []),
+    ...fromReportReminder(sources.reportReminder ?? null),
   ]);
 }
 

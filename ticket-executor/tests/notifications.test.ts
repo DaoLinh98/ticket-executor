@@ -15,6 +15,7 @@ import {
   fromReviews,
   fromTicketActivity,
   fromRunEvents,
+  fromReportReminder,
   fromWaitingRuns,
   historyWorthy,
   isUnread,
@@ -434,4 +435,25 @@ test("merging history dedupes by key, live wins, newest first", () => {
   assert.equal(merged.length, 2);
   assert.equal(merged[0].summary, live.summary);
   assert.equal(notificationKey(merged[1]), notificationKey(older));
+});
+
+test("the report reminder starts at 17:15 and stops once sent", () => {
+  const base = { day: "2026-09-28", at: "2026-09-28T10:14:00.000Z", sent: false };
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 17 * 60 + 14 }).length, 0);
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 17 * 60 + 15 }).length, 1);
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 18 * 60, sent: true }).length, 0);
+  assert.equal(fromReportReminder(null).length, 0);
+});
+
+test("the report reminder is unread again every five minutes", () => {
+  const at = (m: number) => `2026-09-28T10:${String(m).padStart(2, "0")}:30.000Z`;
+  const r = (m: number) => fromReportReminder({ day: "2026-09-28", minuteOfDay: 17 * 60 + m, at: at(m), sent: false })[0];
+  const first = r(15);
+  assert.equal(r(19).fingerprint, first.fingerprint);
+  assert.notEqual(r(20).fingerprint, first.fingerprint);
+  assert.equal(notificationKey(r(20)), notificationKey(first));
+  assert.equal(isUnread(r(20), markRead({}, first, "x")), true);
+  assert.equal(r(23).at, "2026-09-28T10:20:00.000Z");
+  assert.equal(first.severity, "action");
+  assert.equal(first.href, "/report");
 });

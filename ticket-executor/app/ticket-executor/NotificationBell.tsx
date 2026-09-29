@@ -54,6 +54,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "scheduler.review-fixed": "REVIEW FIXED",
   "scheduler.failed": "AUTO FAILED",
   "plan.drift": "DRIFT",
+  "report.unsent": "REPORT",
 };
 
 type Filter = "action" | "all";

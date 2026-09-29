@@ -23,15 +23,17 @@ import {
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
+import { useNotifications } from "../NotificationsProvider";
 import PageToolbar from "../PageToolbar";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import { copyText } from "./copyText";
 import {
   PROGRESS_OPTIONS,
-  SPRINT_PLANNING_LABEL,
+  REPORT_TASKS,
   buildReport,
   defaultEntry,
   emptyDraft,
+  formatReportDay,
   isListed,
   ticketLine,
   type ReportDraftState,
@@ -56,8 +58,15 @@ type ReportData = {
   tickets: Ticket[];
   handedOff?: string[];
   draft: ReportDraftState;
+  sent?: SentReport | null;
+  previous?: SentReport | null;
   slack?: boolean;
 };
+
+type SentReport = { day: string; text: string; sentAt: string };
+
+const sentTime = (iso: string): string =>
+  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** The project a work item belongs to: the first segment of its area path. */
 const projectOf = (t: Ticket): string => (t.areaPath || "").split("\\")[0] || t.project;
@@ -83,6 +92,7 @@ export default function ReportPage() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useToast();
+  const { refresh: refreshNotifications } = useNotifications();
 
   useEffect(() => { setDay(localDay()); }, []);
 
@@ -187,14 +197,18 @@ export default function ReportPage() {
     fireBoltFromEvent(e);
     setSending(true);
     try {
-      const r = await fetch("/api/report/slack", {
+      const qs = new URLSearchParams({ day });
+      const r = await fetch("/api/report/slack?" + qs.toString(), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, draft }),
       });
-      const res = (await r.json().catch(() => ({}))) as { error?: string };
+      const res = (await r.json().catch(() => ({}))) as { error?: string; sent?: SentReport };
       if (!r.ok) throw new Error(res.error || `POST /api/report/slack -> ${r.status}`);
+      savedRef.current = JSON.stringify(draft);
+      setData((d) => (d ? { ...d, sent: res.sent ?? null } : d));
       showToast("Report sent to Slack.");
+      void refreshNotifications({ force: true });
     } catch (err) {
       showToast(`Not sent — ${err instanceof Error ? err.message : String(err)}`, "error");
     } finally {
@@ -247,26 +261,40 @@ export default function ReportPage() {
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "60px" }}><LoadingRing size={120} /></div>
           ) : (
             <>
+              {data?.previous && (
+                <motion.section {...reveal()} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={sectionCaption()}>Last sent report</span>
+                    <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
+                      {formatReportDay(data.previous.day)} · sent {sentTime(data.previous.sentAt)}
+                    </span>
+                  </div>
+                  <pre style={{ ...codeBlock({ padding: "14px 16px" }), opacity: 0.8 }}>{data.previous.text}</pre>
+                </motion.section>
+              )}
+
               <section style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={sectionCaption()}>Assigned to you</span>
                   <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{selectedCount} of {tickets.length} in this report</span>
                 </div>
 
-                <motion.div {...reveal({ from: "left" })} style={{ ...card({ padding: "6px 13px" }), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{SPRINT_PLANNING_LABEL}</span>
-                  <div style={{ flex: 1 }} />
-                  <Check
-                    label="Today"
-                    checked={draft.sprintPlanning.today}
-                    onChange={(v) => setDraft((d) => ({ ...d, sprintPlanning: { ...d.sprintPlanning, today: v } }))}
-                  />
-                  <Check
-                    label="Tomorrow"
-                    checked={draft.sprintPlanning.tomorrow}
-                    onChange={(v) => setDraft((d) => ({ ...d, sprintPlanning: { ...d.sprintPlanning, tomorrow: v } }))}
-                  />
-                </motion.div>
+                {REPORT_TASKS.map((task, i) => (
+                  <motion.div key={task.id} {...reveal({ from: "left", index: i })} style={{ ...card({ padding: "6px 13px" }), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: FONT.md, fontWeight: 700, color: COLORS.text }}>{task.label}</span>
+                    <div style={{ flex: 1 }} />
+                    <Check
+                      label="Today"
+                      checked={draft.tasks[task.id].today}
+                      onChange={(v) => setDraft((d) => ({ ...d, tasks: { ...d.tasks, [task.id]: { ...d.tasks[task.id], today: v } } }))}
+                    />
+                    <Check
+                      label="Tomorrow"
+                      checked={draft.tasks[task.id].tomorrow}
+                      onChange={(v) => setDraft((d) => ({ ...d, tasks: { ...d.tasks, [task.id]: { ...d.tasks[task.id], tomorrow: v } } }))}
+                    />
+                  </motion.div>
+                ))}
 
                 {tickets.length === 0 ? (
                   <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textDim }}>
@@ -340,6 +368,13 @@ export default function ReportPage() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
                   </button>
                 </div>
+                {data?.sent && (
+                  <div style={{ display: "flex" }}>
+                    <span style={{ ...pill({ color: data.sent.text === text ? COLORS.success : COLORS.warning, size: "xs" }), whiteSpace: "nowrap" }}>
+                      {data.sent.text === text ? "Sent" : "Changed since sent"} · {sentTime(data.sent.sentAt)}
+                    </span>
+                  </div>
+                )}
                 <pre style={codeBlock({ padding: "14px 16px" })}>{text}</pre>
                 <span style={{ fontSize: FONT.sm, color: COLORS.faint }}>
                   Copy and Send to Slack both use exactly this.

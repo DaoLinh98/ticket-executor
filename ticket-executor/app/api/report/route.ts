@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { hasIdentity, isMine } from "@/lib/identity";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { emptyDraft, type ReportDraftState } from "@/lib/report";
-import { loadDraft, saveDraft } from "@/lib/reportDraft";
+import { loadDraft, loadPreviousSent, loadSent, saveDraft } from "@/lib/reportDraft";
 import { getOrCreateSetting } from "@/lib/settings";
 import { slackReportChannel } from "@/lib/slack";
 import { deliverablesOnly } from "@/lib/sprintPlan";
@@ -43,7 +43,11 @@ export async function GET(req: Request) {
     const deliverables = deliverablesOnly(loaded.tickets, provider);
     const mine = deliverables.filter((t) => isMine(t, identity));
     const handedOff = deliverables.filter((t) => !isMine(t, identity));
-    const draft = await loadDraft({ provider, org, day }, identity.name);
+    const [draft, sent, previous] = await Promise.all([
+      loadDraft({ provider, org, day }, identity.name),
+      loadSent({ provider, org, day }),
+      loadPreviousSent({ provider, org, day }),
+    ]);
 
     return NextResponse.json({
       provider,
@@ -59,6 +63,8 @@ export async function GET(req: Request) {
       tickets: [...mine, ...handedOff],
       handedOff: handedOff.map((t) => t.id),
       draft,
+      sent,
+      previous,
       slack: !!slackReportChannel(),
     });
   } catch (err) {
