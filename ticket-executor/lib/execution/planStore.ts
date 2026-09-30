@@ -16,6 +16,7 @@ import {
   type PlanInput,
   type SprintPlanResult,
 } from "../sprintPlan";
+import { stageOf } from "../ticketLifecycle";
 import type { TriageResult, TriagedTicket } from "./triage";
 import type { Ticket } from "../types";
 
@@ -39,14 +40,15 @@ export function planInputs(claimed: ClaimedTicket[], triage: TriageResult | null
     (triage?.tickets ?? []).map((t) => [String(t.id), t])
   );
   return claimed.map((c) => {
-    const base = { ticket: c.ticket, claim: c.claim, assigneeNow: c.assigneeNow };
+    const statusBlocked = stageOf(c.ticket.status) === "blocked";
+    const base = { ticket: c.ticket, claim: c.claim, assigneeNow: c.assigneeNow, blocked: statusBlocked };
     const t = byId.get(String(c.ticket.id));
     if (!t) return base;
     return {
       ...base,
       points: t.suggestedPoints > 0 ? t.suggestedPoints : undefined,
       order: t.workOrder > 0 ? t.workOrder : undefined,
-      blocked: t.needsClarification || t.readiness === "blocked",
+      blocked: statusBlocked || t.needsClarification || t.readiness === "blocked",
     };
   });
 }
@@ -66,7 +68,12 @@ export async function rememberSprint(key: PlanKey): Promise<Remembered[]> {
   const ids = plan.items.map((i) => i.ticketId);
   const runs = ids.length
     ? await prisma.run.findMany({
-        where: { ticketId: { in: ids }, provider: key.provider, org: key.org, project: key.project },
+        where: {
+          ticketId: { in: ids },
+          provider: key.provider,
+          org: key.org,
+          ...(key.project ? { project: key.project } : {}),
+        },
         select: { ticketId: true },
       })
     : [];
@@ -163,7 +170,7 @@ export async function savePlan(
     if (settled) {
       await prisma.plannedTicket.update({
         where: { id: prev.id },
-        data: { claim: t.claim, assigneeNow: t.assigneeNow, title: t.title },
+        data: { claim: t.claim, assigneeNow: t.assigneeNow, title: t.title, ...(t.project ? { project: t.project } : {}) },
       });
       continue;
     }
@@ -173,6 +180,7 @@ export async function savePlan(
         planId: plan.id,
         ticketId: t.ticketId,
         title: t.title,
+        project: t.project,
         implementOrder: t.implementOrder,
         points: t.points,
         estimateHours: t.estimateHours,
@@ -188,6 +196,7 @@ export async function savePlan(
       // create is already false.
       update: {
         title: t.title,
+        ...(t.project ? { project: t.project } : {}),
         implementOrder: t.implementOrder,
         points: t.points,
         estimateHours: t.estimateHours,
@@ -230,7 +239,7 @@ export async function setPlanStatus(id: string, status: "draft" | "active" | "ar
 
 export async function setPlanAutomation(
   id: string,
-  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; reviewers?: string[] }
+  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[] }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
 }
@@ -275,7 +284,7 @@ export async function setTicketUnblocked(plannedId: string, unblocked: boolean) 
 export async function logAutomation(e: {
   planId?: string;
   ticketId?: string;
-  action: "implement" | "release" | "review" | "abort";
+  action: "implement" | "release" | "review" | "abort" | "watch";
   outcome: "started" | "done" | "skipped" | "failed";
   reason?: string;
   detail?: string;
@@ -328,6 +337,7 @@ export async function retryPlannedTicket(
     implementState: item.implementState,
     prUrl: item.prUrl,
     claim: item.claim,
+    implementOrder: item.implementOrder,
   });
   if (denial) return { ok: false, error: denial };
 

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import {
+  dismissQaReply,
   findPlan,
-  latestTriage,
+  listQaDrafts,
+  postQaReply,
+  startQaReply,
+  moveToQa,
   planById,
   rebuildPlan,
   recentAutomation,
@@ -10,40 +14,44 @@ import {
   setPlanAutomation,
   setPlanStatus,
   setTicketUnblocked,
+  startQaFix,
   startReviewRun,
   tickNow,
-  type TriageResult,
 } from "@/lib/executionStore";
+// import { latestTriage, type TriageResult } from "@/lib/executionStore";
 import { hasIdentity } from "@/lib/identity";
 import { prisma } from "@/lib/prisma";
-import { resolveCredential } from "@/lib/providerCredentials";
+import { resolveCredential, reviewersFor } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
 import { DEFAULT_PLAN_CONFIG, deliverablesOnly, type PlanConfig } from "@/lib/sprintPlan";
-import { loadMySprintTickets, loadSprints, normalizeProvider } from "@/lib/tickets";
+import { loadMyCycle, loadSprintCycle, normalizeProvider } from "@/lib/tickets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function keyFor(provider: string, project: string, sprint: string) {
+async function keyFor(provider: string, sprint: string) {
   const { org, identity } = await resolveCredential(provider);
-  return { key: { provider, org, project, sprint, identityEmail: identity.email }, identity };
+  return { key: { provider, org, project: "", sprint, identityEmail: identity.email }, identity };
 }
 
-// GET /api/my-sprint/plan?project=…&sprint=… — the stored plan and its audit log.
+// GET /api/my-sprint/plan — the stored plan for the anchor project's current
+// iteration, and its audit log.
 export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   const setting = await getOrCreateSetting();
   const provider = normalizeProvider(params.get("provider") ?? setting.provider);
-  const { key } = await keyFor(provider, params.get("project") ?? "", params.get("sprint") ?? "");
+  const cycle = await loadSprintCycle(provider, setting.sprintAnchorProject).catch(() => null);
+  const { key } = await keyFor(provider, cycle?.sprint ?? "");
   const plan = await findPlan(key);
   return NextResponse.json({
     plan,
     events: plan ? await recentAutomation(plan.id) : [],
+    drafts: plan ? await listQaDrafts(plan.id) : [],
   });
 }
 
-// POST /api/my-sprint/plan — (re)build the plan for this sprint from the current
-// tickets and the newest triage.
+// POST /api/my-sprint/plan — (re)build the plan for the current cycle from the
+// developer's tickets across every project.
 //
 // Rebuilding mid-sprint is normal: work lands, scope moves, an estimate changes.
 // What it must never do is rewrite the record of what already happened, which is
@@ -52,27 +60,16 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const setting = await getOrCreateSetting();
   const provider = normalizeProvider(typeof body.provider === "string" ? body.provider : setting.provider);
-  const project = String(body.project ?? "");
-  const sprintParam = String(body.sprint ?? "");
   const today = (typeof body.today === "string" && body.today ? body.today : new Date().toISOString()).slice(0, 10);
 
-  const { key: partialKey, identity } = await keyFor(provider, project, sprintParam);
+  const { identity } = await keyFor(provider, "");
   if (!hasIdentity(identity)) {
     return NextResponse.json({ error: "This organization has no identity configured." }, { status: 400 });
   }
 
-  const includeWider = body.includeWider !== false;
-  const [loaded, sprints] = await Promise.all([
-    loadMySprintTickets(provider, project, sprintParam || undefined, identity, includeWider),
-    loadSprints(provider, project),
-  ]);
-  const sprint = sprintParam || loaded.sprint || sprints.current;
-  const iteration = sprints.sprints.find((s) => s.name === sprint) ?? null;
-  const window = {
-    startDate: (iteration?.startDate ?? "").slice(0, 10),
-    finishDate: (iteration?.finishDate ?? "").slice(0, 10),
-  };
-  const key = { ...partialKey, sprint };
+  const { cycle, loaded } = await loadMyCycle(provider, identity, setting.sprintAnchorProject, today);
+  const window = { startDate: cycle.startDate, finishDate: cycle.finishDate };
+  const { key } = await keyFor(provider, cycle.sprint);
 
   const cfg: PlanConfig = {
     hoursPerPoint: setting.hoursPerStoryPoint || DEFAULT_PLAN_CONFIG.hoursPerPoint,
@@ -81,28 +78,28 @@ export async function POST(req: Request) {
     maxTicketsPerDay: Number(body.maxTicketsPerDay) > 0 ? Number(body.maxTicketsPerDay) : 0,
   };
 
-  const triageRow = await latestTriage(key);
-  const triage =
-    triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
+  // Triage is switched off on this page for now.
+  // const triageRow = await latestTriage(key);
+  // const triage =
+  //   triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
 
   const plan = await rebuildPlan(
     key,
-    // The whole team's sprint, not the developer's slice: `claimSprint()` has to
-    // see a ticket sitting under somebody else's name to tell "handed to QA"
-    // from "moved out of the sprint". Plus the developer's own work from outside
-    // the iteration, which `loadMySprintTickets()` has already folded in.
     deliverablesOnly(loaded.tickets, provider),
     identity,
-    triage,
+    null,
     window,
     today,
-    cfg,
-    {
-      includeWider,
-      ...(Array.isArray(body.reviewers) ? { reviewers: body.reviewers.map(String) } : {}),
-    }
+    cfg
   );
-  return NextResponse.json({ plan, usedTriage: !!triage, widened: loaded.widened });
+  const reviewers = await reviewersFor(provider, key.org);
+  return NextResponse.json({
+    plan,
+    sprint: cycle.sprint,
+    warning: reviewers.length
+      ? ""
+      : "No reviewers set for this organization — add them in Settings → Organizations, or released pull requests go out with nobody assigned.",
+  });
 }
 
 // PATCH /api/my-sprint/plan — activate, park, or change what the plan automates,
@@ -134,10 +131,13 @@ export async function PATCH(req: Request) {
     }
     await setPlanStatus(id, status);
   }
-  const patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; reviewers?: string[] } = {};
+  const patch: {
+    autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[];
+  } = {};
   if (typeof body.autoImplement === "boolean") patch.autoImplement = body.autoImplement;
   if (typeof body.autoRelease === "boolean") patch.autoRelease = body.autoRelease;
   if (typeof body.autoResolveReview === "boolean") patch.autoResolveReview = body.autoResolveReview;
+  if (typeof body.autoDraftQaReply === "boolean") patch.autoDraftQaReply = body.autoDraftQaReply;
   if (Array.isArray(body.reviewers)) patch.reviewers = body.reviewers.map(String).filter(Boolean);
   if (Object.keys(patch).length) await setPlanAutomation(id, patch);
 
@@ -164,7 +164,7 @@ export async function PUT(req: Request) {
   if (typeof body.resolveReview === "string" && body.resolveReview) {
     const outcome = await startReviewRun(body.resolveReview, {
       reason: "asked-by-user",
-      detail: "Started from the Review column on My Sprint.",
+      detail: "Started from the Review column on Flow Runner.",
     });
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.resolveReview } });
     return NextResponse.json(
@@ -178,6 +178,34 @@ export async function PUT(req: Request) {
   if (typeof body.retry === "string" && body.retry) {
     const outcome = await retryPlannedTicket(body.retry);
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.retry } });
+    return NextResponse.json(
+      { outcome, plan: item ? await planById(item.planId) : null },
+      outcome.ok ? undefined : { status: 400 }
+    );
+  }
+  if (typeof body.draftQaReply === "string" && body.draftQaReply) {
+    const outcome = await startQaReply(body.draftQaReply);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (typeof body.postQaReply === "string" && body.postQaReply) {
+    const outcome = await postQaReply(body.postQaReply, typeof body.body === "string" ? body.body : "");
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (typeof body.dismissQaReply === "string" && body.dismissQaReply) {
+    const outcome = await dismissQaReply(body.dismissQaReply);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (typeof body.startQaFix === "string" && body.startQaFix) {
+    const outcome = await startQaFix(body.startQaFix);
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.startQaFix } });
+    return NextResponse.json(
+      { outcome, plan: item ? await planById(item.planId) : null },
+      outcome.ok ? undefined : { status: 400 }
+    );
+  }
+  if (typeof body.moveToQa === "string" && body.moveToQa) {
+    const outcome = await moveToQa(body.moveToQa);
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.moveToQa } });
     return NextResponse.json(
       { outcome, plan: item ? await planById(item.planId) : null },
       outcome.ok ? undefined : { status: 400 }

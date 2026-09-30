@@ -39,7 +39,8 @@ export default function NotificationCenter() {
     // else's work item — there is no ticket of theirs to open, so the
     // provider's own page is the destination.
     if (!n.ticketId) {
-      if (n.href) window.open(n.href, "_blank", "noopener");
+      if (n.href?.startsWith("/")) router.push(n.href);
+      else if (n.href) window.open(n.href, "_blank", "noopener");
       return;
     }
     // `at` is a nonce: without it, clicking the same notification twice pushes

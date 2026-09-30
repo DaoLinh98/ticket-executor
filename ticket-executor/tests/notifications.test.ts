@@ -11,10 +11,12 @@ import {
   actionCount,
   buildNotifications,
   fromAutomation,
+  fromLifecycle,
   fromPullRequests,
   fromReviews,
   fromTicketActivity,
   fromRunEvents,
+  fromReportReminder,
   fromWaitingRuns,
   historyWorthy,
   isUnread,
@@ -144,6 +146,24 @@ test("skipped scheduler decisions never reach the bell", () => {
     automation({ id: "c", outcome: "started" }),
   ]);
   assert.deepEqual(list.map((n) => n.refId), ["c"]);
+});
+
+test("a missing root repo is one actionable notification per project, opening its ticket", () => {
+  const list = fromAutomation([
+    automation({ id: "a", ticketId: "101", outcome: "skipped", reason: "no-root-repo", project: "Audit Center" }),
+    automation({ id: "b", ticketId: "102", outcome: "skipped", reason: "no-root-repo", project: "Audit Center" }),
+    automation({ id: "c", ticketId: "103", outcome: "skipped", reason: "no-root-repo", project: "Fee Center" }),
+  ]);
+  assert.deepEqual(list.map((n) => [n.kind, n.refId]), [
+    ["plan.needs-root-repo", "Audit Center"],
+    ["plan.needs-root-repo", "Fee Center"],
+  ]);
+  assert.deepEqual(list.map((n) => n.ticketId), ["101", "103"]);
+  assert.ok(list.every((n) => n.severity === "action" && n.tab === "overview" && !n.href));
+});
+
+test("a missing root repo with no known project stays out of the bell", () => {
+  assert.deepEqual(fromAutomation([automation({ outcome: "skipped", reason: "no-root-repo" })]), []);
 });
 
 test("an abort is reported as plan drift, needing a human", () => {
@@ -434,4 +454,61 @@ test("merging history dedupes by key, live wins, newest first", () => {
   assert.equal(merged.length, 2);
   assert.equal(merged[0].summary, live.summary);
   assert.equal(notificationKey(merged[1]), notificationKey(older));
+});
+
+test("the report reminder starts at 17:15 and stops once sent", () => {
+  const base = { day: "2026-09-28", at: "2026-09-28T10:14:00.000Z", sent: false };
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 17 * 60 + 14 }).length, 0);
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 17 * 60 + 15 }).length, 1);
+  assert.equal(fromReportReminder({ ...base, minuteOfDay: 18 * 60, sent: true }).length, 0);
+  assert.equal(fromReportReminder(null).length, 0);
+});
+
+test("the report reminder is unread again every five minutes", () => {
+  const at = (m: number) => `2026-09-28T10:${String(m).padStart(2, "0")}:30.000Z`;
+  const r = (m: number) => fromReportReminder({ day: "2026-09-28", minuteOfDay: 17 * 60 + m, at: at(m), sent: false })[0];
+  const first = r(15);
+  assert.equal(r(19).fingerprint, first.fingerprint);
+  assert.notEqual(r(20).fingerprint, first.fingerprint);
+  assert.equal(notificationKey(r(20)), notificationKey(first));
+  assert.equal(isUnread(r(20), markRead({}, first, "x")), true);
+  assert.equal(r(23).at, "2026-09-28T10:20:00.000Z");
+  assert.equal(first.severity, "action");
+  assert.equal(first.href, "/report");
+});
+
+test("a merged pull request waiting for the QA move is one actionable notification pointing at Flow Runner", () => {
+  const [n, ...rest] = fromLifecycle([{ ticketId: "201", pendingAction: "move-to-qa", pendingSince: "2026-09-30T02:00:00Z" }]);
+  assert.equal(rest.length, 0);
+  assert.equal(n.kind, "ticket.ready-for-qa");
+  assert.equal(n.severity, "action");
+  assert.equal(n.ticketId, "");
+  assert.equal(n.refId, "201");
+  assert.equal(n.href, "/my-sprint");
+});
+
+test("a ticket back from QA is an actionable notification that opens the ticket", () => {
+  const [n] = fromLifecycle([{ ticketId: "202", pendingAction: "fix-qa", pendingSince: "2026-09-30T02:00:00Z" }]);
+  assert.equal(n.kind, "ticket.qa-failed");
+  assert.equal(n.ticketId, "202");
+  assert.equal(n.tab, "overview");
+  assert.ok(!n.href);
+});
+
+test("a new pending moment on the same ticket is unread again", () => {
+  const [a] = fromLifecycle([{ ticketId: "203", pendingAction: "fix-qa", pendingSince: "2026-09-30T02:00:00Z" }]);
+  const [b] = fromLifecycle([{ ticketId: "203", pendingAction: "fix-qa", pendingSince: "2026-10-01T02:00:00Z" }]);
+  assert.equal(notificationKey(a), notificationKey(b));
+  assert.notEqual(a.fingerprint, b.fingerprint);
+});
+
+test("an unknown pending action produces nothing", () => {
+  assert.deepEqual(fromLifecycle([{ ticketId: "204", pendingAction: "", pendingSince: "" }]), []);
+});
+
+test("a drafted reply to QC is one actionable notification pointing at Flow Runner", () => {
+  const [n] = fromLifecycle([{ ticketId: "205", pendingAction: "qa-reply-ready", pendingSince: "2026-09-30T02:00:00Z" }]);
+  assert.equal(n.kind, "ticket.qa-reply-ready");
+  assert.equal(n.severity, "action");
+  assert.equal(n.href, "/my-sprint");
 });

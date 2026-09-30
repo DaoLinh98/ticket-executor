@@ -36,6 +36,9 @@ export async function POST(req: Request) {
     pat: typeof body.pat === "string" ? body.pat.trim() : "",
     identityEmail: clean(typeof body.identityEmail === "string" ? body.identityEmail : ""),
     identityName: clean(typeof body.identityName === "string" ? body.identityName : ""),
+    reviewers: (Array.isArray(body.reviewers) ? body.reviewers : String(body.reviewers ?? "").split(","))
+      .map((r: unknown) => clean(String(r)))
+      .filter(Boolean),
   });
   // The generated MCP config is built from this credential, so a cached "MCP is
   // fine" verdict no longer describes the setup a run would get.

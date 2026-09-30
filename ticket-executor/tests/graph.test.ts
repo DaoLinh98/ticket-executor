@@ -671,3 +671,13 @@ test("admission: a ticket-specific refusal still outranks the pause", () => {
   const d = admissionDenial({ ...FREE, duplicate: true, pausedUntil: new Date("2026-09-10T12:50:00Z"), now: AT_NOON });
   assert.equal(d?.blocked, "duplicate-ticket");
 });
+
+test("the QA fix skill runs on its own one-shot graph, whatever the settings say", () => {
+  const modes = { autoImplement: false, autoResolveCodeReview: false };
+  assert.equal(resolveSkill("fix-qa-v1", false, modes), "fix-qa-v1");
+  const g = graphForSkill("fix-qa-v1");
+  assert.equal(g.id, "fix-qa-v1");
+  assert.deepEqual(Object.keys(g.nodes), ["deliver"]);
+  assert.equal(g.nodes.deliver.effects, "external");
+  assert.equal(graphById("fix-qa-v1", "fix-qa-v1").id, "fix-qa-v1");
+});

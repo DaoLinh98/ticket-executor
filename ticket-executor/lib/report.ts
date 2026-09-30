@@ -26,6 +26,7 @@ export const PROGRESS_OPTIONS = [
   "Done",
   "Review ticket",
   "Investigate ticket",
+  "Support testing",
 ] as const;
 
 export type Progress = (typeof PROGRESS_OPTIONS)[number];
@@ -62,16 +63,29 @@ export function isListed(e: ReportEntry): boolean {
  */
 export type ReportDraftState = {
   name: string;
-  /** The one line that is not a work item. Fixed rather than free text: it is
-   *  the only recurring non-ticket entry this report has ever carried. */
-  sprintPlanning: { today: boolean; tomorrow: boolean };
+  /** The lines that are not work items, keyed by `REPORT_TASKS` id. Fixed
+   *  rather than free text: they are the only recurring non-ticket entries
+   *  this report carries. */
+  tasks: Record<ReportTaskId, { today: boolean; tomorrow: boolean }>;
   entries: Record<string, ReportEntry>;
 };
 
-export const SPRINT_PLANNING_LABEL = "Sprint planning";
+export const REPORT_TASKS = [
+  { id: "sprintPlanning", label: "Sprint planning" },
+  { id: "fixBugs", label: "Fix bugs (if any)" },
+  { id: "focusQa", label: "Focus on QA tickets" },
+] as const;
+
+export type ReportTaskId = (typeof REPORT_TASKS)[number]["id"];
+
+export function emptyTasks(): ReportDraftState["tasks"] {
+  return Object.fromEntries(
+    REPORT_TASKS.map((t) => [t.id, { today: false, tomorrow: false }])
+  ) as ReportDraftState["tasks"];
+}
 
 export function emptyDraft(name = ""): ReportDraftState {
-  return { name, sprintPlanning: { today: false, tomorrow: false }, entries: {} };
+  return { name, tasks: emptyTasks(), entries: {} };
 }
 
 export function defaultEntry(ticket: Ticket): ReportEntry {
@@ -134,8 +148,10 @@ export function buildReport(opts: {
 
   const today: string[] = [];
   const tomorrow: string[] = [];
-  if (draft.sprintPlanning.today) today.push(SPRINT_PLANNING_LABEL);
-  if (draft.sprintPlanning.tomorrow) tomorrow.push(SPRINT_PLANNING_LABEL);
+  for (const task of REPORT_TASKS) {
+    if (draft.tasks[task.id]?.today) today.push(task.label);
+    if (draft.tasks[task.id]?.tomorrow) tomorrow.push(task.label);
+  }
 
   for (const { ticket, entry } of chosen) {
     const line = ticketLine(ticket);

@@ -54,6 +54,11 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "scheduler.review-fixed": "REVIEW FIXED",
   "scheduler.failed": "AUTO FAILED",
   "plan.drift": "DRIFT",
+  "plan.needs-root-repo": "ROOT REPO",
+  "ticket.ready-for-qa": "READY FOR QA",
+  "ticket.qa-failed": "QA FAILED",
+  "ticket.qa-reply-ready": "QC REPLY",
+  "report.unsent": "REPORT",
 };
 
 type Filter = "action" | "all";

@@ -26,8 +26,11 @@ import { claimSprint } from "../sprintClaim";
 import { deliverablesOnly, isoDay } from "../sprintPlan";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
-import { loadMySprintTickets, loadReviewsSummary, normalizeProvider } from "../tickets";
+import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadReviewsSummary, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
+import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
+import { QA_FIX_SKILL } from "./graph/graphs";
+import { isFixingQa } from "../ticketLifecycle";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
@@ -81,6 +84,7 @@ export type TickReport = {
   aborted: number;
   /** Runs continued after the Claude account's usage limit reset. */
   resumed: number;
+  watched: number;
 };
 
 /**
@@ -91,7 +95,7 @@ export type TickReport = {
  * nobody can check.
  */
 export async function tick(now = new Date()): Promise<TickReport> {
-  const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, resumed: 0 };
+  const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, resumed: 0, watched: 0 };
   // A non-blocking lock: if another process holds it, this tick simply does not
   // happen. Waiting would only queue up ticks behind a slow one.
   const [{ locked }] = await prisma.$queryRaw<{ locked: boolean }[]>`
@@ -105,6 +109,7 @@ export async function tick(now = new Date()): Promise<TickReport> {
     // the machine's, not the sprint's. It is also the cheapest work in the
     // tick — one indexed read that normally returns nothing.
     report.resumed = await resumeRateLimitedRuns(now);
+    await rolloverPlans(now);
 
     const plans = await prisma.sprintPlan.findMany({ where: { status: "active" } });
     report.plans = plans.length;
@@ -116,6 +121,8 @@ export async function tick(now = new Date()): Promise<TickReport> {
       // that the app does not control, so it is re-read first rather than
       // trusted from whenever the plan was last built by hand.
       report.aborted += await refreshClaims(plan);
+      report.watched += await syncNewTickets(plan, now);
+      report.watched += await watchLifecycle(plan, now);
       if (plan.autoRelease) {
         for (const item of await dueForRelease(plan.id, today)) {
           const outcome = await releasePlannedTicket(item.id);
@@ -143,7 +150,48 @@ export async function tick(now = new Date()): Promise<TickReport> {
 
 type ActivePlan = { id: string; provider: string; org: string; project: string };
 
-type ClaimPlan = ActivePlan & { sprint: string; identityEmail: string; includeWider: boolean };
+type ClaimPlan = ActivePlan & {
+  sprint: string;
+  identityEmail: string;
+  includeWider: boolean;
+  startDate: string;
+  finishDate: string;
+};
+
+async function rootRepoFor(plan: ActivePlan, project: string): Promise<string> {
+  const key = project || plan.project;
+  if (!key) return "";
+  const mapped = await prisma.rootRepoProjectMap.findUnique({
+    where: { provider_org_project: { provider: plan.provider, org: plan.org, project: key } },
+  });
+  return mapped?.rootRepo ?? "";
+}
+
+async function noteMissingRootRepo(
+  plan: ActivePlan,
+  item: { ticketId: string; project: string },
+  action: "implement" | "review",
+  today: string
+): Promise<string> {
+  const project = item.project || plan.project;
+  const error = `No root repo is remembered for "${project || "this ticket's project"}" — run one of its tickets by hand from Ticket Execution and it is remembered.`;
+  const already = await prisma.automationEvent.findFirst({
+    where: {
+      planId: plan.id,
+      ticketId: item.ticketId,
+      reason: "no-root-repo",
+      createdAt: { gte: new Date(today + "T00:00:00.000Z") },
+    },
+    select: { id: true },
+  });
+  if (!already) {
+    await logAutomation({
+      planId: plan.id, ticketId: item.ticketId, action, outcome: "skipped",
+      reason: "no-root-repo", detail: error,
+    });
+  }
+  return error;
+}
 
 /**
  * Re-read who owns this plan's tickets, and stop working on the ones that are no
@@ -196,13 +244,13 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
   // Widened exactly as the plan was built, or a ticket the plan legitimately
   // holds from the backlog would come back absent from every read and drift out
   // of the developer's hands on paper alone.
-  const loaded = await loadMySprintTickets(
-    provider,
-    plan.project,
-    plan.sprint || undefined,
-    identity,
-    plan.includeWider
-  );
+  const loaded = plan.project
+    ? await loadMySprintTickets(provider, plan.project, plan.sprint || undefined, identity, plan.includeWider)
+    : await loadMyOpenTickets(
+        provider,
+        identity,
+        cycleSince({ anchorProject: "", sprint: plan.sprint, startDate: plan.startDate, finishDate: plan.finishDate }, isoDay(new Date()))
+      );
   // A provider that answered with nothing is far more likely to be a token or a
   // network problem than a sprint in which the developer lost every ticket at
   // once. Refusing to act on it is the whole reason this check exists.
@@ -295,11 +343,12 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // owns. `buildPlan()` already leaves such a row unqueued; this is the second
   // lock on the same door, because the row is written by one process and read by
   // another two minutes at a time.
-  const next = await prisma.plannedTicket.findFirst({
+  const queue = await prisma.plannedTicket.findMany({
     where: {
       planId: plan.id,
       implementState: "pending",
       claim: "mine",
+      implementOrder: { gt: 0 },
       // Triage's verdict, unless the developer has overridden it. The override
       // is a deliberate human act recorded on the row (`unblockedByUser`), which
       // is the only thing that may outrank a blocker triage found.
@@ -307,7 +356,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
     },
     orderBy: { implementOrder: "asc" },
   });
-  if (!next) return false;
+  if (!queue.length) return false;
 
   // A blocked ticket is skipped by the query above; say so once a day rather
   // than every two minutes, which is what the `today` marker in the detail is
@@ -319,24 +368,24 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // The root repo the project was last run with. The scheduler must not invent
   // one: `startRun()` re-validates it, and a wrong value would be a refusal
   // every two minutes forever.
-  const mapped = await prisma.rootRepoProjectMap.findUnique({
-    where: { provider_org_project: { provider: plan.provider, org: plan.org, project: plan.project } },
-  });
-  if (!mapped?.rootRepo) {
-    await logAutomation({
-      planId: plan.id, ticketId: next.ticketId, action: "implement", outcome: "skipped",
-      reason: "no-root-repo",
-      detail: `No root repo is remembered for project "${plan.project}" — set it in the Root repo field on My Sprint.`,
-    });
-    return false;
+  let next: (typeof queue)[number] | null = null;
+  let rootRepo = "";
+  for (const row of queue) {
+    rootRepo = await rootRepoFor(plan, row.project);
+    if (rootRepo) {
+      next = row;
+      break;
+    }
+    await noteMissingRootRepo(plan, row, "implement", today);
   }
+  if (!next) return false;
 
   const result = await startRun({
     ticketId: next.ticketId,
     ticketUrl: "",
     provider: plan.provider,
-    project: plan.project,
-    rootRepo: mapped.rootRepo,
+    project: next.project || plan.project,
+    rootRepo,
     requestedSkill: "implement-ticket-v2",
     // The plan *is* the human approval. A scheduled run must not park at a plan
     // gate at two in the morning waiting for somebody who is asleep — the whole
@@ -413,6 +462,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
       planId: plan.id,
       claim: "mine",
       prPublished: true,
+      prMerged: false,
       NOT: { prUrl: "" },
       reviewState: { notIn: ["running", "needs-human"] },
       reviewRounds: { lt: MAX_REVIEW_ROUNDS },
@@ -524,6 +574,8 @@ export async function startReviewRun(
       ? "This ticket is no longer yours."
       : !item.prPublished || !item.prUrl
         ? "This ticket has no published pull request to review."
+        : item.prMerged
+          ? "This ticket's pull request is already merged — there is no branch left to fix it on."
         : item.reviewState === "running"
           ? "A review fix is already running for this ticket."
           : "";
@@ -535,17 +587,9 @@ export async function startReviewRun(
     return { ok: false, error: refusal };
   }
 
-  const mapped = await prisma.rootRepoProjectMap.findUnique({
-    where: {
-      provider_org_project: { provider: item.plan.provider, org: item.plan.org, project: item.plan.project },
-    },
-  });
-  if (!mapped?.rootRepo) {
-    const error = `No root repo is remembered for project "${item.plan.project}" — set it in the Root repo field on My Sprint.`;
-    await logAutomation({
-      planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
-      reason: "no-root-repo", detail: error,
-    });
+  const rootRepo = await rootRepoFor(item.plan, item.project);
+  if (!rootRepo) {
+    const error = await noteMissingRootRepo(item.plan, item, "review", isoDay(new Date()));
     return { ok: false, error };
   }
 
@@ -553,8 +597,8 @@ export async function startReviewRun(
     ticketId: item.ticketId,
     ticketUrl: "",
     provider: item.plan.provider,
-    project: item.plan.project,
-    rootRepo: mapped.rootRepo,
+    project: item.project || item.plan.project,
+    rootRepo,
     prUrl: item.prUrl,
     requestedSkill: "fix-code-review-v2",
     // The same reasoning as the implement queue: the plan is the human approval,
@@ -584,6 +628,84 @@ export async function startReviewRun(
   await logAutomation({
     planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "started",
     reason: opts.reason, detail: opts.detail,
+  });
+  return { ok: true, error: "" };
+}
+
+const MAX_QA_ROUNDS = 3;
+
+export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+
+  const refusal =
+    item.claim !== "mine"
+      ? "This ticket is no longer yours."
+      : item.pendingAction !== "fix-qa"
+        ? "QA has not sent this ticket back."
+        : isFixingQa(item)
+          ? "A QA fix is already in progress for this ticket."
+          : item.qaRounds >= MAX_QA_ROUNDS
+            ? `${MAX_QA_ROUNDS} QA fixes did not close this ticket — it needs a person.`
+            : item.implementState === "running" || item.reviewState === "running"
+              ? "A run is already in progress for this ticket."
+              : "";
+  if (refusal) {
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
+      reason: "qa-fix-refused", detail: refusal,
+    });
+    return { ok: false, error: refusal };
+  }
+
+  const rootRepo = await rootRepoFor(item.plan, item.project);
+  if (!rootRepo) {
+    const error = await noteMissingRootRepo(item.plan, item, "implement", isoDay(new Date()));
+    return { ok: false, error };
+  }
+
+  const result = await startRun({
+    ticketId: item.ticketId,
+    ticketUrl: "",
+    provider: item.plan.provider,
+    project: item.project || item.plan.project,
+    rootRepo,
+    requestedSkill: QA_FIX_SKILL,
+    skillExplicit: true,
+  });
+  if (!result.ok) {
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
+      reason: result.blocked || "admission-refused", detail: result.error,
+    });
+    return { ok: false, error: result.error };
+  }
+
+  await prisma.plannedTicket.update({
+    where: { id: item.id },
+    data: {
+      implementState: "running",
+      runId: result.runId,
+      qaRounds: item.qaRounds + 1,
+      prMerged: false,
+      prPublished: false,
+      reviewersSet: false,
+      statusMoved: false,
+      releasedAt: null,
+      releaseError: "",
+      reviewState: "idle",
+      reviewRunId: "",
+      openComments: 0,
+      threadsReplied: 0,
+      threadsResolved: 0,
+      reviewRounds: 0,
+      lastCommentAt: "",
+      reviewError: "",
+    },
+  });
+  await logAutomation({
+    planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "started",
+    reason: "qa-fix", detail: `QA fix round ${item.qaRounds + 1} of ${MAX_QA_ROUNDS}, started after you confirmed.`,
   });
   return { ok: true, error: "" };
 }

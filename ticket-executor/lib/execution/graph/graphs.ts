@@ -323,8 +323,18 @@ function oneShotGraph(review: boolean): Graph {
   };
 }
 
+function qaFixGraph(): Graph {
+  const base = oneShotGraph(false);
+  return {
+    ...base,
+    id: "fix-qa-v1",
+    nodes: { deliver: { ...base.nodes.deliver, label: "Fix QA findings & open PR" } },
+  };
+}
+
 // ---- resolution ----
 
+export const QA_FIX_SKILL = "fix-qa-v1";
 const REVIEW_SKILLS = new Set(["fix-code-review-v2", "fix-code-review-v3"]);
 const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
 
@@ -342,6 +352,7 @@ export type GraphOptions = {
 /** The graph a skill runs on. This replaces the old `isTwoPhaseSkill` boolean:
  *  the shape of a run is now a graph, not a flag read in three places. */
 export function graphForSkill(skill: string, opts: GraphOptions = {}): Graph {
+  if (skill === QA_FIX_SKILL) return qaFixGraph();
   const review = REVIEW_SKILLS.has(skill);
   // The evaluator only exists in the gated flow. The one-shot flow has already
   // published by the time any node could review it, so bolting a reviewer on
@@ -366,6 +377,8 @@ export function graphById(graphId: string, skill: string): Graph {
       return oneShotGraph(false);
     case "fix-review-v2":
       return oneShotGraph(true);
+    case "fix-qa-v1":
+      return qaFixGraph();
     default:
       return graphForSkill(skill);
   }
@@ -384,6 +397,7 @@ export const KNOWN_SKILLS = [
   "implement-ticket-v3",
   "fix-code-review-v2",
   "fix-code-review-v3",
+  QA_FIX_SKILL,
 ];
 
 /** Which flow family a skill belongs to — the half of the request the caller
@@ -412,7 +426,7 @@ export function resolveSkill(
   modes: { autoImplement: boolean; autoResolveCodeReview: boolean }
 ): string | null {
   if (!KNOWN_SKILLS.includes(requested)) return null;
-  if (explicit) return requested;
+  if (explicit || requested === QA_FIX_SKILL) return requested;
   const review = familyOf(requested) === "review";
   const auto = review ? modes.autoResolveCodeReview : modes.autoImplement;
   if (review) return auto ? "fix-code-review-v2" : "fix-code-review-v3";

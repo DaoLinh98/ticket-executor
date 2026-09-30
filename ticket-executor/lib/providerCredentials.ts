@@ -33,11 +33,12 @@ export type ConnectionView = {
   isActive: boolean;
   identityEmail: string;
   identityName: string;
+  reviewers: string[];
 };
 
 const view = (c: {
   id: string; provider: string; label: string; org: string; pat: string; isActive: boolean;
-  identityEmail: string; identityName: string;
+  identityEmail: string; identityName: string; reviewers: string[];
 }): ConnectionView => ({
   id: c.id,
   provider: c.provider,
@@ -47,6 +48,7 @@ const view = (c: {
   isActive: c.isActive,
   identityEmail: c.identityEmail,
   identityName: c.identityName,
+  reviewers: c.reviewers ?? [],
 });
 
 /** Every connection saved for `provider`, oldest first — the order the picker
@@ -110,6 +112,14 @@ export async function connectionCredential(id: string): Promise<ResolvedCredenti
   };
 }
 
+export async function reviewersFor(provider: string, org: string): Promise<string[]> {
+  const row = await prisma.providerCredential.findUnique({
+    where: { provider_org: { provider, org } },
+    select: { reviewers: true },
+  });
+  return row?.reviewers ?? [];
+}
+
 /** Make `id` the connection this provider runs as. A no-op for an id that is
  *  not this provider's. */
 export async function setActiveConnection(provider: string, id: string): Promise<boolean> {
@@ -138,12 +148,16 @@ export async function saveConnection(input: {
   pat: string;
   identityEmail: string;
   identityName: string;
+  reviewers: string[];
 }): Promise<ConnectionView> {
-  const data: { label: string; org: string; identityEmail: string; identityName: string; pat?: string } = {
+  const data: {
+    label: string; org: string; identityEmail: string; identityName: string; reviewers: string[]; pat?: string;
+  } = {
     label: input.label,
     org: input.org,
     identityEmail: input.identityEmail,
     identityName: input.identityName,
+    reviewers: input.reviewers,
   };
   if (input.pat.length > 0) data.pat = encryptSecret(input.pat);
 

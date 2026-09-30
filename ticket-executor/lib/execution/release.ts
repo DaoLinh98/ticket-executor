@@ -20,6 +20,7 @@
 
 import { addPullRequestReviewers, publishPullRequest } from "../ado";
 import { prisma } from "../prisma";
+import { reviewersFor } from "../providerCredentials";
 import { resolveStatusForUpdate, updateTicketStatus } from "../tickets";
 import type { ProviderId } from "../providers";
 import { logAutomation } from "./planStore";
@@ -101,12 +102,14 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
 
   // Reviewers only once the work is actually visible: assigning somebody to a
   // draft notifies them of something they cannot review.
-  if (prPublished && !reviewersSet && item.plan.reviewers.length > 0) {
+  const orgReviewers = await reviewersFor(item.plan.provider, item.plan.org);
+  const reviewers = orgReviewers.length ? orgReviewers : item.plan.reviewers;
+  if (prPublished && !reviewersSet && reviewers.length > 0) {
     if (!prWrites) {
       lines.push("Reviewer assignment is not wired for this provider.");
     } else {
       try {
-        const r = await addPullRequestReviewers(item.prUrl, item.plan.reviewers);
+        const r = await addPullRequestReviewers(item.prUrl, reviewers);
         reviewersSet = r.ok;
         lines.push(r.detail);
         if (!r.ok && !error) error = r.detail;
@@ -116,9 +119,9 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
         if (!error) error = msg;
       }
     }
-  } else if (prPublished && item.plan.reviewers.length === 0) {
+  } else if (prPublished && reviewers.length === 0) {
     reviewersSet = true;
-    lines.push("No reviewers configured for this plan.");
+    lines.push("No reviewers configured for this organization.");
   }
 
   if (prPublished && !statusMoved) {

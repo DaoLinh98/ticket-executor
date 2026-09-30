@@ -3,7 +3,8 @@ import {
   adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, searchIdentities, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
-  type ProjectInfo,
+  getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds,
+  type CommentMark, type LinkedPullRequest, type ProjectInfo,
 } from "./ado";
 import {
   getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
@@ -193,6 +194,77 @@ export async function loadMyOpenTickets(
       notice: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export type SprintCycle = {
+  anchorProject: string;
+  sprint: string;
+  startDate: string;
+  finishDate: string;
+};
+
+const CYCLE_FALLBACK_DAYS = 14;
+
+export async function loadSprintCycle(provider: ProviderId, anchorProject: string): Promise<SprintCycle> {
+  const empty: SprintCycle = { anchorProject, sprint: "", startDate: "", finishDate: "" };
+  if (!anchorProject) return empty;
+  const { sprints, current } = await loadSprints(provider, anchorProject);
+  const iteration = sprints.find((s) => s.name === current);
+  if (!iteration) return empty;
+  return {
+    anchorProject,
+    sprint: iteration.name,
+    startDate: (iteration.startDate ?? "").slice(0, 10),
+    finishDate: (iteration.finishDate ?? "").slice(0, 10),
+  };
+}
+
+export function cycleSince(cycle: SprintCycle, today: string): string {
+  if (cycle.startDate) return cycle.startDate;
+  const d = new Date(today + "T00:00:00.000Z");
+  d.setUTCDate(d.getUTCDate() - CYCLE_FALLBACK_DAYS);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function loadMyCycle(
+  provider: ProviderId,
+  identity: DevIdentity,
+  anchorProject: string,
+  today: string
+): Promise<{ cycle: SprintCycle; loaded: TicketLoadResult; cycleNotice: string }> {
+  let cycle: SprintCycle = { anchorProject, sprint: "", startDate: "", finishDate: "" };
+  let cycleNotice = "";
+  try {
+    cycle = await loadSprintCycle(provider, anchorProject);
+  } catch (err) {
+    cycleNotice = err instanceof Error ? err.message : String(err);
+  }
+  if (!cycleNotice && !cycle.sprint) {
+    cycleNotice = anchorProject
+      ? `${anchorProject} has no current iteration — showing the last ${CYCLE_FALLBACK_DAYS} days.`
+      : `Pick the project whose sprint calendar to follow — showing the last ${CYCLE_FALLBACK_DAYS} days.`;
+  }
+  const loaded = await loadMyOpenTickets(provider, identity, cycleSince(cycle, today));
+  return { cycle, loaded, cycleNotice };
+}
+
+export async function loadCommentMarks(provider: ProviderId, id: string): Promise<CommentMark[]> {
+  if (provider !== "azure-devops") return [];
+  return getWorkItemCommentMarks(id);
+}
+
+export async function loadTicketsByIds(provider: ProviderId, ids: string[]): Promise<Ticket[]> {
+  if (provider !== "azure-devops") return [];
+  return getWorkItemsByIds(ids);
+}
+
+export async function loadLinkedPullRequest(
+  provider: ProviderId,
+  ticketId: string,
+  knownPrUrl?: string | null
+): Promise<LinkedPullRequest | null> {
+  if (provider !== "azure-devops") return null;
+  return getLinkedPullRequest(ticketId, knownPrUrl);
 }
 
 export type ProjectLoadResult = {

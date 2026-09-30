@@ -67,5 +67,7 @@ export {
   RELEASE_STATUS,
   type ReleaseOutcome,
 } from "./execution/release";
-export { startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";
+export { startQaFix, startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";
+export { moveToQa, QA_STATUS } from "./execution/lifecycle";
+export { dismissQaReply, listQaDrafts, postQaReply, startQaReply } from "./execution/qaReply";
 export { translateToVietnamese, TRANSLATE_MODEL, type TranslateResult } from "./execution/translate";

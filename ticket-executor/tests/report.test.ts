@@ -10,6 +10,7 @@ import {
   buildReport,
   defaultProgress,
   emptyDraft,
+  emptyTasks,
   formatReportDay,
   ticketLine,
   type ReportDraftState,
@@ -64,7 +65,7 @@ test("a full report reads exactly as it is pasted", () => {
     name: "Ken Nguyen",
     tickets,
     draft: draft({
-      sprintPlanning: { today: true, tomorrow: false },
+      tasks: { ...emptyTasks(), sprintPlanning: { today: true, tomorrow: false } },
       entries: {
         "24600": { today: true, tomorrow: false, progress: "100%", comment: false, block: false },
         "23365": { today: false, tomorrow: true, progress: "", comment: true, block: true },

@@ -28,7 +28,12 @@ export type NotificationKind =
   | "scheduler.released"
   | "scheduler.review-fixed"
   | "scheduler.failed"
-  | "plan.drift";
+  | "plan.drift"
+  | "plan.needs-root-repo"
+  | "ticket.ready-for-qa"
+  | "ticket.qa-failed"
+  | "ticket.qa-reply-ready"
+  | "report.unsent";
 
 /** `action` means the developer has to do something; `info` is a record of
  *  something the app did on their behalf. It splits the panel into its two
@@ -310,6 +315,7 @@ export type AutomationSource = {
   outcome: string;
   reason: string;
   createdAt: string;
+  project?: string;
 };
 
 /**
@@ -317,7 +323,7 @@ export type AutomationSource = {
  *
  * `skipped` is dropped. The scheduler writes down its refusals on purpose —
  * "not due", "blocked by triage", "already running" — and that record is worth
- * having, but it belongs in the My Sprint log, where somebody is reading
+ * having, but it belongs in the Flow Runner log, where somebody is reading
  * deliberately. Every tick produces some, so putting them here would bury the
  * two or three events a day that actually mean something.
  *
@@ -338,7 +344,23 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
     concludedAt.set(e.ticketId, Math.max(at, concludedAt.get(e.ticketId) ?? 0));
   }
   const out: AppNotification[] = [];
+  const missingRepo = new Set<string>();
   for (const e of rows) {
+    if (e.reason === "no-root-repo" && e.project) {
+      if (missingRepo.has(e.project)) continue;
+      missingRepo.add(e.project);
+      out.push({
+        kind: "plan.needs-root-repo",
+        ticketId: e.ticketId,
+        refId: e.project,
+        severity: "action",
+        summary: `No root repo known for ${e.project} — run this ticket once by hand to set it`,
+        at: e.createdAt,
+        tab: "overview",
+        fingerprint: `root-repo::${e.project}`,
+      });
+      continue;
+    }
     if (e.outcome === "skipped") continue;
     const base = { ticketId: e.ticketId, refId: e.id, at: e.createdAt, fingerprint: e.id };
     if (e.action === "abort") {
@@ -439,6 +461,86 @@ export function fromTicketActivity(rows: TicketActivitySource[]): AppNotificatio
   }));
 }
 
+export const REPORT_REMINDER_START_MINUTE = 17 * 60 + 15;
+export const REPORT_REMINDER_EVERY_MINUTES = 5;
+
+export type ReportReminderSource = {
+  day: string;
+  minuteOfDay: number;
+  at: string;
+  sent: boolean;
+};
+
+export function fromReportReminder(r: ReportReminderSource | null): AppNotification[] {
+  if (!r || r.sent || r.minuteOfDay < REPORT_REMINDER_START_MINUTE) return [];
+  const elapsed = r.minuteOfDay - REPORT_REMINDER_START_MINUTE;
+  const slot = Math.floor(elapsed / REPORT_REMINDER_EVERY_MINUTES);
+  const slotAt = new Date(Date.parse(r.at) - (elapsed % REPORT_REMINDER_EVERY_MINUTES) * 60_000);
+  slotAt.setSeconds(0, 0);
+  return [{
+    kind: "report.unsent",
+    ticketId: "",
+    refId: r.day,
+    severity: "action",
+    summary: "Today's report has not been sent to Slack yet",
+    at: slotAt.toISOString(),
+    tab: "overview",
+    href: "/report",
+    fingerprint: `report::${r.day}::${slot}`,
+  }];
+}
+
+export type LifecycleSource = {
+  ticketId: string;
+  pendingAction: string;
+  pendingSince: string;
+};
+
+export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
+  return rows.flatMap((r): AppNotification[] => {
+    const fingerprint = `${r.pendingAction}::${r.pendingSince}`;
+    if (r.pendingAction === "move-to-qa") {
+      return [{
+        kind: "ticket.ready-for-qa",
+        ticketId: "",
+        refId: r.ticketId,
+        severity: "action",
+        summary: `#${r.ticketId}'s pull request is merged — confirm moving it to In QA on Flow Runner`,
+        at: r.pendingSince,
+        tab: "overview",
+        href: "/my-sprint",
+        fingerprint,
+      }];
+    }
+    if (r.pendingAction === "qa-reply-ready") {
+      return [{
+        kind: "ticket.qa-reply-ready",
+        ticketId: "",
+        refId: r.ticketId,
+        severity: "action",
+        summary: `A reply to QC on #${r.ticketId} is drafted — review it and post it on Flow Runner`,
+        at: r.pendingSince,
+        tab: "overview",
+        href: "/my-sprint",
+        fingerprint,
+      }];
+    }
+    if (r.pendingAction === "fix-qa") {
+      return [{
+        kind: "ticket.qa-failed",
+        ticketId: r.ticketId,
+        refId: r.ticketId,
+        severity: "action",
+        summary: `#${r.ticketId} came back from QA — it needs a fix`,
+        at: r.pendingSince,
+        tab: "overview",
+        fingerprint,
+      }];
+    }
+    return [];
+  });
+}
+
 /** Every source merged into the one list the bell renders. */
 export function buildNotifications(sources: {
   reviews?: ReviewSource[];
@@ -447,6 +549,8 @@ export function buildNotifications(sources: {
   waitingRuns?: WaitingRunSource[];
   runEvents?: RunEventSource[];
   automation?: AutomationSource[];
+  reportReminder?: ReportReminderSource | null;
+  lifecycle?: LifecycleSource[];
 }): AppNotification[] {
   return sortNotifications([
     ...fromReviews(sources.reviews ?? []),
@@ -455,6 +559,8 @@ export function buildNotifications(sources: {
     ...fromWaitingRuns(sources.waitingRuns ?? []),
     ...fromRunEvents(sources.runEvents ?? []),
     ...fromAutomation(sources.automation ?? []),
+    ...fromReportReminder(sources.reportReminder ?? null),
+    ...fromLifecycle(sources.lifecycle ?? []),
   ]);
 }
 

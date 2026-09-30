@@ -7,7 +7,7 @@ import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
 import { bankParkedTime, cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
-import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, isReviewSkill, KNOWN_SKILLS, PLAN_FILE, resolveSkill } from "./graph/graphs";
+import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, isReviewSkill, KNOWN_SKILLS, PLAN_FILE, QA_FIX_SKILL, resolveSkill } from "./graph/graphs";
 import { loadKnowledge } from "./knowledgeStore";
 import { REVIEW_SKILL } from "./graph/prompts";
 import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
@@ -291,6 +291,14 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // CLI an unknown slash command — by then the plan has been written, a human has
   // approved it and the code is committed, which is an expensive place to
   // discover a missing file.
+  if (skill === QA_FIX_SKILL && !findSkill(QA_FIX_SKILL)) {
+    return {
+      ok: false,
+      status: 400,
+      blocked: "missing-skill",
+      error: `The ${QA_FIX_SKILL} skill is not installed. Install it from the Guide or the System Check page.`,
+    };
+  }
   if (evaluate && !findSkill(REVIEW_SKILL)) {
     return {
       ok: false,

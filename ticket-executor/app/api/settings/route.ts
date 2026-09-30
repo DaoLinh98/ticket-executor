@@ -35,6 +35,7 @@ function publicSettings(s: SettingRow, cred: ConnectionView | null) {
     concurrentRuns: s.concurrentRuns,
     hourlyRateUsd: s.hourlyRateUsd,
     hoursPerStoryPoint: s.hoursPerStoryPoint,
+    sprintAnchorProject: s.sprintAnchorProject,
     evaluateBeforePublish: s.evaluateBeforePublish,
     gitUserName: s.gitUserName,
     gitUserEmail: s.gitUserEmail,
@@ -62,7 +63,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const body = await req.json();
   const data: Record<string, string | boolean | number> = {};
-  for (const k of ["provider", "scope", "personalAccount", "gitUserName", "gitUserEmail"] as const) {
+  for (const k of ["provider", "scope", "personalAccount", "gitUserName", "gitUserEmail", "sprintAnchorProject"] as const) {
     if (typeof body[k] === "string") data[k] = clean(body[k]);
   }
   if (typeof body.animatedBackground === "boolean")

@@ -1,0 +1,2 @@
+ALTER TABLE "ReportDraft" ADD COLUMN "sentText" TEXT;
+ALTER TABLE "ReportDraft" ADD COLUMN "sentAt" TIMESTAMP(3);

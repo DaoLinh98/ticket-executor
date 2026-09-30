@@ -31,7 +31,7 @@ const NAV: NavItem[] = [
   },
   {
     href: "/my-sprint",
-    label: "My Sprint",
+    label: "Flow Runner",
     icon: (
       <>
         <path d="M8 2v4M16 2v4M3 10h18" />
