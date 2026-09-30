@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   buildNotifications, markAllRead, markRead, mergeWithHistory, notificationKey,
-  type AppNotification, type AutomationSource, type PullRequestSource, type ReadEntry, type ReadMap,
+  type AppNotification, type AutomationSource, type LifecycleSource, type PullRequestSource, type ReadEntry, type ReadMap,
   type ReportReminderSource, type RunEventSource, type ReviewSource, type TicketActivitySource,
 } from "@/lib/notifications";
 
@@ -64,7 +64,7 @@ export function useNotifications(): NotificationsContextValue {
  *
  * It lives here rather than on the Ticket Execution screen because the bell is
  * system-wide: the scheduler works a plan and reviewers comment while the
- * developer is on Settings or My Sprint, and a notification only reachable from
+ * developer is on Settings or Flow Runner, and a notification only reachable from
  * one page is a notification nobody sees.
  */
 export default function NotificationsProvider({ children }: { children: ReactNode }) {
@@ -73,6 +73,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
   const [ticketActivity, setTicketActivity] = useState<TicketActivitySource[]>([]);
   const [planReviews, setPlanReviews] = useState<ReviewSource[]>([]);
   const [reportReminder, setReportReminder] = useState<ReportReminderSource | null>(null);
+  const [lifecycle, setLifecycle] = useState<LifecycleSource[]>([]);
   const [local, setLocal] = useState<LocalNotificationSources>({});
   const [read, setRead] = useState<ReadMap>({});
   const [history, setHistory] = useState<AppNotification[]>([]);
@@ -228,6 +229,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
       if (Array.isArray(data.ticketActivity)) setTicketActivity(data.ticketActivity);
       if (Array.isArray(data.reviews)) setPlanReviews(data.reviews);
       if ("reportReminder" in data) setReportReminder(data.reportReminder ?? null);
+      if (Array.isArray(data.lifecycle)) setLifecycle(data.lifecycle);
       if (!readRes.ok) throw new Error(`GET /api/notifications/read -> ${readRes.status}`);
       const readData = await readRes.json();
       if (readData?.read) applyRead(readData.read as ReadMap);
@@ -295,8 +297,9 @@ export default function NotificationsProvider({ children }: { children: ReactNod
         runEvents: local.runEvents ?? [],
         automation,
         reportReminder,
+        lifecycle,
       }), history),
-    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, local.waitingRuns, local.runEvents, history]
+    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, lifecycle, local.waitingRuns, local.runEvents, history]
   );
 
   const titleOf = useCallback((ticketId: string) => local.titles?.[ticketId] ?? "", [local.titles]);

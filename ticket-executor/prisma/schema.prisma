@@ -79,6 +79,7 @@ model Setting {
   // the scheduler — a limit applies to a button press exactly as it applies to a
   // scheduled run, and a second gate would be a second place to drift.
   agentPausedUntil DateTime?
+  sprintAnchorProject String @default("")
   updatedAt      DateTime @updatedAt
 }
 
@@ -115,6 +116,7 @@ model ProviderCredential {
   // fallback for providers and work items that only carry a name.
   identityEmail String @default("")
   identityName  String @default("")
+  reviewers     String[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -509,6 +511,7 @@ model SprintPlan {
   // let the agent work overnight is not automatically happy to let it answer
   // their reviewer, so it gets its own switch rather than riding on autoRelease.
   autoResolveReview Boolean @default(false)
+  autoDraftQaReply Boolean @default(false)
   // Reviewers every pull request from this plan is assigned when it is released.
   // Held per plan rather than per ticket: the team a sprint is delivered to is
   // the same team all fortnight.
@@ -537,6 +540,7 @@ model PlannedTicket {
   plan           SprintPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   ticketId       String
   title          String     @default("")
+  project        String     @default("")
   implementOrder Int        @default(0)
   points         Float      @default(0)
   estimateHours  Float      @default(0)
@@ -606,6 +610,12 @@ model PlannedTicket {
   reviewRounds    Int       @default(0)
   reviewedAt      DateTime?
   reviewError     String    @default("")
+  stage           String    @default("")
+  prMerged        Boolean   @default(false)
+  pendingAction   String    @default("")
+  pendingSince    DateTime?
+  qaRounds        Int       @default(0)
+  qaCommentAt     String    @default("")
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
@@ -613,6 +623,7 @@ model PlannedTicket {
   @@index([releaseDay])
   @@index([claim])
   @@index([reviewState])
+  @@index([pendingAction])
 }
 
 // Every decision the scheduler made, including the ones to do nothing.
@@ -737,4 +748,25 @@ model NotificationHistory {
 
   @@id([scope, key])
   @@index([scope, at])
+}
+
+model QaReplyDraft {
+  id              String    @id @default(cuid())
+  planId          String
+  plannedTicketId String
+  ticketId        String
+  status          String    @default("running")
+  answersUpTo     String    @default("")
+  body            String    @default("")
+  summary         String    @default("")
+  needsHuman      Boolean   @default(false)
+  fixNeeded       Boolean   @default(false)
+  errorMessage    String    @default("")
+  costUsd         Float     @default(0)
+  createdAt       DateTime  @default(now())
+  endedAt         DateTime?
+  postedAt        DateTime?
+
+  @@index([plannedTicketId])
+  @@index([status])
 }

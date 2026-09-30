@@ -1,0 +1,2 @@
+ALTER TABLE "Setting" ADD COLUMN "sprintAnchorProject" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "PlannedTicket" ADD COLUMN "project" TEXT NOT NULL DEFAULT '';

@@ -23,6 +23,7 @@
 // `order` and `points` this module is handed.
 
 import type { Claim } from "@/lib/sprintClaim";
+import { isQueueable, stageOf, type Stage } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 
 // ---- lanes ----
@@ -38,26 +39,19 @@ import type { Ticket } from "@/lib/types";
  */
 export type Lane = "todo" | "doing" | "review" | "done";
 
-const DONE = new Set(["done", "closed", "completed", "accepted", "removed"]);
-const REVIEW = new Set([
-  "code review",
-  "in code review",
-  "in review",
-  "review",
-  "peer review",
-  "resolved",
-  "ready for qa",
-  "qa",
-  "testing",
-]);
-const DOING = new Set(["in progress", "active", "doing", "development"]);
+const LANE_BY_STAGE: Record<Stage, Lane> = {
+  ready: "todo",
+  doing: "doing",
+  blocked: "doing",
+  "qa-failed": "doing",
+  "code-review": "review",
+  qa: "review",
+  "qa-passed": "review",
+  done: "done",
+};
 
 export function laneOf(status: string): Lane {
-  const s = (status ?? "").trim().toLowerCase();
-  if (DONE.has(s)) return "done";
-  if (REVIEW.has(s)) return "review";
-  if (DOING.has(s)) return "doing";
-  return "todo";
+  return LANE_BY_STAGE[stageOf(status)];
 }
 
 // ---- what counts as a ticket ----
@@ -362,6 +356,7 @@ export function summarize(
 export type PlannedTicket = {
   ticketId: string;
   title: string;
+  project: string;
   /** Position in the implement queue, 1-based and dense. Zero for a ticket that
    *  is already in review or done — those are not queued for anything. */
   implementOrder: number;
@@ -443,6 +438,7 @@ export function buildPlan(
     const planned: PlannedTicket = {
       ticketId: input.ticket.id,
       title: input.ticket.title,
+      project: input.ticket.project ?? "",
       implementOrder: 0,
       points,
       estimateHours: ticketHours(input, cfg),
@@ -455,7 +451,7 @@ export function buildPlan(
     // Only work that is still the developer's gets a queue position and a
     // release day. Scheduling a run on a ticket somebody else now owns is the
     // one mistake this whole module exists to prevent.
-    if (claim !== "mine" || lane === "done" || lane === "review") return planned;
+    if (claim !== "mine" || !isQueueable(stageOf(input.ticket.status))) return planned;
 
     position += 1;
     planned.implementOrder = position;
@@ -516,6 +512,8 @@ export type RetryFacts = {
   prUrl: string;
   /** Where the developer's claim on the ticket stands (lib/sprintClaim.ts). */
   claim: string;
+  /** Position in the implement queue; zero for a ticket that was never queued. */
+  implementOrder?: number;
 };
 
 /**
@@ -559,6 +557,9 @@ export function retryDenial(f: RetryFacts): string {
   }
   if (f.implementState === "pending") {
     return "This ticket is already in the queue.";
+  }
+  if (f.implementOrder === 0) {
+    return "This ticket is not in the implement queue — it was already past implementation when the plan was built.";
   }
   return "";
 }

@@ -187,7 +187,7 @@ export default function TicketExecutor() {
   const [fAssignee, setFAssignee] = useState("");
   const [fPlanned, setFPlanned] = useState("");
   // Queue position per ticket id, for the tickets this sprint's plan carries.
-  // Read-only here — My Sprint owns the plan; this screen only needs to answer
+  // Read-only here — Flow Runner owns the plan; this screen only needs to answer
   // "is this one already scheduled, and where in the order", so a ticket is not
   // picked up by hand while the scheduler is holding a slot for it.
   const [plannedOrder, setPlannedOrder] = useState<Record<string, number>>({});

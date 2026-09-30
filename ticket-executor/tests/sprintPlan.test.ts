@@ -95,6 +95,11 @@ test("lanes classify the four states capacity maths cares about", () => {
   assert.equal(laneOf("Code Review"), "review");
   assert.equal(laneOf("Closed"), "done");
   assert.equal(laneOf("Something A Process Template Invented"), "todo");
+  assert.equal(laneOf("In QA"), "review");
+  assert.equal(laneOf("QA Passed"), "review");
+  assert.equal(laneOf("QA Failed"), "doing");
+  assert.equal(laneOf("Blocked"), "doing");
+  assert.equal(laneOf("Resolved"), "done");
 });
 
 // ---- sizing ----
@@ -296,6 +301,28 @@ test("tickets already handed over take no release capacity", () => {
   assert.equal(plan.tickets[1].releaseDay, "2026-09-07", "the queue starts on day one");
 });
 
+test("tickets already with QA are never queued for implementation", () => {
+  const plan = buildPlan(
+    [
+      input("1", 3, { status: "In QA" }),
+      input("2", 3, { status: "QA Failed" }),
+      input("3", 3, { status: "QA Passed" }),
+      input("4", 3, { status: "Resolved" }),
+      input("5", 2),
+    ],
+    SPRINT,
+    "2026-09-07",
+    CFG
+  );
+  assert.deepEqual(plan.tickets.map((t) => t.implementOrder), [0, 0, 0, 0, 1]);
+  assert.deepEqual(plan.tickets.slice(0, 4).map((t) => t.releaseDay), ["", "", "", ""]);
+});
+
+test("each planned ticket carries the project it belongs to", () => {
+  const plan = buildPlan([input("1", 2, { project: "Audit Center" })], SPRINT, "2026-09-07", CFG);
+  assert.equal(plan.tickets[0].project, "Audit Center");
+});
+
 test("work the pace cannot fit before the sprint ends overflows rather than piling onto the last day", () => {
   // 30 points at 2/day needs 15 working days; the sprint has 10.
   const plan = buildPlan(
@@ -366,6 +393,11 @@ test("retry: finished or in-flight work is refused", () => {
   for (const implementState of ["running", "implemented", "pending"]) {
     assert.notEqual(retryDenial({ ...STOPPED, implementState }), "");
   }
+});
+
+test("retry: a ticket that was never queued is not requeued", () => {
+  assert.match(retryDenial({ ...STOPPED, implementOrder: 0 }), /not in the implement queue/);
+  assert.equal(retryDenial({ ...STOPPED, implementOrder: 3 }), "");
 });
 
 test("retry: a ticket that changed hands is not yours to requeue", () => {

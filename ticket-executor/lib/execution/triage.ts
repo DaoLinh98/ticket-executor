@@ -208,13 +208,13 @@ export function triagePrompt(input: TriageInput): string {
 /** The minimal live-run shape `runTurn` reads: a cwd, a log to append to, and a
  *  slot to hold the child process. Triage has no Run row, so this is built here
  *  rather than rehydrated. */
-function triageLive(id: string, cwd: string, provider: string): LiveRun {
+export function triageLive(id: string, cwd: string, provider: string, skill: string = TRIAGE_SKILL): LiveRun {
   return {
     id,
-    graphId: "triage",
+    graphId: skill === TRIAGE_SKILL ? "triage" : skill,
     ctx: {
       runId: id, ticketId: "", ticketUrl: "", provider, project: "", prUrl: "",
-      skill: TRIAGE_SKILL, rootRepo: cwd, cwd, baseSha: "", knowledge: "",
+      skill, rootRepo: cwd, cwd, baseSha: "", knowledge: "",
       channels: {}, visits: {},
     },
     state: "running",
@@ -282,7 +282,7 @@ export async function startTriage(input: TriageInput): Promise<{ id: string } | 
  *  The turn runs with permissions skipped, so it must never fall back to the
  *  server process's own working directory — a read-only turn still has no
  *  business sitting in the application's source tree. */
-function scratchCwd(id: string): string {
+export function scratchCwd(id: string): string {
   const dir = path.join(tmpdir(), "te-triage", id.replace(/[^\w-]/g, ""));
   mkdirSync(dir, { recursive: true });
   return dir;

@@ -1,13 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { hasIdentity, isMyPullRequest, myVoteOn, type DevIdentity } from "@/lib/identity";
 import {
-  buildNotifications, REPORT_REMINDER_START_MINUTE, type PullRequestSource, type ReportReminderSource, type ReviewSource,
+  buildNotifications, REPORT_REMINDER_START_MINUTE, type LifecycleSource, type PullRequestSource, type ReportReminderSource, type ReviewSource,
 } from "@/lib/notifications";
 import { historyScope, recordHistory } from "@/lib/notificationHistory";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { loadSent } from "@/lib/reportDraft";
 import { slackReportChannel } from "@/lib/slack";
 import { getOrCreateSetting } from "@/lib/settings";
+import { isFixingQa } from "@/lib/ticketLifecycle";
 import { loadPullRequestInbox, loadReviewsSummary, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
 import type { ProviderId } from "@/lib/providers";
 import type { PullRequestBrief, TicketActivity } from "@/lib/types";
@@ -18,6 +19,7 @@ export type NotificationSources = {
   ticketActivity: TicketActivity[];
   reviews: ReviewSource[];
   reportReminder: ReportReminderSource | null;
+  lifecycle: LifecycleSource[];
 };
 
 /** How far back the bell looks. The scheduler's log is an audit trail and keeps
@@ -203,9 +205,69 @@ async function automationSources(provider: ProviderId, org: string, identity: De
     },
     orderBy: { createdAt: "desc" },
     take: TAKE,
-    select: { id: true, ticketId: true, action: true, outcome: true, reason: true, createdAt: true },
+    select: { id: true, planId: true, ticketId: true, action: true, outcome: true, reason: true, createdAt: true },
   });
-  return events.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() }));
+
+  const missing = events.filter((e) => e.reason === "no-root-repo");
+  const projectOf = new Map<string, string>();
+  const mapped = new Set<string>();
+  if (missing.length) {
+    const items = await prisma.plannedTicket.findMany({
+      where: { planId: { in: plans.map((p) => p.id) }, ticketId: { in: missing.map((e) => e.ticketId) } },
+      select: { planId: true, ticketId: true, project: true },
+    });
+    for (const i of items) if (i.project) projectOf.set(`${i.planId}::${i.ticketId}`, i.project);
+    const repos = await prisma.rootRepoProjectMap.findMany({
+      where: { provider, org, project: { in: [...new Set(projectOf.values())] } },
+      select: { project: true, rootRepo: true },
+    });
+    for (const r of repos) if (r.rootRepo) mapped.add(r.project);
+  }
+
+  return events.flatMap(({ planId, ...e }) => {
+    const row = { ...e, createdAt: e.createdAt.toISOString() };
+    if (e.reason !== "no-root-repo") return [row];
+    const project = projectOf.get(`${planId}::${e.ticketId}`) ?? "";
+    return project && !mapped.has(project) ? [{ ...row, project }] : [];
+  });
+}
+
+async function lifecycleSources(provider: ProviderId, org: string, identity: DevIdentity): Promise<LifecycleSource[]> {
+  const rows = await prisma.plannedTicket.findMany({
+    where: {
+      pendingAction: { not: "" },
+      pendingSince: { not: null },
+      plan: { provider, org, identityEmail: identity.email, status: "active" },
+    },
+    select: {
+      ticketId: true, pendingAction: true, pendingSince: true,
+      qaRounds: true, implementState: true, releasedAt: true,
+    },
+    take: TAKE,
+  });
+  const plans = await prisma.sprintPlan.findMany({
+    where: { provider, org, identityEmail: identity.email, status: "active" },
+    select: { id: true },
+  });
+  const drafts = plans.length
+    ? await prisma.qaReplyDraft.findMany({
+        where: { status: "ready", planId: { in: plans.map((p) => p.id) } },
+        select: { ticketId: true, endedAt: true, createdAt: true },
+        take: TAKE,
+      })
+    : [];
+  return [
+    ...rows.filter((r) => !(r.pendingAction === "fix-qa" && isFixingQa(r))).map((r) => ({
+      ticketId: r.ticketId,
+      pendingAction: r.pendingAction,
+      pendingSince: r.pendingSince ? r.pendingSince.toISOString() : "",
+    })),
+    ...drafts.map((d) => ({
+      ticketId: d.ticketId,
+      pendingAction: "qa-reply-ready",
+      pendingSince: (d.endedAt ?? d.createdAt).toISOString(),
+    })),
+  ];
 }
 
 /**
@@ -245,15 +307,16 @@ export async function collectNotificationSources(providerParam?: string): Promis
   // an unscoped read here would hand this developer the whole team's automation
   // and every pull request in the organization.
   if (!hasIdentity(identity)) {
-    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [], reportReminder: null };
+    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [], reportReminder: null, lifecycle: [] };
   }
 
-  const [automation, pullRequests, ticketActivity, reviews, reportReminder] = await Promise.all([
+  const [automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle] = await Promise.all([
     automationSources(provider, org, identity),
     pullRequestSources(provider, identity),
     ticketActivitySources(provider, org, identity),
     planReviewSources(provider, org, identity),
     reportReminderSource(provider, org),
+    lifecycleSources(provider, org, identity),
   ]);
 
   try {
@@ -265,7 +328,7 @@ export async function collectNotificationSources(providerParam?: string): Promis
     console.error("[notifications] history not saved", err);
   }
 
-  return { automation, pullRequests, ticketActivity, reviews, reportReminder };
+  return { automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle };
 }
 
 /** Whose history the bell reads, or null when there is no identity to scope by. */

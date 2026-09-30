@@ -728,6 +728,15 @@ export async function getWorkItemTicket(id: string): Promise<Ticket | null> {
   });
 }
 
+export async function getWorkItemsByIds(ids: string[]): Promise<Ticket[]> {
+  const numeric = [...new Set(ids.map(Number).filter((n) => Number.isFinite(n) && n > 0))].sort((a, b) => a - b);
+  if (!numeric.length) return [];
+  const creds = await loadCreds();
+  return cached(`${ADO_CACHE_PREFIX}workItems:${creds.org}:${numeric.join(",")}`, TTL.workItem, () =>
+    fetchWorkItems(creds, numeric)
+  );
+}
+
 /** The rich-text half of one work item — the fields `TICKET_FIELDS` leaves out.
  *  Read when a ticket is opened rather than for every row of a list. */
 export async function getWorkItemDetail(id: string): Promise<{ description: string; criteria: string }> {
@@ -952,6 +961,23 @@ async function workItemProject(org: string, pat: string, id: string): Promise<st
     const url = `https://dev.azure.com/${org}/_apis/wit/workitems/${encodeURIComponent(id)}?fields=System.TeamProject&${API}`;
     const data = await adoGet<{ fields?: { "System.TeamProject"?: string } }>(url, pat);
     return data.fields?.["System.TeamProject"] ?? "";
+  });
+}
+
+export type CommentMark = { commentId: string; at: string; authorName: string };
+
+export async function getWorkItemCommentMarks(id: string): Promise<CommentMark[]> {
+  const { org, pat } = await loadCreds();
+  const proj = await workItemProject(org, pat, id);
+  if (!proj) return [];
+  return cached(`${ADO_CACHE_PREFIX}commentMarks:${org}:${proj}:${id}`, TTL.comments, async () => {
+    const url = `https://dev.azure.com/${org}/${encodeURIComponent(
+      proj
+    )}/_apis/wit/workItems/${encodeURIComponent(id)}/comments?api-version=7.0-preview.3`;
+    const data = await adoGet<{ comments?: RawComment[] }>(url, pat);
+    return (data.comments ?? [])
+      .map((c) => ({ commentId: String(c.id ?? ""), at: c.createdDate ?? "", authorName: c.createdBy?.displayName ?? "" }))
+      .filter((c) => c.commentId && c.at);
   });
 }
 
@@ -1274,6 +1300,29 @@ function refFromPrUrl(url: string): PrRef | null {
  * A URL that no longer resolves yields null rather than throwing, so one stale
  * PR can't blank out the whole funnel.
  */
+export type LinkedPullRequest = { prUrl: string; status: string; isDraft: boolean; targetRefName: string };
+
+export async function getLinkedPullRequest(
+  ticketId: string,
+  knownPrUrl?: string | null
+): Promise<LinkedPullRequest | null> {
+  const creds = await loadCreds();
+  return cached(`${ADO_CACHE_PREFIX}linkedPr:${creds.org}:${ticketId}:${knownPrUrl ?? ""}`, TTL.prOutcome, async () => {
+    const ref = await getLinkedPullRequestRef(creds, ticketId, knownPrUrl);
+    if (!ref) return null;
+    const raw = await adoGet<RawPullRequest & { isDraft?: boolean }>(
+      `${repoBaseUrl(creds.org, ref)}/pullrequests/${ref.prId}?${API}`,
+      creds.pat
+    );
+    return {
+      prUrl: prWebUrl(creds.org, ref.project ?? creds.project, raw, knownPrUrl),
+      status: (raw.status ?? "").toLowerCase(),
+      isDraft: raw.isDraft === true,
+      targetRefName: raw.targetRefName ?? "",
+    };
+  });
+}
+
 export async function getPullRequestOutcomes(prUrls: string[]): Promise<(PrOutcome | null)[]> {
   const { org, pat } = await loadCreds();
   const CHUNK = 6; // keep ADO happy; these run against one org with one PAT

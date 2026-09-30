@@ -78,9 +78,9 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: ReactNo
 const mono: CSSProperties = { fontFamily: "var(--font-mono), monospace" };
 
 // One saved organization, as /api/connections reports it — never the token.
-type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean; identityEmail: string; identityName: string };
+type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean; identityEmail: string; identityName: string; reviewers: string[] };
 // The row being added ("" id) or edited. Null = the list only.
-type ConnectionEditor = { id: string; label: string; org: string; pat: string; hasPat: boolean; identityEmail: string; identityName: string };
+type ConnectionEditor = { id: string; label: string; org: string; pat: string; hasPat: boolean; identityEmail: string; identityName: string; reviewers: string };
 
 export default function SettingsPage() {
   const { fireBoltFromEvent } = useBoltsContext();
@@ -150,11 +150,11 @@ export default function SettingsPage() {
   // ---- organizations ----
   const startEdit = (c: Connection) => {
     setConnTest({ status: "idle", message: "" });
-    setEditor({ id: c.id, label: c.label, org: c.org, pat: "", hasPat: c.hasPat, identityEmail: c.identityEmail, identityName: c.identityName });
+    setEditor({ id: c.id, label: c.label, org: c.org, pat: "", hasPat: c.hasPat, identityEmail: c.identityEmail, identityName: c.identityName, reviewers: (c.reviewers ?? []).join(", ") });
   };
   const startAdd = () => {
     setConnTest({ status: "idle", message: "" });
-    setEditor({ id: "", label: "", org: "", pat: "", hasPat: false, identityEmail: "", identityName: "" });
+    setEditor({ id: "", label: "", org: "", pat: "", hasPat: false, identityEmail: "", identityName: "", reviewers: "" });
   };
 
   /** Everything that reads a credential runs as the active organization, so a
@@ -189,7 +189,7 @@ export default function SettingsPage() {
       const r = await fetch("/api/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editor.id || undefined, provider: settings.provider, label: editor.label, org: editor.org, pat: editor.pat, identityEmail: editor.identityEmail, identityName: editor.identityName }),
+        body: JSON.stringify({ id: editor.id || undefined, provider: settings.provider, label: editor.label, org: editor.org, pat: editor.pat, identityEmail: editor.identityEmail, identityName: editor.identityName, reviewers: editor.reviewers.split(",").map((r) => r.trim()).filter(Boolean) }),
       });
       const data = await r.json();
       if (!r.ok) { setError(data.error || "Failed to save the organization."); return; }
@@ -313,6 +313,9 @@ export default function SettingsPage() {
             {c.identityName || c.identityEmail}{c.identityName && c.identityEmail ? ` · ${c.identityEmail}` : ""}
           </span>
         )}
+        <span style={{ fontSize: FONT.sm, color: (c.reviewers ?? []).length ? COLORS.textDim : COLORS.warning, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {(c.reviewers ?? []).length ? `Reviewers · ${c.reviewers.join(", ")}` : "No reviewers yet"}
+        </span>
       </div>
       {!c.isActive && (
         <button
@@ -400,6 +403,14 @@ export default function SettingsPage() {
           <span style={hint}>
             The account this organization hands work to. Work items are assigned per organization, so this is
             stored per organization rather than once for the app. Leave it empty and nothing filters by you.
+          </span>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <span style={fieldLabel()}>REVIEWERS (EMAIL OR DISPLAY NAME, COMMA SEPARATED)</span>
+            <input value={editor.reviewers} onChange={(e) => setEditor({ ...editor, reviewers: e.target.value })} placeholder="reviewer@company.com, Lead Name" autoComplete="off" style={fieldInput()} />
+          </label>
+          <span style={hint}>
+            Every pull request Flow Runner releases in this organization is assigned to these people.
           </span>
 
           <div style={{ display: "flex", alignItems: "center", gap: "11px", flexWrap: "wrap" }}>

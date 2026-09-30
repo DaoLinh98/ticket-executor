@@ -29,6 +29,10 @@ export type NotificationKind =
   | "scheduler.review-fixed"
   | "scheduler.failed"
   | "plan.drift"
+  | "plan.needs-root-repo"
+  | "ticket.ready-for-qa"
+  | "ticket.qa-failed"
+  | "ticket.qa-reply-ready"
   | "report.unsent";
 
 /** `action` means the developer has to do something; `info` is a record of
@@ -311,6 +315,7 @@ export type AutomationSource = {
   outcome: string;
   reason: string;
   createdAt: string;
+  project?: string;
 };
 
 /**
@@ -318,7 +323,7 @@ export type AutomationSource = {
  *
  * `skipped` is dropped. The scheduler writes down its refusals on purpose —
  * "not due", "blocked by triage", "already running" — and that record is worth
- * having, but it belongs in the My Sprint log, where somebody is reading
+ * having, but it belongs in the Flow Runner log, where somebody is reading
  * deliberately. Every tick produces some, so putting them here would bury the
  * two or three events a day that actually mean something.
  *
@@ -339,7 +344,23 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
     concludedAt.set(e.ticketId, Math.max(at, concludedAt.get(e.ticketId) ?? 0));
   }
   const out: AppNotification[] = [];
+  const missingRepo = new Set<string>();
   for (const e of rows) {
+    if (e.reason === "no-root-repo" && e.project) {
+      if (missingRepo.has(e.project)) continue;
+      missingRepo.add(e.project);
+      out.push({
+        kind: "plan.needs-root-repo",
+        ticketId: e.ticketId,
+        refId: e.project,
+        severity: "action",
+        summary: `No root repo known for ${e.project} — run this ticket once by hand to set it`,
+        at: e.createdAt,
+        tab: "overview",
+        fingerprint: `root-repo::${e.project}`,
+      });
+      continue;
+    }
     if (e.outcome === "skipped") continue;
     const base = { ticketId: e.ticketId, refId: e.id, at: e.createdAt, fingerprint: e.id };
     if (e.action === "abort") {
@@ -469,6 +490,57 @@ export function fromReportReminder(r: ReportReminderSource | null): AppNotificat
   }];
 }
 
+export type LifecycleSource = {
+  ticketId: string;
+  pendingAction: string;
+  pendingSince: string;
+};
+
+export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
+  return rows.flatMap((r): AppNotification[] => {
+    const fingerprint = `${r.pendingAction}::${r.pendingSince}`;
+    if (r.pendingAction === "move-to-qa") {
+      return [{
+        kind: "ticket.ready-for-qa",
+        ticketId: "",
+        refId: r.ticketId,
+        severity: "action",
+        summary: `#${r.ticketId}'s pull request is merged — confirm moving it to In QA on Flow Runner`,
+        at: r.pendingSince,
+        tab: "overview",
+        href: "/my-sprint",
+        fingerprint,
+      }];
+    }
+    if (r.pendingAction === "qa-reply-ready") {
+      return [{
+        kind: "ticket.qa-reply-ready",
+        ticketId: "",
+        refId: r.ticketId,
+        severity: "action",
+        summary: `A reply to QC on #${r.ticketId} is drafted — review it and post it on Flow Runner`,
+        at: r.pendingSince,
+        tab: "overview",
+        href: "/my-sprint",
+        fingerprint,
+      }];
+    }
+    if (r.pendingAction === "fix-qa") {
+      return [{
+        kind: "ticket.qa-failed",
+        ticketId: r.ticketId,
+        refId: r.ticketId,
+        severity: "action",
+        summary: `#${r.ticketId} came back from QA — it needs a fix`,
+        at: r.pendingSince,
+        tab: "overview",
+        fingerprint,
+      }];
+    }
+    return [];
+  });
+}
+
 /** Every source merged into the one list the bell renders. */
 export function buildNotifications(sources: {
   reviews?: ReviewSource[];
@@ -478,6 +550,7 @@ export function buildNotifications(sources: {
   runEvents?: RunEventSource[];
   automation?: AutomationSource[];
   reportReminder?: ReportReminderSource | null;
+  lifecycle?: LifecycleSource[];
 }): AppNotification[] {
   return sortNotifications([
     ...fromReviews(sources.reviews ?? []),
@@ -487,6 +560,7 @@ export function buildNotifications(sources: {
     ...fromRunEvents(sources.runEvents ?? []),
     ...fromAutomation(sources.automation ?? []),
     ...fromReportReminder(sources.reportReminder ?? null),
+    ...fromLifecycle(sources.lifecycle ?? []),
   ]);
 }
 
