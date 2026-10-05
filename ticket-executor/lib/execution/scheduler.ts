@@ -31,6 +31,7 @@ import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
 import { QA_FIX_SKILL } from "./graph/graphs";
 import { isFixingQa } from "../ticketLifecycle";
+import { openQaDraft } from "./qaReply";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
@@ -174,7 +175,7 @@ async function noteMissingRootRepo(
   today: string
 ): Promise<string> {
   const project = item.project || plan.project;
-  const error = `No root repo is remembered for "${project || "this ticket's project"}" — run one of its tickets by hand from Ticket Execution and it is remembered.`;
+  const error = `No root repo is saved for "${project || "this ticket's project"}" — set it on the ticket's Overview tab and save it.`;
   const already = await prisma.automationEvent.findFirst({
     where: {
       planId: plan.id,
@@ -562,7 +563,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
 export async function startReviewRun(
   plannedId: string,
   opts: { reason: string; detail: string; lastCommentAt?: string; openComments?: number }
-): Promise<{ ok: boolean; error: string }> {
+): Promise<{ ok: boolean; error: string; blocked?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
   if (!item) return { ok: false, error: "No such planned ticket." };
 
@@ -590,7 +591,7 @@ export async function startReviewRun(
   const rootRepo = await rootRepoFor(item.plan, item.project);
   if (!rootRepo) {
     const error = await noteMissingRootRepo(item.plan, item, "review", isoDay(new Date()));
-    return { ok: false, error };
+    return { ok: false, error, blocked: "no-root-repo" };
   }
 
   const result = await startRun({
@@ -634,7 +635,7 @@ export async function startReviewRun(
 
 const MAX_QA_ROUNDS = 3;
 
-export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string }> {
+export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string; blocked?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
   if (!item) return { ok: false, error: "No such planned ticket." };
 
@@ -661,7 +662,7 @@ export async function startQaFix(plannedId: string): Promise<{ ok: boolean; erro
   const rootRepo = await rootRepoFor(item.plan, item.project);
   if (!rootRepo) {
     const error = await noteMissingRootRepo(item.plan, item, "implement", isoDay(new Date()));
-    return { ok: false, error };
+    return { ok: false, error, blocked: "no-root-repo" };
   }
 
   const result = await startRun({
@@ -687,20 +688,6 @@ export async function startQaFix(plannedId: string): Promise<{ ok: boolean; erro
       implementState: "running",
       runId: result.runId,
       qaRounds: item.qaRounds + 1,
-      prMerged: false,
-      prPublished: false,
-      reviewersSet: false,
-      statusMoved: false,
-      releasedAt: null,
-      releaseError: "",
-      reviewState: "idle",
-      reviewRunId: "",
-      openComments: 0,
-      threadsReplied: 0,
-      threadsResolved: 0,
-      reviewRounds: 0,
-      lastCommentAt: "",
-      reviewError: "",
     },
   });
   await logAutomation({
@@ -725,19 +712,30 @@ async function reconcileImplement(): Promise<void> {
   if (!inFlight.length) return;
   const runs = await prisma.run.findMany({
     where: { id: { in: inFlight.map((i) => i.runId) } },
-    select: { id: true, state: true, prUrl: true, endReason: true },
+    select: { id: true, state: true, prUrl: true, endReason: true, skill: true },
   });
   const byId = new Map(runs.map((r) => [r.id, r]));
+  const steps = await prisma.step.findMany({
+    where: { runId: { in: inFlight.map((i) => i.runId) }, nodeId: { in: ["deliver", "implement"] } },
+    select: { runId: true, output: true },
+  });
+  const outputByRun = new Map(steps.map((st) => [st.runId, (st.output ?? {}) as Record<string, unknown>]));
 
   for (const item of inFlight) {
     const run = byId.get(item.runId);
     if (!run || run.state === "running" || run.state === "waiting") continue;
+    const out = outputByRun.get(item.runId) ?? {};
+    if (run.state === "succeeded" && out.outcome === "no-fix-needed") {
+      await settleNoFixNeeded(item, out);
+      continue;
+    }
     const implemented = run.state === "succeeded" && !!run.prUrl;
     await prisma.plannedTicket.update({
       where: { id: item.id },
       data: {
         implementState: implemented ? "implemented" : "failed",
         prUrl: run.prUrl,
+        ...(implemented && run.skill.startsWith("fix-qa-") ? QA_FIX_RESET : {}),
       },
     });
     await logAutomation({
@@ -749,6 +747,55 @@ async function reconcileImplement(): Promise<void> {
         : "The run did not produce a pull request.",
     });
   }
+}
+
+const QA_FIX_RESET = {
+  prMerged: false,
+  prPublished: false,
+  reviewersSet: false,
+  statusMoved: false,
+  releasedAt: null,
+  releaseError: "",
+  reviewState: "idle",
+  reviewRunId: "",
+  openComments: 0,
+  threadsReplied: 0,
+  threadsResolved: 0,
+  reviewRounds: 0,
+  lastCommentAt: "",
+  reviewError: "",
+};
+
+async function settleNoFixNeeded(
+  item: { id: string; planId: string; ticketId: string; qaRounds: number; qaCommentAt: string },
+  out: Record<string, unknown>
+): Promise<void> {
+  await prisma.plannedTicket.update({
+    where: { id: item.id },
+    data: { implementState: "no-fix-needed", qaRounds: Math.max(0, item.qaRounds - 1) },
+  });
+  const open = await openQaDraft(item.id);
+  if (!open) {
+    await prisma.qaReplyDraft.create({
+      data: {
+        planId: item.planId,
+        plannedTicketId: item.id,
+        ticketId: item.ticketId,
+        status: "ready",
+        answersUpTo: item.qaCommentAt,
+        body: String(out.qaReply ?? "").trim(),
+        summary: typeof out.summary === "string" ? out.summary : "",
+        endedAt: new Date(),
+      },
+    });
+  }
+  await logAutomation({
+    planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done",
+    reason: "no-fix-needed",
+    detail: open
+      ? "QA's findings were reviewed and none is a defect — nothing was changed. A reply draft was already waiting, so it was kept."
+      : "QA's findings were reviewed and none is a defect — nothing was changed. A reply to QA is drafted for you to post.",
+  });
 }
 
 /**

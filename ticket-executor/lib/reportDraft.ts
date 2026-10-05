@@ -115,9 +115,14 @@ function normalize(raw: unknown, name: string): ReportDraftState {
       block: !!e?.block,
     };
   }
+  const edited =
+    typeof d.edited?.text === "string" && typeof d.edited?.base === "string"
+      ? { text: d.edited.text, base: d.edited.base }
+      : undefined;
   return {
     name: typeof d.name === "string" && d.name ? d.name : name,
     tasks,
     entries,
+    ...(edited && { edited }),
   };
 }

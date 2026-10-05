@@ -242,7 +242,7 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
         planId: plan.id, ticketId: row.ticketId, action: "watch", outcome: "done",
         reason: "qa-comment", detail: `${newQcComments} new comment(s) from QC.`,
       });
-      if (plan.autoDraftQaReply) {
+      if (plan.autoDraftQaReply && next !== "fix-qa") {
         const drafted = await startQaReply(row.id, { since: row.qaCommentAt, answersUpTo: data.qaCommentAt });
         if (!drafted.ok) {
           await logAutomation({

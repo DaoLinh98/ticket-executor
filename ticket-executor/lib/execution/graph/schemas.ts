@@ -203,6 +203,55 @@ export const ONESHOT_OUTPUT = {
   additionalProperties: false,
 } as const;
 
+export const QA_FIX_OUTPUT = {
+  type: "object",
+  properties: {
+    ...ONESHOT_OUTPUT.properties,
+    outcome: {
+      type: "string",
+      enum: ["fixed", "no-fix-needed"],
+      description:
+        "fixed: at least one QA finding was a real defect and the fix is in a draft pull request. " +
+        "no-fix-needed: every finding was reviewed against the code and none is a defect in this ticket — nothing was changed, committed, pushed or opened.",
+    },
+    qaReply: {
+      type: "string",
+      description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty when outcome is fixed.",
+    },
+  },
+  required: [...ONESHOT_OUTPUT.required, "outcome", "qaReply"],
+  additionalProperties: false,
+} as const;
+
+/** fix-qa-v3 `fix` — an implement attempt that must also say why it adds no
+ *  test, read by the `check` node's test gate. */
+export const QA_FIX_STEP_OUTPUT = {
+  type: "object",
+  properties: {
+    ...IMPLEMENT_OUTPUT.properties,
+    testExemption: {
+      type: "string",
+      description:
+        "Empty when the change adds or updates a test. Otherwise one sentence on why no test applies (markup, style or copy only). The runner refuses a change with no test and no reason.",
+    },
+  },
+  required: [...IMPLEMENT_OUTPUT.required, "testExemption"],
+  additionalProperties: false,
+} as const;
+
+/** fix-qa-v3 `implement` — reviews the findings and either commits the fix
+ *  locally or ends the run with a reply to QA. Nothing is pushed here. */
+export const QA_FIX_LOCAL_OUTPUT = {
+  type: "object",
+  properties: {
+    ...QA_FIX_STEP_OUTPUT.properties,
+    outcome: QA_FIX_OUTPUT.properties.outcome,
+    qaReply: QA_FIX_OUTPUT.properties.qaReply,
+  },
+  required: [...QA_FIX_STEP_OUTPUT.required, "outcome", "qaReply"],
+  additionalProperties: false,
+} as const;
+
 /** fix-code-review publish — the external act is writing on someone else's PR
  *  (replies, resolving threads), not opening one. */
 export const REVIEW_PUBLISH_OUTPUT = {
