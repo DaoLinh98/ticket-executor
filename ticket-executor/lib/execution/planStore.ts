@@ -16,7 +16,7 @@ import {
   type PlanInput,
   type SprintPlanResult,
 } from "../sprintPlan";
-import { stageOf } from "../ticketLifecycle";
+import { pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
 import type { TriageResult, TriagedTicket } from "./triage";
 import type { Ticket } from "../types";
 
@@ -230,7 +230,25 @@ export async function rebuildPlan(
 ) {
   const claimed = await claimedSprint(key, live, identity);
   const computed = buildPlan(planInputs(claimed, triage), window, today, cfg);
-  return savePlan(key, window, cfg, computed, opts);
+  const saved = await savePlan(key, window, cfg, computed, opts);
+  if (!saved) return saved;
+
+  const statusById = new Map(live.map((t) => [String(t.id), t.status]));
+  let changed = false;
+  for (const row of saved.items) {
+    const status = statusById.get(row.ticketId);
+    if (status === undefined) continue;
+    const stage = stageOf(status);
+    const current = row.pendingAction as PendingAction;
+    const next = pendingActionFor({ stage, prevStage: (row.stage || "") as Stage | "", prMerged: row.prMerged, current });
+    if (stage === row.stage && next === current) continue;
+    await prisma.plannedTicket.update({
+      where: { id: row.id },
+      data: { stage, ...(next !== current ? { pendingAction: next, pendingSince: next ? new Date() : null } : {}) },
+    });
+    changed = true;
+  }
+  return changed ? planById(saved.id) : saved;
 }
 
 export async function setPlanStatus(id: string, status: "draft" | "active" | "archived") {

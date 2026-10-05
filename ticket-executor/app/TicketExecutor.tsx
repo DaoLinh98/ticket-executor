@@ -1057,6 +1057,32 @@ export default function TicketExecutor() {
   const setOverrideValue = (ticketId: string, field: OverrideField, value: string) =>
     setOverrides((s) => ({ ...s, [ticketId]: { ...(s[ticketId] || {}), [field]: value } }));
 
+  const saveRootRepo = async (t: Ticket) => {
+    const project = getArea(t);
+    const rootRepo = getRootRepo(t).trim();
+    if (!project || !rootRepo) return;
+    setSavingRootRepo(true);
+    try {
+      const r = await fetch("/api/options/mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, rootRepo }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showToast(data.error || "The root repo could not be saved.", 8000, "error");
+        return;
+      }
+      setSavedMapping((m) => ({ ...m, [project]: rootRepo }));
+      rememberOption("rootRepo", rootRepo);
+      showToast(`Root repo saved for ${project}.`, 3000);
+    } catch {
+      showToast("The root repo could not be saved.", 8000, "error");
+    } finally {
+      setSavingRootRepo(false);
+    }
+  };
+
   // ---- Open Terminal, and the ad-hoc "Ask Claude" session ----
   // Both run the CLI on the machine hosting this app, in the ticket's Root repo,
   // with none of the execution engine involved: no Run row, no worktree, no
@@ -1177,6 +1203,8 @@ export default function TicketExecutor() {
   // saved option next time (any ticket, any session) instead of only being a
   // per-session suggestion.
   const savedOptionKeys = useRef<Set<string>>(new Set());
+  const [savedMapping, setSavedMapping] = useState<Record<string, string>>({});
+  const [savingRootRepo, setSavingRootRepo] = useState(false);
   const rememberOption = useCallback((kind: "rootRepo" | "project" | "skill", value: string) => {
     if (!value) return;
     const key = `${kind}:${value}`;
@@ -1201,7 +1229,10 @@ export default function TicketExecutor() {
       fetch(`/api/options/mapping?project=${encodeURIComponent(value)}`)
         .then((r) => r.json())
         .then((data) => {
-          if (data.rootRepo) setOverrideValue(ticketId, "rootRepo", data.rootRepo);
+          if (data.rootRepo) {
+            setOverrideValue(ticketId, "rootRepo", data.rootRepo);
+            setSavedMapping((m) => ({ ...m, [value]: data.rootRepo }));
+          }
         })
         .catch(() => { });
     },
@@ -1223,7 +1254,10 @@ export default function TicketExecutor() {
     fetch(`/api/options/mapping?project=${encodeURIComponent(project)}`)
       .then((r) => r.json())
       .then((data) => {
-        if (data.rootRepo) setOverrideValue(selectedId, "rootRepo", data.rootRepo);
+        if (data.rootRepo) {
+          setOverrideValue(selectedId, "rootRepo", data.rootRepo);
+          setSavedMapping((m) => ({ ...m, [project]: data.rootRepo }));
+        }
       })
       .catch(() => { });
   }, [selectedId, tickets, overrides]);
@@ -2234,6 +2268,9 @@ export default function TicketExecutor() {
                     history={history[t.id] ?? []}
                     onOpenRun={openRun}
                     rootRepo={getRootRepo(t)}
+                    rootRepoSaved={!!getRootRepo(t).trim() && savedMapping[getArea(t)] === getRootRepo(t).trim()}
+                    savingRootRepo={savingRootRepo}
+                    onSaveRootRepo={() => saveRootRepo(t)}
                     project={getArea(t)}
                     skill={getSkill(t)}
                     model={getModel(t)}

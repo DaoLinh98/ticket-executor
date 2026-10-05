@@ -1,6 +1,7 @@
+import { execSync } from "child_process";
 import { readFileSync, rmSync } from "fs";
 import path from "path";
-import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, openingPrompt, publishPrompt, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
+import { evaluatePrompt, fixPrompt, IMPLEMENT_PROMPT, openingPrompt, publishPrompt, qaEvaluatePrompt, qaFixPrompt, REPLAN_PROMPT, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
   blockedOf,
   EVALUATE_OUTPUT,
@@ -8,12 +9,15 @@ import {
   ONESHOT_OUTPUT,
   PLAN_OUTPUT,
   PUBLISH_OUTPUT,
+  QA_FIX_LOCAL_OUTPUT,
+  QA_FIX_OUTPUT,
+  QA_FIX_STEP_OUTPUT,
   REVIEW_ONESHOT_OUTPUT,
   REVIEW_PUBLISH_OUTPUT,
   verificationFailed,
   verificationOf,
 } from "./schemas";
-import { END, FAIL, ZERO_USAGE, type Edge, type Graph, type NodeResult, type RunContext } from "./types";
+import { END, FAIL, ZERO_USAGE, type AgentNode, type Edge, type Graph, type NodeResult, type RunContext } from "./types";
 
 // Where the plan phase leaves its deliverable, relative to the run's worktree.
 // The file is the agent's drafting surface; the durable copy is an Artifact row.
@@ -323,7 +327,7 @@ function oneShotGraph(review: boolean): Graph {
   };
 }
 
-function qaFixGraph(): Graph {
+function qaFixGraphV1(): Graph {
   const base = oneShotGraph(false);
   return {
     ...base,
@@ -332,9 +336,175 @@ function qaFixGraph(): Graph {
   };
 }
 
+function qaFixGraph(): Graph {
+  const base = oneShotGraph(false);
+  return {
+    ...base,
+    id: "fix-qa-v2",
+    nodes: {
+      deliver: {
+        ...(base.nodes.deliver as AgentNode),
+        label: "Review QA findings & fix",
+        output: QA_FIX_OUTPUT as unknown as Record<string, unknown>,
+      },
+    },
+    edges: {
+      deliver: (c, r) => {
+        if (r.data.outcome !== "no-fix-needed") return base.edges.deliver(c, r);
+        const bad = turnGuard(r);
+        if (bad) return bad;
+        if (r.data.committed || r.data.pushed || r.data.prUrl) {
+          return { to: FAIL, reason: "reported no fix needed but changed the repository" };
+        }
+        if (!String(r.data.qaReply ?? "").trim()) return { to: FAIL, reason: "reported no fix needed without a reply to QA" };
+        return { to: END, reason: "no-fix-needed" };
+      },
+    },
+  };
+}
+
+const TEST_PATH = /(^|\/)(tests?|__tests__|specs?)\/|[._-](spec|test|tests)\.[^/]+$|Tests?\.cs$|_test\.go$|(^|\/)test_[^/]+\.py$/i;
+
+export function isTestPath(p: string): boolean {
+  return TEST_PATH.test(p.replace(/\\/g, "/"));
+}
+
+export function testGap(changed: string[], exemption: string): string {
+  const files = changed.filter((p) => !p.startsWith(".te/"));
+  if (!files.length) return "The branch has no committed change against the base commit.";
+  if (files.some(isTestPath) || exemption.trim()) return "";
+  return "The change adds or updates no test and gives no reason in `testExemption`.";
+}
+
+function changedFiles(cwd: string, baseSha: string): string[] {
+  return execSync(`git -C "${cwd}" diff --name-only "${baseSha}" HEAD`, { encoding: "utf8" })
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+// implement ─► check ─► evaluate ─► publish ─► END
+//   (local)   (pure)    (pure, FRESH)  (external)
+//                │  ▲      │  ▲
+//                ▼  │      ▼  │
+//                fix ◄─────┘──┘   (local) — bounded at MAX_FIX_ATTEMPTS
+function qaFixGraphV3(): Graph {
+  const fixBound = (c: RunContext, why: string) => {
+    const attempts = c.visits.fix ?? 0;
+    if (attempts >= MAX_FIX_ATTEMPTS) return { to: FAIL, reason: `${why} after ${attempts} fix attempt(s)` };
+    return { to: "fix", reason: why };
+  };
+  const committedLocally: Edge = (_c, r) => {
+    const bad = turnGuard(r);
+    if (bad) return bad;
+    const failed = verificationFailed(verificationOf(r.data));
+    if (failed) return { to: FAIL, reason: failed };
+    if (!r.data.committed) return { to: FAIL, reason: "nothing was committed" };
+    return { to: "check", reason: "committed, verification clear" };
+  };
+
+  return {
+    id: "fix-qa-v3",
+    entry: "implement",
+    nodes: {
+      implement: {
+        kind: "agent",
+        id: "implement",
+        label: "Review QA findings & fix",
+        effects: "local",
+        context: "fresh",
+        prompt: (c) => openingPrompt(c, "implement"),
+        output: QA_FIX_LOCAL_OUTPUT as unknown as Record<string, unknown>,
+        artifact: "plan",
+      },
+      check: {
+        kind: "check",
+        id: "check",
+        label: "Check tests",
+        effects: "pure",
+        run: async (c) => {
+          const exemption = String((c.channels.fix ?? c.channels.implement)?.testExemption ?? "");
+          let gap: string;
+          try {
+            gap = testGap(changedFiles(c.cwd, c.baseSha), exemption);
+          } catch (e) {
+            return { ok: false, data: {}, error: `could not diff the branch: ${(e as Error).message}`, usage: ZERO_USAGE };
+          }
+          return {
+            ok: true,
+            data: { passed: !gap, blockers: gap ? [{ file: "", issue: gap }] : [] },
+            error: "",
+            usage: ZERO_USAGE,
+          };
+        },
+      },
+      evaluate: {
+        kind: "agent",
+        id: "evaluate",
+        label: "Independent review",
+        effects: "pure",
+        context: "fresh",
+        prompt: qaEvaluatePrompt,
+        output: EVALUATE_OUTPUT as unknown as Record<string, unknown>,
+      },
+      fix: {
+        kind: "agent",
+        id: "fix",
+        label: "Fix review findings",
+        effects: "local",
+        context: "resume",
+        prompt: qaFixPrompt,
+        output: QA_FIX_STEP_OUTPUT as unknown as Record<string, unknown>,
+      },
+      publish: {
+        kind: "agent",
+        id: "publish",
+        label: "Push & open PR",
+        effects: "external",
+        context: "fresh",
+        prompt: publishPrompt,
+        output: PUBLISH_OUTPUT as unknown as Record<string, unknown>,
+      },
+    },
+    edges: {
+      implement: (c, r) => {
+        if (r.data.outcome !== "no-fix-needed") return committedLocally(c, r);
+        const bad = turnGuard(r);
+        if (bad) return bad;
+        if (r.data.committed) return { to: FAIL, reason: "reported no fix needed but changed the repository" };
+        if (!String(r.data.qaReply ?? "").trim()) return { to: FAIL, reason: "reported no fix needed without a reply to QA" };
+        return { to: END, reason: "no-fix-needed" };
+      },
+      check: (c, r) => {
+        if (!r.ok) return { to: FAIL, reason: r.error || "check failed" };
+        if (r.data.passed) return { to: "evaluate", reason: "test gate passed" };
+        const issue = String((r.data.blockers as { issue?: string }[] | undefined)?.[0]?.issue ?? "test gate failed");
+        return fixBound(c, `test gate: ${issue}`);
+      },
+      evaluate: (c, r) => {
+        const bad = turnGuard(r);
+        if (bad) return bad;
+        if (r.data.verdict === "pass") return { to: "publish", reason: "review passed" };
+        const blockers = Array.isArray(r.data.blockers) ? r.data.blockers.length : 0;
+        return fixBound(c, `review found ${blockers} blocker(s)`);
+      },
+      fix: (c, r) => {
+        const next = committedLocally(c, r);
+        return next.to === "check" ? { to: "check", reason: "fix committed, re-checking" } : next;
+      },
+      publish: (_c, r) => {
+        const bad = turnGuard(r);
+        if (bad) return bad;
+        if (!r.data.pushed) return { to: FAIL, reason: "branch was not pushed" };
+        return { to: END, reason: r.data.reusedExisting ? "published (reused existing PR)" : "published" };
+      },
+    },
+  };
+}
+
 // ---- resolution ----
 
-export const QA_FIX_SKILL = "fix-qa-v1";
+export const QA_FIX_SKILL = "fix-qa-v3";
 const REVIEW_SKILLS = new Set(["fix-code-review-v2", "fix-code-review-v3"]);
 const TWO_PHASE_SKILLS = new Set(["implement-ticket-v3", "fix-code-review-v3"]);
 
@@ -352,7 +522,7 @@ export type GraphOptions = {
 /** The graph a skill runs on. This replaces the old `isTwoPhaseSkill` boolean:
  *  the shape of a run is now a graph, not a flag read in three places. */
 export function graphForSkill(skill: string, opts: GraphOptions = {}): Graph {
-  if (skill === QA_FIX_SKILL) return qaFixGraph();
+  if (skill === QA_FIX_SKILL) return qaFixGraphV3();
   const review = REVIEW_SKILLS.has(skill);
   // The evaluator only exists in the gated flow. The one-shot flow has already
   // published by the time any node could review it, so bolting a reviewer on
@@ -378,7 +548,11 @@ export function graphById(graphId: string, skill: string): Graph {
     case "fix-review-v2":
       return oneShotGraph(true);
     case "fix-qa-v1":
+      return qaFixGraphV1();
+    case "fix-qa-v2":
       return qaFixGraph();
+    case "fix-qa-v3":
+      return qaFixGraphV3();
     default:
       return graphForSkill(skill);
   }

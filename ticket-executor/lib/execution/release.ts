@@ -23,6 +23,7 @@ import { prisma } from "../prisma";
 import { reviewersFor } from "../providerCredentials";
 import { resolveStatusForUpdate, updateTicketStatus } from "../tickets";
 import type { ProviderId } from "../providers";
+import { pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
 import { logAutomation } from "./planStore";
 
 /** The state a released ticket moves to. One constant rather than the old
@@ -68,6 +69,7 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
   let reviewersSet = item.reviewersSet;
   let statusMoved = item.statusMoved;
   let error = "";
+  let moved: { stage: string; pendingAction: string; pendingSince: Date | null } | null = null;
 
   // Azure DevOps is the only provider whose pull-request writes are wired. The
   // others degrade to the status move alone rather than throwing — the same
@@ -133,6 +135,10 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
       } else {
         const applied = await updateTicketStatus(provider, item.ticketId, resolved);
         statusMoved = true;
+        const stage = stageOf(applied);
+        const current = item.pendingAction as PendingAction;
+        const next = pendingActionFor({ stage, prevStage: (item.stage || "") as Stage | "", prMerged: item.prMerged, current });
+        moved = { stage, pendingAction: next, pendingSince: next === current ? item.pendingSince : next ? new Date() : null };
         lines.push(`Status set to "${applied}".`);
       }
     } catch (e) {
@@ -150,6 +156,7 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
       reviewersSet,
       statusMoved,
       releaseError: error,
+      ...(moved ?? {}),
       // Stamped only on a complete release, so a partial one keeps being retried
       // instead of looking finished.
       ...(ok ? { releasedAt: new Date() } : {}),

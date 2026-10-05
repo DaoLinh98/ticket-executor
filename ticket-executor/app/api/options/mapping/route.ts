@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validateRootRepo } from "@/lib/preflight";
 import { prisma } from "@/lib/prisma";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
@@ -39,6 +40,8 @@ export async function POST(req: Request) {
   if (!project || !rootRepo) {
     return NextResponse.json({ error: "project and rootRepo are required" }, { status: 400 });
   }
+  const valid = validateRootRepo(rootRepo);
+  if (!valid.ok) return NextResponse.json({ error: valid.error }, { status: 400 });
   const { provider, org } = await scope(typeof body.provider === "string" ? body.provider : "");
   await prisma.rootRepoProjectMap.upsert({
     where: { provider_org_project: { provider, org, project } },

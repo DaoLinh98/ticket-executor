@@ -175,6 +175,26 @@ export function evaluatePrompt(c: RunContext): string {
   return `/${REVIEW_SKILL} Provider: ${c.provider} - Ticket: ${ticket}${c.baseSha ? ` - Base: ${c.baseSha}` : ""}`;
 }
 
+export function qaEvaluatePrompt(c: RunContext): string {
+  return `${evaluatePrompt(c)} - Mode: qa-fix`;
+}
+
+export function qaFixPrompt(c: RunContext): string {
+  const check = c.channels.check;
+  if (check && check.passed === false) {
+    const blockers = (check.blockers ?? []) as { file?: string; issue?: string }[];
+    const list = blockers.map((b, i) => `${i + 1}. ${b.issue ?? ""}`).join("\n");
+    return (
+      "Mode: implement. The runner's own check of your change refused it:\n\n" +
+      `${list}\n\n` +
+      "Add or update a test that fails without your fix and passes with it, following the existing test style, re-run it, " +
+      "and commit locally. If the change truly has nothing a test can cover (markup, style or copy only), say why in " +
+      "`testExemption` instead. Do NOT push or open a pull request."
+    );
+  }
+  return fixPrompt(c);
+}
+
 /** Fed the reviewer's own findings back to the implementer. Built from the
  *  evaluate node's channel rather than from prose in the transcript — the fix
  *  node resumes the implementer's session, so everything else it needs is

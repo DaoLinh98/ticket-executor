@@ -194,6 +194,7 @@ const IMPLEMENT_STATE: Record<string, { color: string; label: string }> = {
   implemented: { color: COLORS.indigo, label: "Draft PR" },
   failed: { color: COLORS.danger, label: "Failed" },
   skipped: { color: COLORS.faint, label: "Skipped" },
+  "no-fix-needed": { color: COLORS.info, label: "No fix needed" },
 };
 
 /**
@@ -397,8 +398,18 @@ export default function MySprintPage() {
       body: JSON.stringify(body),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || "The request failed.");
+    if (!r.ok) {
+      throw Object.assign(new Error(d.error || d.outcome?.error || "The request failed."), {
+        blocked: String(d.outcome?.blocked ?? ""),
+      });
+    }
     return d;
+  };
+
+  const sendToRootRepo = (e: unknown, ticketId: string) => {
+    if ((e as { blocked?: string })?.blocked !== "no-root-repo") throw e;
+    showToast(`#${ticketId}: ${(e as Error).message}`, "warning");
+    router.push(`/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=overview&at=${Date.now()}`);
   };
 
   const act = async (label: string, fn: () => Promise<void>) => {
@@ -462,6 +473,7 @@ export default function MySprintPage() {
       if (d.plan) setStored(d.plan);
       setMessage(d.outcome?.detail || "");
       if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The release did not complete.");
+      await load();
     });
 
   const retryNow = (plannedId: string) =>
@@ -492,11 +504,15 @@ export default function MySprintPage() {
       await reloadPlan();
     });
 
-  const startQaFixNow = (plannedId: string) =>
+  const startQaFixNow = (plannedId: string, ticketId: string) =>
     act("qafix-" + plannedId, async () => {
-      const d = await post("/api/my-sprint/plan", { startQaFix: plannedId }, "PUT");
-      if (d.plan) setStored(d.plan);
-      showToast("QA fix started — it opens a draft pull request when done.");
+      try {
+        const d = await post("/api/my-sprint/plan", { startQaFix: plannedId }, "PUT");
+        if (d.plan) setStored(d.plan);
+        showToast("QA fix started — it reviews QC's findings, then fixes the real defects or drafts a reply.");
+      } catch (e) {
+        sendToRootRepo(e, ticketId);
+      }
     });
 
   const moveToQaNow = (plannedId: string) =>
@@ -507,12 +523,16 @@ export default function MySprintPage() {
       await load();
     });
 
-  const resolveReviewNow = (plannedId: string) =>
+  const resolveReviewNow = (plannedId: string, ticketId: string) =>
     act("fixreview-" + plannedId, async () => {
-      const d = await post("/api/my-sprint/plan", { resolveReview: plannedId }, "PUT");
-      if (d.plan) setStored(d.plan);
-      if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The review fix did not start.");
-      else setMessage("Resolving the review comments on this pull request.");
+      try {
+        const d = await post("/api/my-sprint/plan", { resolveReview: plannedId }, "PUT");
+        if (d.plan) setStored(d.plan);
+        if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The review fix did not start.");
+        else setMessage("Resolving the review comments on this pull request.");
+      } catch (e) {
+        sendToRootRepo(e, ticketId);
+      }
     });
 
   const tickNow = () =>
@@ -943,6 +963,7 @@ export default function MySprintPage() {
                       // Only a ticket triage stopped, still the developer's, and
                       // still waiting to start, has an override worth offering.
                       const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
+                      const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
                       return (
                         <div
                           key={t.ticketId}
@@ -1016,7 +1037,9 @@ export default function MySprintPage() {
                                     : "QA fix is in a draft pull request — release it when you have looked at it."
                                   : t.qaRounds >= 3
                                     ? `${t.qaRounds} QA fixes did not close this ticket — it needs you.`
-                                    : "Came back from QA — it needs a fix. QC's notes are on the ticket."}
+                                    : t.implementState === "no-fix-needed" && replyWaiting
+                                      ? "QC's findings were reviewed and none is a defect — post the drafted reply, or dismiss it to fix anyway."
+                                      : "Came back from QA — start the QA fix to review QC's findings and fix the real defects."}
                               </span>
                             )}
                             {t.reviewState === "needs-human" && (
@@ -1094,7 +1117,7 @@ export default function MySprintPage() {
                                 answer, so the automation being off is not the same
                                 as the work being unreachable. */}
                             {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
-                              button("Fix review", "outline", () => resolveReviewNow(t.id), "fixreview-" + t.id)}
+                              button("Fix review", "outline", () => resolveReviewNow(t.id, t.ticketId), "fixreview-" + t.id)}
                             {/* The only way back for a ticket the queue has
                                 stopped asking about. A rebuild will not do it:
                                 `savePlan()` treats any row that is not `pending`
@@ -1109,12 +1132,13 @@ export default function MySprintPage() {
                               (t.implementState === "failed" || t.implementState === "skipped") &&
                               button("Retry", "warning", () => retryNow(t.id), "retry-" + t.id)}
                             {due && t.id && button("Release", "primary", () => releaseNow(t.id), "release-" + t.id)}
-                            {t.id && (QA_STAGES.has(stageOf(t.stage || ticket?.status || "")) || t.pendingAction === "fix-qa") &&
-                              claim !== "dropped" && !drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed") &&
+                            {t.id && QA_STAGES.has(stageOf(t.stage || ticket?.status || "")) && t.pendingAction !== "fix-qa" &&
+                              stageOf(t.stage || ticket?.status || "") !== "qa-failed" &&
+                              claim !== "dropped" && !replyWaiting &&
                               button("Draft reply", "outline", () => draftReplyNow(t.id), "draft-" + t.id)}
-                            {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < 3 &&
+                            {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < 3 && !replyWaiting &&
                               t.implementState !== "running" && t.reviewState !== "running" && claim === "mine" &&
-                              button("Start QA fix", "warning", () => startQaFixNow(t.id), "qafix-" + t.id)}
+                              button("Start QA fix", "warning", () => startQaFixNow(t.id, t.ticketId), "qafix-" + t.id)}
                             {t.id && t.pendingAction === "move-to-qa" &&
                               button("Move to In QA", "primary", () => moveToQaNow(t.id), "qa-" + t.id)}
                           </span>

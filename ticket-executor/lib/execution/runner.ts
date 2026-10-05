@@ -299,6 +299,14 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       error: `The ${QA_FIX_SKILL} skill is not installed. Install it from the Guide or the System Check page.`,
     };
   }
+  if (skill === QA_FIX_SKILL && !findSkill(REVIEW_SKILL)) {
+    return {
+      ok: false,
+      status: 400,
+      blocked: "missing-skill",
+      error: `The QA fix run reviews its change with ${REVIEW_SKILL}, which is not installed. Install it from the Guide or the System Check page.`,
+    };
+  }
   if (evaluate && !findSkill(REVIEW_SKILL)) {
     return {
       ok: false,

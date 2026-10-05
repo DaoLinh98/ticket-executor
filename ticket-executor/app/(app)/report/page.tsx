@@ -180,10 +180,16 @@ export default function ReportPage() {
     }));
 
   const name = draft.name || data?.identity?.name || "";
-  const text = useMemo(
+  const generated = useMemo(
     () => buildReport({ day: day || localDay(), name, tickets, draft }),
     [day, name, tickets, draft]
   );
+  const text = draft.edited?.text ?? generated;
+  const editedStale = !!draft.edited && draft.edited.base !== generated;
+  const sentMatches = data?.sent?.text === text.trim();
+
+  const onEditPreview = (v: string) => setDraft((d) => ({ ...d, edited: { text: v, base: generated } }));
+  const onResetPreview = () => setDraft(({ edited: _, ...d }) => d);
 
   const onCopy = async (e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);
@@ -368,16 +374,35 @@ export default function ReportPage() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
                   </button>
                 </div>
-                {data?.sent && (
-                  <div style={{ display: "flex" }}>
-                    <span style={{ ...pill({ color: data.sent.text === text ? COLORS.success : COLORS.warning, size: "xs" }), whiteSpace: "nowrap" }}>
-                      {data.sent.text === text ? "Sent" : "Changed since sent"} · {sentTime(data.sent.sentAt)}
-                    </span>
+                {(data?.sent || draft.edited) && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    {data?.sent && (
+                      <span style={{ ...pill({ color: sentMatches ? COLORS.success : COLORS.warning, size: "xs" }), whiteSpace: "nowrap" }}>
+                        {sentMatches ? "Sent" : "Changed since sent"} · {sentTime(data.sent.sentAt)}
+                      </span>
+                    )}
+                    {draft.edited && (
+                      <>
+                        <span style={{ ...pill({ color: editedStale ? COLORS.warning : COLORS.textDim, size: "xs" }), whiteSpace: "nowrap" }}>
+                          {editedStale ? "Edited · selections changed since" : "Edited by hand"}
+                        </span>
+                        <button onClick={onResetPreview} style={ctaButtonStyle("ghost", { height: "40px" })}>
+                          Reset to generated
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
-                <pre style={codeBlock({ padding: "14px 16px" })}>{text}</pre>
+                <textarea
+                  value={text}
+                  onChange={(e) => onEditPreview(e.target.value)}
+                  aria-label="Report text"
+                  spellCheck={false}
+                  rows={text.split("\n").length + 1}
+                  style={{ ...codeBlock({ padding: "14px 16px" }), width: "100%", boxSizing: "border-box", resize: "vertical", outline: "none", whiteSpace: "pre", overflowWrap: "normal" }}
+                />
                 <span style={{ fontSize: FONT.sm, color: COLORS.faint }}>
-                  Copy and Send to Slack both use exactly this.
+                  Edit freely — Copy and Send to Slack both use exactly this.
                 </span>
               </motion.section>
             </>

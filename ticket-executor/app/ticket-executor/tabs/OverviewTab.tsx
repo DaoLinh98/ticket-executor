@@ -36,6 +36,9 @@ type Props = {
   onOpenRun: (ticketId: string, execId: string, e?: MouseEvent) => void;
   // resolved per-ticket config (override ?? default) + its editors
   rootRepo: string;
+  rootRepoSaved: boolean;
+  savingRootRepo: boolean;
+  onSaveRootRepo: () => void;
   project: string;
   skill: string;
   model: string;
@@ -75,7 +78,7 @@ export default function OverviewTab({
   ticket: t, comments, translations, translating, onTranslateComment,
   reacting, posting, onToggleReaction, draft, onDraftChange, onPostComment, onSearchMentions, onAddMention,
   history, onOpenRun,
-  rootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
+  rootRepo, rootRepoSaved, savingRootRepo, onSaveRootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
   ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
 }: Props) {
@@ -322,9 +325,21 @@ export default function OverviewTab({
       </section>
       <section className="te-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "8px" }}>
         <div style={{ ...fieldCard, ...(rootRepoMissing ? { border: `1px solid ${COLORS.warning}` } : null) }}>
-          <div style={fieldLabel}>
-            ROOT REPO
-            {rootRepoMissing && <span style={{ color: COLORS.warning, marginLeft: "6px" }}>· REQUIRED</span>}
+          <div style={{ ...fieldLabel, display: "flex", alignItems: "center" }}>
+            <span style={{ flex: 1 }}>
+              ROOT REPO
+              {rootRepoMissing && <span style={{ color: COLORS.warning, marginLeft: "6px" }}>· REQUIRED</span>}
+            </span>
+            {!rootRepoMissing && (
+              <button
+                onClick={onSaveRootRepo}
+                disabled={rootRepoSaved || savingRootRepo || !project}
+                title={rootRepoSaved ? "Saved for this project — Flow Runner uses it" : "Save this root repo for the project, without running"}
+                style={{ ...ctaButtonStyle(rootRepoSaved ? "ghost" : "outline", { height: "26px", cornerPx: 6 }), fontSize: FONT.xs, opacity: rootRepoSaved || savingRootRepo ? 0.6 : 1, cursor: rootRepoSaved || savingRootRepo ? "default" : "pointer" }}
+              >
+                {rootRepoSaved ? "Saved" : savingRootRepo ? "Saving…" : "Save"}
+              </button>
+            )}
           </div>
           <Combobox value={rootRepo} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} placeholder="C:\repos\my-service" ariaLabel="Root repo" />
         </div>

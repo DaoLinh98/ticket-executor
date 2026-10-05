@@ -27,6 +27,8 @@ export const PROGRESS_OPTIONS = [
   "Review ticket",
   "Investigate ticket",
   "Support testing",
+  "Fix issues",
+  "Update ACs",
 ] as const;
 
 export type Progress = (typeof PROGRESS_OPTIONS)[number];
@@ -68,6 +70,7 @@ export type ReportDraftState = {
    *  this report carries. */
   tasks: Record<ReportTaskId, { today: boolean; tomorrow: boolean }>;
   entries: Record<string, ReportEntry>;
+  edited?: { text: string; base: string };
 };
 
 export const REPORT_TASKS = [

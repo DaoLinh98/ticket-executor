@@ -15,8 +15,8 @@ import assert from "node:assert/strict";
 
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
 import { parseLimitReset } from "../lib/execution/claudeCli";
-import { graphById, graphForSkill, resolveSkill } from "../lib/execution/graph/graphs";
-import { DRAFT_RULE, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
+import { graphById, graphForSkill, isTestPath, resolveSkill, testGap } from "../lib/execution/graph/graphs";
+import { DRAFT_RULE, qaEvaluatePrompt, qaFixPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
 
 // ---- fixtures ----
@@ -65,6 +65,7 @@ const reviewV2 = graphForSkill("fix-code-review-v2");
 // The same graphs with the independent reviewer switched on.
 const v3e = graphForSkill("implement-ticket-v3", { evaluate: true });
 const reviewV3e = graphForSkill("fix-code-review-v3", { evaluate: true });
+const qaV3 = graphForSkill("fix-qa-v3");
 
 /** A RunContext with a given number of prior visits to a node — the cycle
  *  accounting a bounded loop's edge reads. */
@@ -403,7 +404,7 @@ const PROBES: NodeResult[] = [
   result({}, false, "turn failed"),
 ];
 
-for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e]) {
+for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e, qaV3]) {
   test(`invariant: every "external" node in ${graph.id} is a leaf`, () => {
     const external = Object.values(graph.nodes).filter((n) => n.effects === "external");
     assert.ok(external.length > 0, `${graph.id} declares no external node — did the effect classes drift?`);
@@ -672,12 +673,119 @@ test("admission: a ticket-specific refusal still outranks the pause", () => {
   assert.equal(d?.blocked, "duplicate-ticket");
 });
 
-test("the QA fix skill runs on its own one-shot graph, whatever the settings say", () => {
-  const modes = { autoImplement: false, autoResolveCodeReview: false };
-  assert.equal(resolveSkill("fix-qa-v1", false, modes), "fix-qa-v1");
-  const g = graphForSkill("fix-qa-v1");
-  assert.equal(g.id, "fix-qa-v1");
+test("a persisted v1/v2 QA fix run still resumes on its one-shot graph", () => {
+  const g = graphById("fix-qa-v2", "fix-qa-v2");
+  assert.equal(g.id, "fix-qa-v2");
   assert.deepEqual(Object.keys(g.nodes), ["deliver"]);
   assert.equal(g.nodes.deliver.effects, "external");
   assert.equal(graphById("fix-qa-v1", "fix-qa-v1").id, "fix-qa-v1");
+});
+
+const qaFix = graphById("fix-qa-v2", "fix-qa-v2");
+const QA_FIXED = {
+  outcome: "fixed", qaReply: "", committed: true, branch: "bug/1-qa-fix", summary: "", verification: CLEAN_VERIFICATION,
+  pushed: true, prUrl: "https://example/pr/1", linked: true, isDraft: true, lessons: [], blocked: NOT_BLOCKED,
+};
+const QA_NO_FIX = {
+  ...QA_FIXED, outcome: "no-fix-needed", qaReply: "Works as the AC describes.", committed: false, branch: "",
+  pushed: false, prUrl: "", linked: false, isDraft: false,
+};
+
+test("QA fix: a real defect is delivered like any one-shot run", () => {
+  assert.deepEqual(route(qaFix, "deliver", result(QA_FIXED)), { to: END, reason: "delivered" });
+  assert.equal(route(qaFix, "deliver", result({ ...QA_FIXED, pushed: false })).to, FAIL);
+});
+
+test("QA fix: no defect ends the run with a reply and no repository change", () => {
+  assert.deepEqual(route(qaFix, "deliver", result(QA_NO_FIX)), { to: END, reason: "no-fix-needed" });
+});
+
+test("QA fix: 'no fix needed' is refused when the run changed the repository or wrote no reply", () => {
+  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, pushed: true })).to, FAIL);
+  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, committed: true })).to, FAIL);
+  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, prUrl: "https://example/pr/2" })).to, FAIL);
+  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, qaReply: "  " })).to, FAIL);
+});
+
+// ---- fix-qa-v3: QA fix with a local commit, a test gate and an independent review ----
+
+const QA_LOCAL = {
+  outcome: "fixed", qaReply: "", committed: true, branch: "bug/1-qa-fix", summary: "s", verification: CLEAN_VERIFICATION,
+  deviations: [], testExemption: "", lessons: [], blocked: NOT_BLOCKED,
+};
+const QA_LOCAL_NO_FIX = { ...QA_LOCAL, outcome: "no-fix-needed", qaReply: "Works as the AC describes.", committed: false, branch: "" };
+
+test("fix-qa-v3: the QA skill resolves to the gated graph whatever the settings say", () => {
+  const modes = { autoImplement: true, autoResolveCodeReview: true };
+  assert.equal(resolveSkill("fix-qa-v3", false, modes), "fix-qa-v3");
+  assert.equal(qaV3.id, "fix-qa-v3");
+  assert.deepEqual(Object.keys(qaV3.nodes), ["implement", "check", "evaluate", "fix", "publish"]);
+  assert.equal(graphById("fix-qa-v3", "fix-qa-v3").id, "fix-qa-v3");
+});
+
+test("fix-qa-v3: nothing leaves the machine before the review — only publish is external", () => {
+  const external = Object.values(qaV3.nodes).filter((n) => n.effects === "external").map((n) => n.id);
+  assert.deepEqual(external, ["publish"]);
+  assert.equal(qaV3.nodes.implement.effects, "local");
+  assert.equal((qaV3.nodes.evaluate as { context?: string }).context, "fresh");
+  assert.equal(qaV3.nodes.check.kind, "check");
+});
+
+test("fix-qa-v3: a committed fix goes to the test gate, not to publish", () => {
+  assert.equal(route(qaV3, "implement", result(QA_LOCAL)).to, "check");
+  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL, committed: false })).to, FAIL);
+  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL, verification: { ...CLEAN_VERIFICATION, tests: "failed" } })).to, FAIL);
+});
+
+test("fix-qa-v3: no defect ends the run at implement with a reply and no commit", () => {
+  assert.deepEqual(route(qaV3, "implement", result(QA_LOCAL_NO_FIX)), { to: END, reason: "no-fix-needed" });
+  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL_NO_FIX, committed: true })).to, FAIL);
+  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL_NO_FIX, qaReply: " " })).to, FAIL);
+});
+
+test("fix-qa-v3: the test gate sends a change with no test back to fix, bounded", () => {
+  assert.equal(route(qaV3, "check", result({ passed: true, blockers: [] })).to, "evaluate");
+  const gap = result({ passed: false, blockers: [{ file: "", issue: "no test" }] });
+  assert.equal(route(qaV3, "check", gap).to, "fix");
+  assert.equal(qaV3.edges.check(ctxWithVisits({ fix: 2 }), gap).to, FAIL);
+  assert.equal(route(qaV3, "check", result({}, false, "could not diff the branch")).to, FAIL);
+});
+
+test("fix-qa-v3: review blockers loop through fix and back through the test gate", () => {
+  assert.equal(route(qaV3, "evaluate", result({ verdict: "pass", blockers: [], lessons: [], blocked: NOT_BLOCKED })).to, "publish");
+  const refuse = result({ verdict: "changes-required", blockers: [{ file: "a.ts:1", issue: "x" }], lessons: [], blocked: NOT_BLOCKED });
+  assert.equal(route(qaV3, "evaluate", refuse).to, "fix");
+  assert.equal(qaV3.edges.evaluate(ctxWithVisits({ fix: 2 }), refuse).to, FAIL);
+  assert.equal(route(qaV3, "fix", result(QA_LOCAL)).to, "check");
+  assert.equal(route(qaV3, "fix", result({ ...QA_LOCAL, committed: false })).to, FAIL);
+});
+
+test("fix-qa-v3: the reviewer runs in qa-fix mode and the fix brief follows whoever refused", () => {
+  assert.match(qaEvaluatePrompt(CTX), /^\/review-changes-v1 .* - Mode: qa-fix$/);
+  const byCheck = qaFixPrompt({ ...CTX, channels: { check: { passed: false, blockers: [{ issue: "no test" }] }, evaluate: { blockers: [{ file: "old.ts", issue: "stale" }] } } });
+  assert.match(byCheck, /no test/);
+  assert.doesNotMatch(byCheck, /stale/);
+  const byReview = qaFixPrompt({ ...CTX, channels: { check: { passed: true, blockers: [] }, evaluate: { blockers: [{ file: "a.ts:3", issue: "two rules" }] } } });
+  assert.match(byReview, /two rules/);
+});
+
+test("fix-qa-v3: test files are recognised across the stacks the app runs on", () => {
+  for (const p of [
+    "angular/src/app/pages/fund/edit/edit.component.spec.ts",
+    "tests/graph.test.ts",
+    "aspnet-core/test/CRMS.Application.Tests/Services/InvestmentUniverseServiceTest.cs",
+    "src/__tests__/a.tsx",
+    "pkg/x_test.go",
+    "app/test_views.py",
+  ]) assert.ok(isTestPath(p), p);
+  for (const p of ["angular/src/app/pages/fund/edit/edit.component.ts", "lib/latest.ts", "src/Contest.tsx"]) {
+    assert.ok(!isTestPath(p), p);
+  }
+});
+
+test("fix-qa-v3: testGap — a test file or a stated reason passes, neither refuses", () => {
+  assert.equal(testGap(["a.ts", "a.spec.ts"], ""), "");
+  assert.equal(testGap(["a.html"], "markup only"), "");
+  assert.notEqual(testGap(["a.ts"], ""), "");
+  assert.notEqual(testGap([".te/plan.md"], ""), "");
 });
