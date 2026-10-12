@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
@@ -291,68 +292,86 @@ function originLabel(iterationPath: string | undefined, sprint: string): string 
   return leaf === sprint ? "" : leaf;
 }
 
+type PlanResponse = { plan: StoredPlan | null; events: AutomationRow[]; drafts: QaDraft[] };
+
+const PROJECTS_KEY = ["projects"] as const;
+const SPRINT_KEY = ["my-sprint"] as const;
+const PLAN_KEY = ["my-sprint", "plan"] as const;
+const PLAN_POLL_MS = 5000;
+
+const planRunning = (p?: PlanResponse) =>
+  (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
+
+const fetchProjects = async (): Promise<string[]> => {
+  try {
+    const d = await fetch("/api/projects").then((r) => r.json());
+    return Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : [];
+  } catch {
+    return [];
+  }
+};
+
+const fetchPlan = async (): Promise<PlanResponse> => {
+  const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
+  return {
+    plan: d.plan ?? null,
+    events: Array.isArray(d.events) ? d.events : [],
+    drafts: Array.isArray(d.drafts) ? d.drafts : [],
+  };
+};
+
 export default function MySprintPage() {
   const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
   const showToast = useToast();
-  const [projects, setProjects] = useState<string[]>([]);
-  const [data, setData] = useState<MySprint | null>(null);
+  const queryClient = useQueryClient();
   // Triage is switched off on this page for now.
   // const [triage, setTriage] = useState<TriageRow | null>(null);
   // const [reportOpen, setReportOpen] = useState(false);
-  const [stored, setStored] = useState<StoredPlan | null>(null);
-  const [events, setEvents] = useState<AutomationRow[]>([]);
-  const [drafts, setDrafts] = useState<QaDraft[]>([]);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [found, setFound] = useState<Ticket[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [settledNeedle, setSettledNeedle] = useState("");
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const r = await fetch("/api/projects");
-      const d = await r.json();
-      setProjects(Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : []);
-    } catch {
-      setProjects([]);
-    }
-  }, []);
+  const projectsQuery = useQuery({ queryKey: PROJECTS_KEY, queryFn: fetchProjects });
+  const sprintQuery = useQuery({
+    queryKey: SPRINT_KEY,
+    queryFn: (): Promise<MySprint> => fetch("/api/my-sprint").then((r) => r.json()),
+  });
+  // A run outlives the request that started it, so a plan holding a running
+  // ticket is re-read until it stops — that is what keeps the "implementing
+  // now" label and the State column live.
+  const planQuery = useQuery({
+    queryKey: PLAN_KEY,
+    queryFn: fetchPlan,
+    refetchInterval: (q) => (planRunning(q.state.data) ? PLAN_POLL_MS : false),
+  });
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [sprintRes, planRes] = await Promise.all([
-        fetch("/api/my-sprint").then((r) => r.json()),
-        fetch("/api/my-sprint/plan").then((r) => r.json()),
-        // fetch("/api/my-sprint/triage").then((r) => r.json()),
-      ]);
-      if (sprintRes.error) setError(sprintRes.error);
-      setData(sprintRes);
-      setStored(planRes.plan ?? null);
-      setEvents(Array.isArray(planRes.events) ? planRes.events : []);
-      setDrafts(Array.isArray(planRes.drafts) ? planRes.drafts : []);
-      // setTriage(triageRes.triage ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const projects = projectsQuery.data ?? [];
+  const data = sprintQuery.data ?? null;
+  const stored = planQuery.data?.plan ?? null;
+  const events = planQuery.data?.events ?? [];
+  const drafts = planQuery.data?.drafts ?? [];
+  const loading = sprintQuery.isFetching || planQuery.isPending;
+  const loadError = data?.error || (sprintQuery.error as Error | null)?.message || (planQuery.error as Error | null)?.message || "";
 
-  useEffect(() => { loadProjects(); load(); }, [loadProjects, load]);
+  const load = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY });
+  const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY });
+  const setStored = (plan: StoredPlan | null) =>
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], ...old, plan }));
 
   useEffect(() => {
-    const onChanged = () => { loadProjects(); load(); };
+    const onChanged = () => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_KEY });
+      load();
+    };
     window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [loadProjects, load]);
+  }, [queryClient]);
 
   // A triage turn outlives the request that started it, so the row is polled
   // rather than awaited.
@@ -371,47 +390,22 @@ export default function MySprintPage() {
   //   return () => { if (triagePoll.current) clearInterval(triagePoll.current); };
   // }, [triage?.status, triage?.id]);
 
-  // A run outlives the request that started it, so a plan holding a running
-  // ticket is re-read until it stops — that is what keeps the "implementing
-  // now" label and the State column live.
-  const anyRunning =
-    (stored?.items ?? []).some((t) => t.implementState === "running") || drafts.some((d) => d.status === "running");
+  const needle = query.trim().toLowerCase().replace(/^#/, "");
+  const searchTerm = query.trim().replace(/^#/, "");
   useEffect(() => {
-    if (!anyRunning) return;
-    const id = setInterval(async () => {
-      try {
-        const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
-        if (d.plan) setStored(d.plan);
-        if (Array.isArray(d.events)) setEvents(d.events);
-        if (Array.isArray(d.drafts)) setDrafts(d.drafts);
-      } catch { /* the next tick tries again */ }
-    }, 5000);
-    return () => clearInterval(id);
-  }, [anyRunning]);
-
-  useEffect(() => {
-    const q = query.trim().replace(/^#/, "");
-    if (!q) { setFound([]); setSearching(false); return; }
-    setSearching(true);
-    const ctrl = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const d = await fetch("/api/tickets/search?q=" + encodeURIComponent(q), { signal: ctrl.signal }).then((r) => r.json());
-        setFound(Array.isArray(d.tickets) ? d.tickets : []);
-        setSearching(false);
-      } catch (e) {
-        if ((e as Error).name !== "AbortError") { setFound([]); setSearching(false); }
-      }
-    }, 250);
-    return () => { clearTimeout(timer); ctrl.abort(); };
-  }, [query]);
-
-  const reloadPlan = async () => {
-    const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
-    if (d.plan) setStored(d.plan);
-    if (Array.isArray(d.events)) setEvents(d.events);
-    if (Array.isArray(d.drafts)) setDrafts(d.drafts);
-  };
+    const timer = setTimeout(() => setSettledNeedle(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+  const searchQuery = useQuery({
+    queryKey: ["ticket-search", settledNeedle],
+    queryFn: ({ signal }): Promise<Ticket[]> =>
+      fetch("/api/tickets/search?q=" + encodeURIComponent(settledNeedle), { signal })
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d.tickets) ? d.tickets : [])),
+    enabled: !!settledNeedle,
+  });
+  const found = searchTerm ? searchQuery.data ?? [] : [];
+  const searching = !!searchTerm && (searchTerm !== settledNeedle || searchQuery.isFetching);
 
   const post = async (url: string, body: unknown, method = "POST") => {
     const r = await fetch(url, {
@@ -620,7 +614,6 @@ export default function MySprintPage() {
           stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
         }));
 
-  const needle = query.trim().toLowerCase().replace(/^#/, "");
   const planned = new Set(rows.map((t) => t.ticketId));
   const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
 
@@ -743,14 +736,14 @@ export default function MySprintPage() {
           ) : !summary ? (
             <div style={tintedCard("warning")}>
               <span style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>
-                {error || "Nothing to plan yet."}
+                {error || loadError || "Nothing to plan yet."}
               </span>
             </div>
           ) : (
             <>
-              {error && (
+              {(error || loadError) && (
                 <div style={tintedCard("danger")}>
-                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</span>
+                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error || loadError}</span>
                 </div>
               )}
               {message && (

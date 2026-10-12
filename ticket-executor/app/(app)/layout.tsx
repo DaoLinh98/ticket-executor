@@ -3,6 +3,7 @@ import Sidebar from "./Sidebar";
 import AppReactor from "./AppReactor";
 import NotificationsProvider from "./NotificationsProvider";
 import ToastProvider from "./ToastProvider";
+import QueryProvider from "./QueryProvider";
 import MobileNavProvider from "./MobileNav";
 import MobileNavToggle from "./MobileNavToggle";
 import { COLORS } from "@/lib/ui";
@@ -13,6 +14,7 @@ import { authDisabled } from "@/lib/auth";
 // is needed here.
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
+    <QueryProvider>
     <NotificationsProvider>
       <ToastProvider>
       <MobileNavProvider>
@@ -27,5 +29,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </MobileNavProvider>
       </ToastProvider>
     </NotificationsProvider>
+    </QueryProvider>
   );
 }
