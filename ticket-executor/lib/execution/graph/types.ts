@@ -197,8 +197,8 @@ export type LiveRun = {
   prUrl: string;
   branch: string;
   resultText: string;
-  /** A fingerprint of the project's KNOWLEDGE.md when the run started ("" when
-   *  absent), so the run can say whether it added to the project's memory.
+  /** The project's KNOWLEDGE.md as it was when the run started ("" when
+   *  absent), so the run can record what it added to the project's memory.
    *  Null when unknown — a run rebuilt after a restart. */
   knowledgeAtStart: string | null;
 };

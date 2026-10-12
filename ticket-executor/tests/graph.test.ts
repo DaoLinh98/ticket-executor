@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
 import { parseLimitReset } from "../lib/execution/claudeCli";
 import { graphById, graphForSkill, isTestPath, KNOWN_SKILLS, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
-import { DRAFT_RULE, evaluatePrompt, fixPrompt, publishPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
+import { DRAFT_RULE, evaluatePrompt, fixPrompt, publishPrompt, reflectPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
 
 // ---- fixtures ----
@@ -86,11 +86,11 @@ const GAP = result({ passed: false, blockers: [{ file: "", issue: "no test" }] }
 
 test("every flow walks the same loop, with no gate anywhere", () => {
   for (const g of ALL) {
-    assert.deepEqual(Object.keys(g.nodes), ["implement", "check", "evaluate", "fix", "publish"], g.id);
+    assert.deepEqual(Object.keys(g.nodes), ["implement", "check", "evaluate", "fix", "publish", "reflect"], g.id);
     assert.equal(g.entry, "implement");
     for (const n of Object.values(g.nodes)) assert.ok(n.kind === "agent" || n.kind === "check", `${g.id}: ${n.id} is a ${n.kind}`);
   }
-  assert.deepEqual(ALL.map((g) => g.id), ["implement-v4", "fix-review-v4", "fix-qa-v4"]);
+  assert.deepEqual(ALL.map((g) => g.id), ["implement-v5", "fix-review-v5", "fix-qa-v5"]);
 });
 
 test("nothing leaves the machine before the review — only publish is external", () => {
@@ -170,7 +170,7 @@ test("check: a passing test gate goes to the reviewer; a gap goes back to fix, b
   for (const g of ALL) {
     assert.equal(route(g, "check", result({ passed: true, blockers: [] })).to, "evaluate");
     assert.equal(route(g, "check", GAP).to, "fix");
-    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, FAIL);
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, "reflect");
     assert.equal(route(g, "check", result({}, false, "could not diff the branch")).to, FAIL);
   }
 });
@@ -180,9 +180,42 @@ test("evaluate: a pass releases the run to publish; blockers go to fix, bounded"
     assert.equal(route(g, "evaluate", PASS).to, "publish");
     assert.equal(route(g, "evaluate", REFUSE).to, "fix");
     const next = route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 2 }));
-    assert.equal(next.to, FAIL);
+    assert.equal(next.to, "reflect");
     assert.match(next.reason, /after 2 fix attempt/);
   }
+});
+
+// ---- reflect: the lesson an exhausted loop leaves behind ----
+
+test("reflect: entered only once the fix loop is exhausted, never on a turn failure", () => {
+  for (const g of ALL) {
+    assert.equal(route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 1 })).to, "fix", g.id);
+    assert.equal(route(g, "check", result({}, false, "could not diff the branch"), ctxWithVisits({ fix: 2 })).to, FAIL, g.id);
+    assert.equal(route(g, "implement", result({}, false, "turn failed")).to, FAIL, g.id);
+  }
+});
+
+test("reflect: writes only locally, resumes the implementer's session, and always ends the run as failed", () => {
+  const refused = { ...CTX, visits: { fix: 2 }, channels: { check: { passed: true }, evaluate: REFUSE.data } };
+  const gapped = { ...CTX, visits: { fix: 2 }, channels: { check: GAP.data, evaluate: REFUSE.data } };
+  for (const g of ALL) {
+    assert.equal(g.nodes.reflect.effects, "local", g.id);
+    assert.equal((g.nodes.reflect as { context?: string }).context, "resume", g.id);
+    for (const r of [result({ recorded: true, lesson: "l" }), result({ recorded: false, lesson: "" }), result({}, false, "turn failed")]) {
+      assert.equal(route(g, "reflect", r, refused).to, FAIL, g.id);
+    }
+    assert.equal(route(g, "reflect", result({ recorded: false, lesson: "" }), refused).reason, "review found 1 blocker(s) after 2 fix attempt(s)");
+    assert.equal(route(g, "reflect", result({ recorded: false, lesson: "" }), gapped).reason, "test gate: no test after 2 fix attempt(s)");
+  }
+});
+
+test("reflectPrompt: points at the project's KNOWLEDGE.md and forbids touching the change", () => {
+  const p = reflectPrompt({ ...CTX, visits: { fix: 2 } });
+  assert.match(p, /^Mode: reflect/);
+  assert.match(p, /2 fix attempt/);
+  assert.match(p, /do NOT commit/);
+  assert.match(p, /do NOT push/);
+  assert.match(p, /Knowledge: C:[\\/]repo[\\/]KNOWLEDGE\.md/);
 });
 
 test("fix: a committed fix goes back through the test gate, never straight to publish", () => {
@@ -254,6 +287,9 @@ for (const graph of ALL) {
 // ---- resolution ----
 
 test("graphById resolves a persisted run onto its flow, retired shapes included", () => {
+  assert.equal(graphById("implement-v5").id, "implement-v5");
+  assert.equal(graphById("fix-review-v5").id, "fix-review-v5");
+  assert.equal(graphById("fix-qa-v5").id, "fix-qa-v5");
   assert.equal(graphById("implement-v4").id, "implement-v4");
   assert.equal(graphById("fix-review-v4").id, "fix-review-v4");
   assert.equal(graphById("fix-qa-v4").id, "fix-qa-v4");
@@ -262,7 +298,17 @@ test("graphById resolves a persisted run onto its flow, retired shapes included"
   assert.equal(graphById("fix-review-v2").id, "fix-review-v4");
   assert.equal(graphById("fix-qa-v2").id, "fix-qa-v4");
   assert.equal(skillOfGraph("fix-review-v3"), "fix-code-review-v4");
+  assert.equal(skillOfGraph("fix-qa-v5"), "fix-qa-v4");
   assert.equal(skillOfGraph(""), "implement-ticket-v4");
+});
+
+test("a run started on a v4 graph finishes on the v4 shape — no reflect node, the bound still fails it", () => {
+  for (const id of ["implement-v4", "fix-review-v4", "fix-qa-v4"]) {
+    const g = graphById(id);
+    assert.equal(g.nodes.reflect, undefined, id);
+    assert.equal(route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 2 })).to, FAIL, id);
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, FAIL, id);
+  }
 });
 
 test("resolveSkill: only the three v4 skills run; anything else is refused, not defaulted", () => {

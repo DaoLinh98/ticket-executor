@@ -1,8 +1,9 @@
 import { prisma } from "../prisma";
 import { cached, DB_CACHE_PREFIX } from "../redis";
-import type { FileChange, LogLine, RunState } from "../types";
+import type { FileChange, KnowledgeChange, LogLine, RunState } from "../types";
 import { asLogLines, fmtDuration, safeParseJson } from "./format";
 import { graphById, graphOutline } from "./graph/graphs";
+import { reviewEscapes } from "./loopMetrics";
 import type { Graph } from "./graph/types";
 import { store } from "./store";
 
@@ -67,6 +68,7 @@ export type RunView = {
   /** The latest plan Artifact, once the implement node has written one. */
   planMarkdown: string;
   filesChanged: FileChange[];
+  knowledgeChange: KnowledgeChange | null;
   /** Per-node structured output — the Result tab renders verification, deviations
    *  and assumptions straight out of the contract rather than out of prose. */
   channels: Record<string, Record<string, unknown>>;
@@ -79,13 +81,15 @@ export type RunView = {
 };
 
 async function loadExtras(runId: string) {
-  const [plan, diff] = await Promise.all([
+  const [plan, diff, knowledge] = await Promise.all([
     prisma.artifact.findFirst({ where: { runId, kind: "plan" }, orderBy: { version: "desc" } }),
     prisma.artifact.findFirst({ where: { runId, kind: "diff" }, orderBy: { version: "desc" } }),
+    prisma.artifact.findFirst({ where: { runId, kind: "knowledge" }, orderBy: { version: "desc" } }),
   ]);
   return {
     planMarkdown: plan?.body ?? "",
     filesChanged: diff ? safeParseJson<FileChange[]>(diff.body, []) : [],
+    knowledgeChange: knowledge ? safeParseJson<KnowledgeChange | null>(knowledge.body, null) : null,
   };
 }
 
@@ -122,6 +126,7 @@ export async function getRun(id: string): Promise<RunView | null> {
     branch: live.branch,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
+    knowledgeChange: extras.knowledgeChange,
     channels: live.ctx.channels,
     costUsd: agg._sum.costUsd ?? 0,
     inputTokens: agg._sum.inputTokens ?? 0,
@@ -161,6 +166,7 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     branch: row.branch,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
+    knowledgeChange: extras.knowledgeChange,
     channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
     costUsd: row.steps.reduce((s, x) => s + x.costUsd, 0),
     inputTokens: row.steps.reduce((s, x) => s + x.inputTokens, 0),
@@ -261,6 +267,12 @@ export type DashboardMetrics = {
     /** Runs that reached the independent reviewer. */
     loopRuns: number;
     avgFixRounds: number;
+    reviewPassedRuns: number;
+    reviewEscapes: number;
+    testGateChecks: number;
+    testGateRefusals: number;
+    reflections: number;
+    lessonsFromFailures: number;
     reviewFixRatio: number;
     implementRuns: number;
     fixReviewRuns: number;
@@ -581,6 +593,14 @@ async function computeDashboardMetrics(filter?: {
   const fixSteps = loopSteps
     .filter((s) => s.nodeId === "fix" && reviewedRunIds.has(s.runId))
     .reduce((n, s) => n + s._count._all, 0);
+  const escapes = reviewEscapes(scoped, reviewedRunIds);
+  const scopedIds = { in: scoped.map((r) => r.id) };
+  const [testGateChecks, testGateRefusals, reflections, lessonsFromFailures] = await Promise.all([
+    prisma.step.count({ where: { nodeId: "check", status: "succeeded", runId: scopedIds } }),
+    prisma.step.count({ where: { nodeId: "check", status: "succeeded", runId: scopedIds, output: { path: ["passed"], equals: false } } }),
+    prisma.step.count({ where: { nodeId: "reflect", runId: scopedIds } }),
+    prisma.step.count({ where: { nodeId: "reflect", runId: scopedIds, output: { path: ["recorded"], equals: true } } }),
+  ]);
   // Counted off the routing decision itself, not guessed from the run's shape.
   // The old proxy — "failed, and no PR" — counted *every* agent failure, so a run
   // that died on a missing credential was reported as one the harness had stopped
@@ -696,6 +716,12 @@ async function computeDashboardMetrics(filter?: {
       loopPassRate: loopRuns ? loopCleanRuns / loopRuns : 0,
       loopRuns,
       avgFixRounds: loopRuns ? fixSteps / loopRuns : 0,
+      reviewPassedRuns: escapes.passed,
+      reviewEscapes: escapes.escaped,
+      testGateChecks,
+      testGateRefusals,
+      reflections,
+      lessonsFromFailures,
       reviewFixRatio: implementRows.length ? fixReviewRuns / implementRows.length : 0,
       implementRuns: implementRows.length,
       fixReviewRuns,

@@ -1,7 +1,7 @@
 ---
 name: fix-qa-v4
 description: Handle a ticket that failed QA in two phases — review each QC finding against the code, fix the real defects with a regression test and commit locally (or, when none is a real defect, change nothing and draft the reply to QA); an independent review runs before a separate publish phase pushes the branch and opens the draft PR; records reusable lessons in the project's KNOWLEDGE.md
-version: 4.0.0
+version: 4.1.0
 ---
 
 Fix the QA findings on ticket $ARGUMENTS (format: `/fix-qa-v4 Provider: <id> - [PR: <previous-pr-url> - ]Ticket: <ticket-url> - Project name: <project> - Mode: <mode> - Knowledge: <path>`). The ticket was implemented, merged, handed to QA, and QA sent it back. **Review every finding against the ticket and the code before touching anything.** Only a real defect in this ticket's code is fixed — with the **smallest safe change that resolves it**, preserving all unrelated behavior and all uncommitted work in the tree. When no finding is a real defect, change nothing and answer QA instead.
@@ -12,6 +12,7 @@ Fix the QA findings on ticket $ARGUMENTS (format: `/fix-qa-v4 Provider: <id> - [
 |---|---|
 | `implement` (or absent) | Review the findings, fix the defects, add a regression test, verify, **commit locally**. Never push, never open a pull request. |
 | `publish` | Push the already-committed branch and open the draft pull request. Nothing else. |
+| `reflect` | Record in `KNOWLEDGE.md` the lesson a run that is being stopped taught, if any. Never edit source, commit, push or write to the tracker. |
 
 Between the two, the runner checks the change itself and an independent reviewer reads the diff. If either refuses, you are resumed with `Mode: implement` and a list of what to fix — fix exactly that, re-verify, commit locally, and stop again.
 
@@ -95,7 +96,16 @@ $ARGUMENTS carries `Knowledge: <absolute path>` — the project's `KNOWLEDGE.md`
 - It never overrides ticket requirements, repository instructions, or current code behavior — investigate conflicts instead of applying entries blindly.
 - **A defect QA found is the main source of this file.** It shipped past implementation, verification and code review, so the mistake behind it is one the next, unrelated ticket will repeat unless it is written down. Before committing, ask of every finding you judged a defect, and of every blocker the runner or the reviewer handed back: what general rule would have prevented it? Record that rule when it is project-specific, reusable, and not already obvious from the code or an existing entry. Skip one-off ticket requirements, test-data or environment problems, and findings that were not defects.
 - **How to write it.** Re-read the file immediately before editing it — another run may have updated it since you first read it. Search for an equivalent entry first and refine it rather than adding a duplicate; add a new entry only when none fits. Write generalized guidance — when it applies, what to do or avoid, and why when that is not obvious — one bullet under a short `## <area>` heading, never the QA comment verbatim and never code. If it contradicts an existing entry, leave the entry and mention the conflict in `summary`. Create the file only when you have at least one lesson.
+- **Keep it short.** Every entry is one bullet of at most two lines. The runner warns when the file passes 200 lines; before adding to a file that long, first merge entries that say the same thing and drop entries about code that no longer exists, so the file stays something every run can afford to read.
 - **Write it only at the `Knowledge:` path, and never stage or commit it** — not there and not in this working tree. If `Knowledge:` is absent, use `KNOWLEDGE.md` at the repository root and still never stage it. With `no-fix-needed` nothing is written: that outcome changes no file.
+
+## Phase: reflect
+
+The fix loop is exhausted: the runner's check or the independent reviewer still refuses the change after the last fix attempt, and the run is being stopped for a person to look at. You are resumed in the same session, so the refusal you could not answer is already in your context.
+
+1. Do not edit source, do not commit, do not push, do not touch the tracker. The change stays as it is for the developer.
+2. Ask what general rule about this project would have let a future, unrelated ticket avoid this failure — a convention, a pitfall, a test setup, a command. Record it in `KNOWLEDGE.md` as described under **Project memory**, only when it is reusable and not already written there. A failure that is specific to this ticket teaches nothing; record nothing then.
+3. Report `recorded` and the one- or two-sentence `lesson` you wrote (empty when `recorded` is false).
 
 ## Publish phase
 

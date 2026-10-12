@@ -32,7 +32,7 @@ import { usePagePrefs } from "./pagePrefs";
 import type {
   Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
 } from "./ticket-executor/types";
-import type { CommitFile, CommitSummary, FileChange, LogLine, MentionCandidate, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
+import type { CommitFile, CommitSummary, FileChange, KnowledgeChange, LogLine, MentionCandidate, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
@@ -95,6 +95,7 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     outputTokens: run.outputTokens as number | undefined,
     planMarkdown: (run.planMarkdown as string) || prev?.planMarkdown,
     filesChanged: (run.filesChanged as FileChange[]) ?? [],
+    knowledgeChange: (run.knowledgeChange as KnowledgeChange | null) ?? null,
     channels: (run.channels as ExecView["channels"]) ?? {},
   };
 }
@@ -2235,6 +2236,7 @@ export default function TicketExecutor() {
                     statusLabel={lsl}
                     logStatusStyle={logStatusStyle}
                     error={ex?.error}
+                    knowledge={ex?.knowledgeChange}
                   />
                 )}
 

@@ -1,13 +1,12 @@
 import { execSync } from "child_process";
-import { createHash } from "crypto";
-import { readFileSync } from "fs";
 import { prisma } from "../../prisma";
-import type { EndReason } from "../../types";
+import { KNOWLEDGE_MAX_LINES, type EndReason, type KnowledgeChange } from "../../types";
 import { fmtDuration } from "../format";
 import { collectFileChanges, summarizeChanges } from "../git";
 import { execNode, releaseMcp } from "./exec";
 import { closeStep, openStep, saveArtifact, saveRun, saveTransition } from "./persist";
 import { clearRunArtifacts, readPlanFile } from "./graphs";
+import { knowledgeChange, readKnowledge } from "./knowledge";
 import { knowledgeFile } from "./prompts";
 import { END, FAIL, type Graph, type LiveRun, type Node, type NodeResult, type Target } from "./types";
 
@@ -86,7 +85,7 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
   // and the dashboard's "human wait" would say the machine was waiting on a
   // person for hours nobody was ever asked about.
   bankParkedTime(live);
-  reportKnowledge(live);
+  const knowledge = reportKnowledge(live);
   live.logLines.push(
     state === "succeeded"
       ? { text: `✔ Completed in ${fmtDuration(live.endedAt - live.startedAt)}`, kind: "done" }
@@ -94,6 +93,7 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
   );
   try {
     await captureDiff(live);
+    if (knowledge) await saveArtifact(live.id, "knowledge", JSON.stringify(knowledge), "agent");
   } catch {
     /* the diff is a convenience; never fail a finished run over it */
   }
@@ -106,27 +106,26 @@ export async function finish(live: LiveRun, state: "succeeded" | "failed" | "can
   releaseMcp(live);
 }
 
-/** A fingerprint of the project's KNOWLEDGE.md, or "" when there is none. */
-export function knowledgeStamp(rootRepo: string): string {
-  try {
-    return createHash("sha1").update(readFileSync(knowledgeFile(rootRepo))).digest("hex");
-  } catch {
-    return "";
-  }
-}
-
 /** Say in the run's own log whether the project's memory changed while it ran.
  *  Writing lessons is the agent's job and costs this harness nothing to check,
  *  so the one piece of the outer loop nobody routes on is still observable:
  *  a project whose runs never add a line is a loop that is not learning. */
-function reportKnowledge(live: LiveRun) {
-  if (live.knowledgeAtStart === null) return;
-  const now = knowledgeStamp(live.ctx.rootRepo);
-  if (now === live.knowledgeAtStart) return;
+function reportKnowledge(live: LiveRun): KnowledgeChange | null {
+  if (live.knowledgeAtStart === null) return null;
+  const file = knowledgeFile(live.ctx.rootRepo);
+  const change = knowledgeChange(file, live.knowledgeAtStart, readKnowledge(live.ctx.rootRepo));
+  if (!change) return null;
   live.logLines.push({
-    text: `● KNOWLEDGE.md ${live.knowledgeAtStart ? "changed" : "created"} during this run — ${knowledgeFile(live.ctx.rootRepo)}`,
+    text: `● KNOWLEDGE.md ${live.knowledgeAtStart ? "changed" : "created"} during this run (+${change.added.length} / −${change.removed.length} lines) — ${file}`,
     kind: "step",
   });
+  if (change.lines > KNOWLEDGE_MAX_LINES) {
+    live.logLines.push({
+      text: `⚠ KNOWLEDGE.md is ${change.lines} lines, over the ${KNOWLEDGE_MAX_LINES} every run reads — prune or merge entries in ${file}`,
+      kind: "step",
+    });
+  }
+  return change;
 }
 
 /** Close whatever park the run is sitting in, into the bucket that park belongs

@@ -6,7 +6,8 @@ import { resolveCredential } from "../providerCredentials";
 import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
-import { bankParkedTime, cancel, drive, finish, knowledgeStamp } from "./graph/drive";
+import { bankParkedTime, cancel, drive, finish } from "./graph/drive";
+import { readKnowledge } from "./graph/knowledge";
 import { clearRunArtifacts, graphById, graphForSkill, KNOWN_SKILLS, resolveSkill, skillOfGraph } from "./graph/graphs";
 import { REVIEW_SKILL } from "./graph/prompts";
 import { saveRun } from "./graph/persist";
@@ -418,7 +419,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     prUrl: "",
     branch: "",
     resultText: "",
-    knowledgeAtStart: knowledgeStamp(rootRepo),
+    knowledgeAtStart: readKnowledge(rootRepo),
   };
   store.set(row.id, live);
 

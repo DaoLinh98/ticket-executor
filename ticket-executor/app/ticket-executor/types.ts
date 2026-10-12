@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEvent } from "react";
-import type { FileChange, LogLine, RunState } from "@/lib/types";
+import type { FileChange, KnowledgeChange, LogLine, RunState } from "@/lib/types";
 import type { ProviderId } from "@/lib/providers";
 
 /** One node of the run's graph as the API reports it. The progress list comes
@@ -38,6 +38,7 @@ export type ExecView = {
   /** Latest plan artifact — drives the Plan tab when the graph has a gate. */
   planMarkdown?: string;
   filesChanged?: FileChange[];
+  knowledgeChange?: KnowledgeChange | null;
   /** nodeId → that node's validated structured output. The Result tab renders
    *  verification / deviations / assumptions straight out of this. */
   channels?: Record<string, Record<string, unknown>>;

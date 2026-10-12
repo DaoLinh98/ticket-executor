@@ -106,6 +106,10 @@ export type FileChange = {
   diff: string;
 };
 
+export type KnowledgeChange = { file: string; added: string[]; removed: string[]; lines: number };
+
+export const KNOWLEDGE_MAX_LINES = 200;
+
 // The run's view model is not declared here: it is derived from the graph a run
 // is walking, so it lives next to that code as `RunView` in
 // lib/execution/queries.ts and reaches the UI through the API.
