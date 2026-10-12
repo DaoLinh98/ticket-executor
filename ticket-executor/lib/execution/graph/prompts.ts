@@ -196,6 +196,17 @@ export function fixPrompt(c: RunContext): string {
   );
 }
 
+export function reflectPrompt(c: RunContext): string {
+  return withKnowledge(
+    c,
+    "Mode: reflect. This run is stopping: the runner's checks and the independent review still refuse the change after " +
+      `${c.visits.fix ?? 0} fix attempt(s). Do NOT edit source, do NOT commit, do NOT push. Decide whether this failure ` +
+      "teaches a reusable lesson about this project — a convention, a pitfall, a test setup — that would have let a " +
+      "future run get it right the first time. If it does, record it in KNOWLEDGE.md as your skill describes; if it is " +
+      "specific to this ticket only, record nothing."
+  );
+}
+
 /**
  * The publish brief for the **review** flow. Still `context: "resume"`, and that
  * asymmetry with `publishPrompt` is the point rather than an oversight.

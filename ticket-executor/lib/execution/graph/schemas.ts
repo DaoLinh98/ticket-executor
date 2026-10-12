@@ -183,6 +183,19 @@ export const REVIEW_PUBLISH_OUTPUT = {
   additionalProperties: false,
 } as const;
 
+export const REFLECT_OUTPUT = {
+  type: "object",
+  properties: {
+    recorded: { type: "boolean", description: "True if you added or updated a lesson in KNOWLEDGE.md." },
+    lesson: {
+      type: "string",
+      description: "The lesson you recorded, in one or two sentences. Empty when recorded is false.",
+    },
+  },
+  required: ["recorded", "lesson"],
+  additionalProperties: false,
+} as const;
+
 // ---- typed readers ----
 // Structured output is validated by the CLI against the schema above, so these
 // only narrow types; they never re-validate or repair.

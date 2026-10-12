@@ -1,8 +1,9 @@
 "use client";
 
 import type { CSSProperties, RefObject } from "react";
-import type { UiRunState } from "@/lib/types";
+import type { KnowledgeChange, UiRunState } from "@/lib/types";
 import { FONT, ringBorder, tintedCard } from "@/lib/ui";
+import KnowledgeChangeCard from "../KnowledgeChangeCard";
 import type { LogLineView, StepView } from "../types";
 
 type Props = {
@@ -14,11 +15,12 @@ type Props = {
   statusLabel: string;
   logStatusStyle: CSSProperties;
   error?: string;
+  knowledge?: KnowledgeChange | null;
 };
 
 // The 7-step workflow timeline plus the live claude-code terminal.
 export default function ExecutionTab({
-  steps, logLines, logRef, projectName, state, statusLabel, logStatusStyle, error,
+  steps, logLines, logRef, projectName, state, statusLabel, logStatusStyle, error, knowledge,
 }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", animation: "fadeUp .35s both" }}>
@@ -65,6 +67,7 @@ export default function ExecutionTab({
           <div><div style={{ fontSize: FONT.md, fontWeight: 700, color: "#FF8F8F", marginBottom: "3px" }}>Execution failed</div><div style={{ fontSize: FONT.base, color: "#C7A8A8", lineHeight: 1.55 }}>{error}</div></div>
         </div>
       )}
+      {state === "failed" && <KnowledgeChangeCard change={knowledge} />}
     </div>
   );
 }

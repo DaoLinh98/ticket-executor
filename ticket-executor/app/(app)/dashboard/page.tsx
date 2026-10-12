@@ -493,10 +493,19 @@ function DashboardPageInner() {
                 <KpiTile index={9} label="LOOP PASS" value={data.quality.loopRuns ? fmtPct(data.quality.loopPassRate) : "—"} tone={COLORS.indigo}
                   sub={`${data.quality.loopRuns} reviewed runs · ${data.quality.avgFixRounds.toFixed(2)} fix rounds each`}
                   hint="passed the test gate and the reviewer with no fix round" />
-                <KpiTile index={10} label="REVIEW-FIX RATIO" value={data.quality.implementRuns ? fmtPct(data.quality.reviewFixRatio) : "—"} tone={COLORS.warning}
+                <KpiTile index={10} label="REVIEW ESCAPES" value={data.quality.reviewPassedRuns ? fmtPct(data.quality.reviewEscapes / data.quality.reviewPassedRuns) : "—"} tone={COLORS.danger}
+                  sub={`${data.quality.reviewEscapes} of ${data.quality.reviewPassedRuns} reviewed runs reworked later`}
+                  hint="passed the reviewer, then needed a review or QA fix" />
+                <KpiTile index={11} label="TEST GATE" value={data.quality.testGateChecks ? fmtPct(data.quality.testGateRefusals / data.quality.testGateChecks) : "—"} tone={COLORS.warning}
+                  sub={`${data.quality.testGateRefusals} of ${data.quality.testGateChecks} checks refused`}
+                  hint="a change with no test and no reason" />
+                <KpiTile index={12} label="FAILURE LESSONS" value={data.quality.reflections ? `${data.quality.lessonsFromFailures}/${data.quality.reflections}` : "—"} tone={COLORS.indigo}
+                  sub={`${data.quality.reflections} exhausted fix loops`}
+                  hint="failed runs that wrote a lesson to KNOWLEDGE.md" />
+                <KpiTile index={13} label="REVIEW-FIX RATIO" value={data.quality.implementRuns ? fmtPct(data.quality.reviewFixRatio) : "—"} tone={COLORS.warning}
                   sub={`${data.quality.fixReviewRuns} fix-review runs`}
                   hint="lower = less reviewer pushback per feature" />
-                <KpiTile index={11} label="CHANGE SIZE" value={data.quality.avgFilesPerRun ? `${data.quality.avgFilesPerRun.toFixed(1)} files` : "—"}
+                <KpiTile index={14} label="CHANGE SIZE" value={data.quality.avgFilesPerRun ? `${data.quality.avgFilesPerRun.toFixed(1)} files` : "—"}
                   sub={data.quality.avgLinesPerRun ? `${Math.round(data.quality.avgLinesPerRun)} lines changed per run` : "no diffs recorded"}
                   hint="real work, not a one-line edit" />
               </section>

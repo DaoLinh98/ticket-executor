@@ -1,7 +1,7 @@
 ---
 name: fix-code-review-v4
 description: Autonomously resolve open PR/MR review comments (human or CodeRabbit) across Azure DevOps, GitHub, or GitLab in two phases — validate each thread, fix the valid ones and commit locally (re-entered to fix what the runner's checks and an independent reviewer refuse), then push, reply and resolve as a separate final step; records reusable lessons in the project's KNOWLEDGE.md
-version: 4.0.0
+version: 4.1.0
 ---
 
 Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket: <ticket-url> - Project name: <project> - Mode: <mode> - Knowledge: <path>`, where `Ticket:` is the provider's deep link to the work item — an older caller may pass a bare id instead). Everything you need is in this file — do not load another skill to find the implementation rules.
@@ -12,6 +12,7 @@ Resolve the open code-review comments on the pull/merge request described in $AR
 |---|---|---|
 | `implement` (or absent) | Fetch and classify the threads, write the plan record, fix the valid ones on the PR's branch, verify, update `KNOWLEDGE.md`, **commit locally** | **Do NOT push. Do NOT reply to or resolve any thread.** Nothing may leave this machine. |
 | `publish` | Push the fixes, reply to every thread you classified, resolve the ones you fixed | Do not edit source. Do not commit. Do not re-verify. |
+| `reflect` | Record in `KNOWLEDGE.md` the lesson a run that is being stopped taught, if any | Do not edit source. Do not commit. Do not push. Do not write to the tracker. |
 
 Between the two, the runner checks the change itself (a test gate) and an independent reviewer reads the diff against the threads in a session of its own. If either refuses, you are resumed with `Mode: implement` and a numbered list of what to fix — fix exactly that, re-verify, commit locally, and stop again. Nobody reviews your plan before you code.
 
@@ -63,6 +64,7 @@ $ARGUMENTS carries `Knowledge: <absolute path>` — the project's `KNOWLEDGE.md`
 - It never overrides ticket requirements, repository instructions, or current code behavior — investigate conflicts instead of applying entries blindly.
 - **Before every local commit, review each fix in this pass for a reusable lesson.** Review feedback you validated and fixed is the main source of this file: a finding a reviewer had to raise is a mistake the next implementation of an unrelated ticket will repeat unless it is written down. A lesson is project-specific, likely to help future tickets, and not already obvious from the code or existing guidance. Skip one-off ticket requirements, naming/formatting nits, findings you did not fix, and a finding being valid is not by itself a reason to add an entry.
 - **How to write it.** Re-read the file immediately before editing it — another run may have updated it since you first read it. Search for an equivalent entry first and refine it when this review adds useful context; add a new entry only when none fits. Write generalized guidance — when it applies, what to do or avoid, and why when that is not obvious — one bullet under a short `## <area>` heading, never the review comment verbatim and never code. If it contradicts an existing entry, leave the entry and mention the conflict in `summary`. Create the file only when you have at least one lesson.
+- **Keep it short.** Every entry is one bullet of at most two lines. The runner warns when the file passes 200 lines; before adding to a file that long, first merge entries that say the same thing and drop entries about code that no longer exists, so the file stays something every run can afford to read.
 - **Write it only at the `Knowledge:` path, and never stage or commit it** — not there and not in this working tree. If `Knowledge:` is absent, use `KNOWLEDGE.md` at the repository root and still never stage it.
 
 ## Automated review findings (CodeRabbit)
@@ -148,6 +150,14 @@ Keep it markdown, concrete and under ~120 lines. Name real files, real threads (
 ```
 
 If implementing it turns out differently — a thread already fixed on the branch, a fix that can't work as planned — do the smallest correct thing, then **update `.te/plan.md` before you commit** and list the divergence in `deviations`.
+
+## Phase: reflect
+
+The fix loop is exhausted: the runner's check or the independent reviewer still refuses the change after the last fix attempt, and the run is being stopped for a person to look at. You are resumed in the same session, so the refusal you could not answer is already in your context.
+
+1. Do not edit source, do not commit, do not push, do not touch the tracker. The change stays as it is for the developer.
+2. Ask what general rule about this project would have let a future, unrelated ticket avoid this failure — a convention, a pitfall, a test setup, a command. Record it in `KNOWLEDGE.md` as described under **Project memory**, only when it is reusable and not already written there. A failure that is specific to this ticket teaches nothing; record nothing then.
+3. Report `recorded` and the one- or two-sentence `lesson` you wrote (empty when `recorded` is false).
 
 ## Phase: publish
 

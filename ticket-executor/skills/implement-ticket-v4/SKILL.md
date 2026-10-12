@@ -1,19 +1,20 @@
 ---
 name: implement-ticket-v4
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab autonomously in two phases — implement, verify and commit locally (re-entered to fix what the runner's checks and an independent reviewer refuse), then publish the branch and a draft PR as a separate final step; records reusable lessons in the project's KNOWLEDGE.md
-version: 4.0.0
+version: 4.1.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations. Make the **smallest safe change that satisfies the Acceptance Criteria**, and preserve all unrelated behavior and all uncommitted work in the tree.
 
 ## Modes (read this first)
 
-$ARGUMENTS carries `Mode: <implement|publish>`. It decides which phase of this skill runs. Never do a later phase's work early "since you are already there" — the runner depends on the boundary between them. If `Mode:` is absent (a human invoking this by hand), run `implement`.
+$ARGUMENTS carries `Mode: <implement|publish|reflect>`. It decides which phase of this skill runs. Never do a later phase's work early "since you are already there" — the runner depends on the boundary between them. If `Mode:` is absent (a human invoking this by hand), run `implement`.
 
 | Mode | What you do | What you must NOT do |
 |---|---|---|
 | `implement` | Gather context, write the plan record, create or resume the branch, implement, verify, update `KNOWLEDGE.md`, **commit locally** | **Do NOT push. Do NOT open a PR. Do NOT write to the tracker.** Nothing may leave this machine. |
 | `publish` | Push the branch, open the draft PR/MR, link the ticket | Do not edit source. Do not commit. Do not re-verify. The code is already final. |
+| `reflect` | Record in `KNOWLEDGE.md` the lesson a run that is being stopped taught, if any | Do not edit source. Do not commit. Do not push. Do not write to the tracker. |
 
 Between the two, the runner checks the change itself (a test gate) and an independent reviewer reads the diff in a session of its own. If either refuses, you are resumed with `Mode: implement` and a numbered list of what to fix — fix exactly that, re-verify, commit locally, and stop again. Nobody reviews your plan before you code: the reviewer judges the finished diff instead.
 
@@ -64,6 +65,7 @@ $ARGUMENTS carries `Knowledge: <absolute path>` — the project's `KNOWLEDGE.md`
 - It never overrides ticket requirements, repository instructions, or current code behavior — if an entry conflicts with any of them, investigate instead of applying it blindly.
 - **Before every local commit, decide whether this pass earned a lesson.** A lesson is earned when something cost you a failed attempt or a refusal and would cost the next, unrelated ticket the same: the command that actually builds or tests this repo, a generated file that must never be hand-edited, a setup trap, a convention you only learned because it broke — and above all, **a blocker the runner's check or the reviewer handed back to you**. Skip one-off ticket requirements, naming/formatting nits, and anything about this branch or these files only.
 - **How to write it.** Re-read the file immediately before editing it — another run may have updated it since you first read it. Search for an equivalent entry first and refine it rather than adding a duplicate; add a new entry only when none fits. Write generalized guidance — when it applies, what to do or avoid, and why when that is not obvious — one bullet under a short `## <area>` heading. Never paste a review comment, a stack trace or code. If a lesson contradicts an existing entry, leave the entry and mention the conflict in `summary`. Create the file only when you have at least one lesson; most passes add nothing.
+- **Keep it short.** Every entry is one bullet of at most two lines. The runner warns when the file passes 200 lines; before adding to a file that long, first merge entries that say the same thing and drop entries about code that no longer exists, so the file stays something every run can afford to read.
 - **Write it only at the `Knowledge:` path, and never stage or commit it** — not there and not in this working tree. It is local project memory, not part of the change. If `Knowledge:` is absent, use `KNOWLEDGE.md` at the repository root and still never stage it.
 
 ## Phase: implement
@@ -123,6 +125,14 @@ Keep it markdown, concrete and under ~120 lines. Name real files and real functi
 ```
 
 If implementing it turns out differently, implement the smallest correct thing, then **update `.te/plan.md` before you commit** so the record matches what you actually did, and list the divergence in `deviations`. A stale record is worse than none.
+
+## Phase: reflect
+
+The fix loop is exhausted: the runner's check or the independent reviewer still refuses the change after the last fix attempt, and the run is being stopped for a person to look at. You are resumed in the same session, so the refusal you could not answer is already in your context.
+
+1. Do not edit source, do not commit, do not push, do not touch the tracker. The change stays as it is for the developer.
+2. Ask what general rule about this project would have let a future, unrelated ticket avoid this failure — a convention, a pitfall, a test setup, a command. Record it in `KNOWLEDGE.md` as described under **Project memory**, only when it is reusable and not already written there. A failure that is specific to this ticket teaches nothing; record nothing then.
+3. Report `recorded` and the one- or two-sentence `lesson` you wrote (empty when `recorded` is false).
 
 ## Phase: publish
 

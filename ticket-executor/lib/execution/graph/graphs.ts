@@ -1,12 +1,13 @@
 import { execSync } from "child_process";
 import { readFileSync, rmSync } from "fs";
 import path from "path";
-import { evaluatePrompt, fixPrompt, openingPrompt, publishPrompt, REVIEW_PUBLISH_PROMPT } from "./prompts";
+import { evaluatePrompt, fixPrompt, openingPrompt, publishPrompt, reflectPrompt, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
   blockedOf,
   EVALUATE_OUTPUT,
   PUBLISH_OUTPUT,
   QA_IMPLEMENT_OUTPUT,
+  REFLECT_OUTPUT,
   REVIEW_PUBLISH_OUTPUT,
   STEP_OUTPUT,
   verificationFailed,
@@ -103,19 +104,30 @@ const MAX_FIX_ATTEMPTS = 2;
 
 export type Flow = "implement" | "review" | "qa";
 
-const FLOWS: Record<Flow, { id: string; skill: string; label: string; evaluateMode: string }> = {
-  implement: { id: "implement-v4", skill: "implement-ticket-v4", label: "Implement changes", evaluateMode: "" },
-  review: { id: "fix-review-v4", skill: "fix-code-review-v4", label: "Resolve review threads", evaluateMode: "review-fix" },
-  qa: { id: "fix-qa-v4", skill: "fix-qa-v4", label: "Review QA findings & fix", evaluateMode: "qa-fix" },
+const FLOWS: Record<Flow, { id: string; legacyId: string; skill: string; label: string; evaluateMode: string }> = {
+  implement: { id: "implement-v5", legacyId: "implement-v4", skill: "implement-ticket-v4", label: "Implement changes", evaluateMode: "" },
+  review: { id: "fix-review-v5", legacyId: "fix-review-v4", skill: "fix-code-review-v4", label: "Resolve review threads", evaluateMode: "review-fix" },
+  qa: { id: "fix-qa-v5", legacyId: "fix-qa-v4", skill: "fix-qa-v4", label: "Review QA findings & fix", evaluateMode: "qa-fix" },
 };
 
-function loopGraph(flow: Flow): Graph {
-  const { id, label, evaluateMode } = FLOWS[flow];
+function standingRefusal(c: RunContext): string {
+  const check = c.channels.check;
+  if (check && check.passed === false) {
+    const issue = String((check.blockers as { issue?: string }[] | undefined)?.[0]?.issue ?? "test gate failed");
+    return `test gate: ${issue}`;
+  }
+  const blockers = Array.isArray(c.channels.evaluate?.blockers) ? c.channels.evaluate.blockers.length : 0;
+  return `review found ${blockers} blocker(s)`;
+}
+
+function loopGraph(flow: Flow, reflect: boolean): Graph {
+  const { label, evaluateMode } = FLOWS[flow];
+  const id = reflect ? FLOWS[flow].id : FLOWS[flow].legacyId;
   const review = flow === "review";
 
   const fixBound = (c: RunContext, why: string) => {
     const attempts = c.visits.fix ?? 0;
-    if (attempts >= MAX_FIX_ATTEMPTS) return { to: FAIL, reason: `${why} after ${attempts} fix attempt(s)` };
+    if (attempts >= MAX_FIX_ATTEMPTS) return { to: reflect ? "reflect" : FAIL, reason: `${why} after ${attempts} fix attempt(s)` };
     return { to: "fix", reason: why };
   };
   const committedLocally: Edge = (_c, r) => {
@@ -204,6 +216,17 @@ function loopGraph(flow: Flow): Graph {
         prompt: review ? () => REVIEW_PUBLISH_PROMPT : publishPrompt,
         output: (review ? REVIEW_PUBLISH_OUTPUT : PUBLISH_OUTPUT) as unknown as Record<string, unknown>,
       },
+      ...(reflect && {
+        reflect: {
+          kind: "agent" as const,
+          id: "reflect",
+          label: "Record lesson",
+          effects: "local" as const,
+          context: "resume" as const,
+          prompt: reflectPrompt,
+          output: REFLECT_OUTPUT as unknown as Record<string, unknown>,
+        },
+      }),
     },
     edges: {
       implement: (c, r) => {
@@ -251,6 +274,9 @@ function loopGraph(flow: Flow): Graph {
         if ((!review || committed) && !r.data.pushed) return { to: FAIL, reason: "branch was not pushed" };
         return { to: END, reason: r.data.reusedExisting ? "published (reused existing PR)" : "published" };
       },
+      ...(reflect && {
+        reflect: (c: RunContext) => ({ to: FAIL, reason: `${standingRefusal(c)} after ${c.visits.fix ?? 0} fix attempt(s)` }),
+      }),
     },
   };
 }
@@ -270,7 +296,7 @@ function flowOfSkill(skill: string): Flow | null {
 /** The graph a skill runs on, or null for a skill this engine does not run. */
 export function graphForSkill(skill: string): Graph | null {
   const flow = flowOfSkill(skill);
-  return flow ? loopGraph(flow) : null;
+  return flow ? loopGraph(flow, true) : null;
 }
 
 /** A retired graph id (the one-shot and plan-gated shapes) maps to its flow by
@@ -284,7 +310,8 @@ function flowOfGraphId(graphId: string): Flow {
 /** Resolve a graph by the id persisted on the Run, so a run resumed after a
  *  restart is driven by the shape it started on. */
 export function graphById(graphId: string): Graph {
-  return loopGraph(flowOfGraphId(graphId));
+  const flow = flowOfGraphId(graphId);
+  return loopGraph(flow, graphId === FLOWS[flow].id);
 }
 
 /** The skill a graph id runs, for a row that never recorded its skill. */

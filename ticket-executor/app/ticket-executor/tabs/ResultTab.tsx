@@ -8,6 +8,7 @@ import { COLORS, FONT, card, pill, ringBorder, sectionCaption, tintedCard } from
 import type { ExecView, ResultSection } from "../types";
 import { formatCost, formatTokenCount } from "../helpers";
 import { useBoltsContext } from "../../BoltsContext";
+import KnowledgeChangeCard from "../KnowledgeChangeCard";
 
 type Props = {
   exec: ExecView;
@@ -199,6 +200,7 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
       )}
       <NoteList caption="Deviations from the approved plan" items={deviations} />
       <NoteList caption="Assumptions the agent made" items={assumptions} />
+      <KnowledgeChangeCard change={ex.knowledgeChange} />
       {sections.map((rs) => (
         <div key={rs.key}>
           {showSectionHeader && (

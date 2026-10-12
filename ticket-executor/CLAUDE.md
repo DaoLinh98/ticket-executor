@@ -1,19 +1,20 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Developer contract for this repo. `README.md` is the operator guide.
+`UI-STYLEGUIDE.md` binds every change under `app/`.
 
 @AGENTS.md
 
 ## What this app is
 
-A local Next.js web UI that spawns the **Claude Code CLI** against a ticket: pick a
-work item, hit Implement, and the engine creates a branch in a real clone, runs
-`claude` non-interactively with `--dangerously-skip-permissions`, commits, pushes and
-opens the PR — streaming log, steps and token/cost back to the browser. Runs cost
-money and touch real repositories; guards exist to fail *before* a spawn, never after.
-
-`README.md` is the operator guide (setup, MCP, System Check, troubleshooting). This
-file is the developer contract. `UI-STYLEGUIDE.md` binds any change under `app/`.
+A local Next.js UI that spawns the **Claude Code CLI** against a ticket: pick a work
+item, hit Implement, and the engine branches a real clone, runs `claude` with
+`--dangerously-skip-permissions`, commits, pushes and opens a draft PR — streaming
+log, steps and cost to the browser. **Flow Runner** runs a whole sprint unattended: an
+agent triages the iteration, the harness lays it on two schedules (an implement queue
+and a release calendar) and a server-side scheduler acts on both with the browser
+closed. Runs cost money and touch real repositories, so guards fail *before* a spawn,
+never after.
 
 ## Commands
 
@@ -21,163 +22,237 @@ file is the developer contract. `UI-STYLEGUIDE.md` binds any change under `app/`
 npm run dev                 # http://localhost:3000 (Turbopack)
 npm run build && npm start  # production build
 npm run test                # node --test over tests/*.test.ts (TS via tests/register.mjs)
-node --import ./tests/register.mjs --test tests/graph.test.ts   # a single test file
 npx tsc --noEmit            # type check — there is no lint script
 npx prisma migrate dev      # apply/create migrations
 npx prisma generate         # after any schema.prisma change
 ```
 
-Next is pinned at `16.2.10` / React `19.2.4`: read `node_modules/next/dist/docs/`
-before writing framework code (middleware is `proxy.ts`, not `middleware.ts`).
+**A `schema.prisma` change is unfinished until migrated and generated** — a column
+only in the schema file is a 500 on the first page that selects it, and a hand-written
+migration backfills the rows already in the table. Next is pinned at `16.2.10` /
+React `19.2.4`: read `node_modules/next/dist/docs/` before writing framework code
+(middleware is `proxy.ts`).
 
 ## Where code lives
 
-- **Pages / shell** — every authenticated page is a route under `app/(app)/`,
-  sharing one `app/(app)/layout.tsx` (persistent `AppReactor` backdrop + `Sidebar`):
-  Home, `projects/`, `ticket-execution/`, `dashboard/`, `settings/`, `system-check/`,
-  `guide/`. `/login` stays outside the group. Cross-page nav belongs in the
-  `Sidebar`; the reactor is mounted once in the layout — pages must not render their
-  own `<Reactor>`. Every page header is `PageHeading` + `ProviderBadge`.
-- **Ticket Execution UI** — `app/TicketExecutor.tsx` is the *only* stateful screen
-  component: it owns all Ticket-Execution state (selected project + sprint), fetching,
-  SSE/polling and derived values; it reads settings but never edits them. Everything
-  under `app/ticket-executor/` is presentational (props in, JSX out) — `AppHeader`,
-  `TicketSidebar`, `TicketDetailHeader`, `tabs/*Tab`, the modals, plus `types.ts`,
-  `constants.ts`, `helpers.tsx`. New state or fetching goes in the container; new
-  markup in a child. Settings is a page, not a modal.
-- **Execution engine** — `lib/executionStore.ts` is a facade that only re-exports;
-  the implementation is `lib/execution/`: `graph/{types,schemas,graphs,prompts,exec,drive,persist}.ts`,
-  `runner.ts` (lifecycle, worktrees, admission, gate resolution, crash recovery),
-  `admission.ts` (the pure "may this run start" rule — no Prisma import, so it is
-  testable without a database), `claudeCli.ts` (spawn + NDJSON parsing +
-  `--json-schema`), `git.ts`, `queries.ts` (read models + dashboard),
-  `knowledge.ts` (the pure rules for what counts as a lesson) + `knowledgeStore.ts`
-  (its reads/writes), `format.ts`, `store.ts`.
-  **API routes import from `lib/executionStore` only.**
-- **Provider access** — `lib/tickets.ts` dispatches on `ProviderId`
-  (`azure-devops`, `github`, `jira`, `gitlab` — `lib/providers.ts`);
-  `lib/ado.ts` / `lib/github.ts` are the clients, and every credential is
-  resolved through `lib/providerCredentials.ts`.
-- **Auth** — one shared password (`APP_ACCESS_PASSWORD`), no user accounts.
-  `lib/auth.ts` is the HMAC cookie, `proxy.ts` is the gate (Next 16 renamed
-  Middleware → Proxy) and `/login` + `/api/auth/*` are the only public paths. An
-  empty password disables the gate outright, which is the local-dev default.
-- **Boot** — `instrumentation.ts` installs the bundled `skills/` into
-  `~/.claude/skills` and runs `recoverInterruptedRuns()` on every server start.
+- **Pages / shell** — `app/(app)/*` under one layout (`AppReactor` + `Sidebar`);
+  `/login` sits outside the group and pages never render their own `<Reactor>`. A page
+  header is exactly `PageHeading` + `NotificationCenter` + `ProviderBadge`; the page's
+  own controls go on a `PageToolbar` between the header and `<main>` — never inside
+  `<main>`, which clips open dropdowns.
+- **Ticket Execution UI** — `app/TicketExecutor.tsx` is the only stateful screen
+  component (state, fetching, SSE/polling); everything under `app/ticket-executor/` is
+  presentational. New state goes in the container, new markup in a child.
+- **Execution engine** — `lib/executionStore.ts` is a re-export facade over
+  `lib/execution/` (`graph/*`, `runner.ts`, `admission.ts`, `claudeCli.ts`, `git.ts`,
+  `queries.ts`, `triage.ts`, `planStore.ts`, `release.ts`,
+  `scheduler.ts`). **API routes import from `lib/executionStore` only.**
+- **Pure rule modules** — `admission.ts`, `identity.ts`, `sprintPlan.ts`,
+  `notifications.ts`, `execution/loopMetrics.ts`: no Prisma, no provider, covered by
+  `tests/*.test.ts` in ~1s. A rule the machine acts on unattended belongs here, not in
+  a route or a component.
+- **Provider access** — `lib/tickets.ts` dispatches on `ProviderId`; `lib/ado.ts` /
+  `lib/github.ts` are the clients; credentials resolve via
+  `lib/providerCredentials.ts`.
+- **Auth** — one shared password (`APP_ACCESS_PASSWORD`), no accounts: `lib/auth.ts`
+  is the HMAC cookie, `proxy.ts` the gate, `/login` + `/api/auth/*` the only public
+  paths. An empty password disables the gate (the local-dev default).
+- **Boot and push** — `instrumentation.ts` installs bundled `skills/`, runs
+  `recoverInterruptedRuns()`, then starts the scheduler and the push watcher
+  (`lib/push.ts`, `lib/pushWatcher.ts`, `app/api/push/*`, `public/sw.js`,
+  `app/manifest.ts` — iOS grants push only to a Home-Screen install of a
+  `display: "standalone"` manifest).
 
 ## Engine invariants
 
-Six rules bind any change under `lib/execution/`.
+Nine rules bind any change under `lib/execution/`.
 
-1. **Every agent node declares a JSON Schema and edges route only on the validated
-   `structured_output`.** Never parse prose or scrape the log to infer state.
+1. **Every agent node declares a JSON Schema; edges route only on the validated
+   `structured_output`.** Never parse prose or scrape the log.
 2. **An `external` node is never on a cycle.** Anything leaving the machine (push,
-   PR, tracker writes) is a leaf that runs once — a retry is a duplicate PR.
-3. **Admission control belongs to `startRun()`, not to a route.** Which skill runs
-   (and therefore whether the run has a human gate) is resolved server-side from
-   `Setting` by `resolveSkill()`, and the "may this start" check is committed in the
-   same transaction as the `Run` insert under a Postgres advisory lock. A route that
-   re-implements any of it becomes a second place to drift — and drift is what lets
-   two agents write to one working tree.
-4. **A documented guard must be wired and observable.** No ceiling (hop limit, visit
-   cap) that is unreachable in the default configuration, and no policy that degrades
-   silently — a node asking for `context: "resume"` with no session to resume into
-   says so in the run log instead of quietly running fresh. The spend ceiling that
-   used to live here was deleted rather than left unenforced; don't reintroduce one
-   without wiring it.
-5. **A node that judges another node's work runs with `context: "fresh"`, gets its
-   brief from a versioned skill, and anything that changes a graph's shape is encoded
-   in its id.** `evaluate` exists to be able to disagree with `implement`; resuming
-   that session would make it confirm what it just wrote. Because
-   `Setting.evaluateBeforePublish` adds nodes rather than changing their content, it
-   becomes part of `graphId` (`implement-v3-eval`) — a run parked at a gate finishes
-   on the shape it started on, whatever the setting says by then. Future
-   shape-changing options go through `GraphOptions` the same way. A node invoking a
-   setting-only skill belongs in `OPTIONAL_SKILLS` (`lib/skillPack.ts`): bundled,
-   version-checked, warned about when absent, and a hard **admission** refusal when
-   the setting is on without it. Never let a run reach a node whose skill is missing —
-   by then a plan is approved and code is committed.
-6. **Never re-derive state the harness already owns.** The reason a run failed is the
-   `reason` on the edge that returned `FAIL` (and its `Transition` row). Whether a node
-   is a gate is its `kind`, never its id. What a node produced is `channels` /
-   `Step.output`. Every regex over a run's own log is the bug the graph runtime was
-   built to delete, wearing a new hat.
+   PR, tracker write) is a leaf that runs once — a retry is a duplicate PR.
+3. **Admission control belongs to `startRun()`, not to a route.** `resolveSkill()`
+   picks the skill server-side and the may-it-start check commits in the same
+   transaction as the `Run` insert, under a Postgres advisory lock.
+4. **A documented guard must be wired and observable.** No unreachable ceiling and no
+   silent degradation — a `context: "resume"` with no session says so in the log.
+5. **A judging node runs `context: "fresh"`, and anything changing a graph's shape is
+   encoded in its id** (`implement-v5`), so a run resumed after a restart finishes on
+   the shape it started on — `graphById()` still serves the `-v4` shape (no `reflect`)
+   to a run that began on it. Skill names are not graph ids and stay `*-v4`. Every skill a graph invokes — its own and
+   `review-changes-v4` — is checked by `skillProblem()` in `startRun()`: a missing or
+   older-than-bundled copy is an **admission** refusal, never a mid-run failure.
+6. **Never re-derive state the harness owns.** Failure reason is the edge's `reason`
+   plus its `Transition`; what a node is comes from its `kind`, never the id; output
+   is `channels` / `Step.output`. A regex over a run's own log is always the bug.
+7. **Every run is one closed loop, and nobody approves a plan.** All three flows
+   (`implement-ticket-v4`, `fix-code-review-v4`, `fix-qa-v4`) walk
+   `implement → check → evaluate → fix → publish`: a zero-token test gate, then a
+   fresh reviewer, with `fix` bounded by `MAX_FIX_ATTEMPTS`. `.te/plan.md` is a record,
+   not a gate. The outer loop is the project's `KNOWLEDGE.md`, read and written by
+   absolute path in the **Root repo** (`knowledgeFile()`), never in the worktree, and
+   never committed.
+8. **An exhausted loop leaves a lesson, then fails.** When `fix` hits
+   `MAX_FIX_ATTEMPTS` and check/evaluate still refuse, the edge goes to `reflect`
+   (`effects: "local"`, `context: "resume"`, `REFLECT_OUTPUT`), whose only edge is
+   FAIL with the standing refusal as reason. It edits no code and never commits or
+   pushes; a turn error, quota park or cancel never reaches it.
+9. **`KNOWLEDGE.md` is audited, not trusted.** `LiveRun.knowledgeAtStart` holds the
+   file's content at spawn; `finish()` saves the line diff (`knowledgeChange()`,
+   `graph/knowledge.ts`) as Artifact kind `knowledge`, shown on the run's Result or
+   Execution tab, and warns past `KNOWLEDGE_MAX_LINES` (200). Skills keep entries to
+   two lines and prune before growing past that.
 
-**Run `npm run test` after any change to a graph, an edge, a node contract or
-`resolveSkill()`.** The suite asserts the whole routing table plus the
-`external`-is-a-leaf invariant across the graphs. Edges are pure synchronous
-functions — about a second, zero tokens.
+**Run `npm run test` after touching a graph, an edge, a node contract,
+`resolveSkill()`, or any pure rule module.**
 
 ## Credentials — one source, no fallbacks
 
-This app is standalone: it holds its own credentials and talks to the provider
-itself. Two independent things authenticate, and conflating them is the mistake
-this section exists to prevent.
+- **Provider auth** is `ProviderCredential` (org URL + PAT, one row per org, encrypted
+  by `lib/crypto.ts`, never returned to a page), always read via `resolveCredential()`.
+- **Who the developer is** lives on that same row (`identityEmail` / `identityName`),
+  not on `Setting` — the same person is a different account per org. `isMine()` /
+  `mineOnly()` (`lib/identity.ts`) are the only answer, and **an empty identity means
+  do not filter, with `isMine` returning false** for every ticket.
+- **The Claude CLI** uses the machine's own `~/.claude` login; the app writes no
+  credential file and only adds `IS_SANDBOX=1` when running as uid 0.
+- The PAT also reaches the agent through the generated MCP config (`lib/mcp.ts`): one
+  file per run under `tmpdir()/te-mcp`, deleted when the turn ends, outside the repo
+  so a run's own `git add` cannot pick it up.
 
-- **The provider** (reading tickets, writing status, resolving PRs) uses
-  `ProviderCredential` — org URL + PAT, one row per `ProviderId`, PAT encrypted at
-  rest by `lib/crypto.ts` and never returned to a page. Every consumer goes through
-  `resolveCredential()` in `lib/providerCredentials.ts`; a call site that reads the
-  table directly is a second place to get the organization wrong.
-- **The Claude CLI** uses the machine's own `~/.claude` login. The app never writes
-  a credential file and never relocates the config root; the only thing it adds to
-  the spawn environment is `IS_SANDBOX=1` when running as uid 0, which the CLI
-  requires before it will accept `--dangerously-skip-permissions`. A run therefore
-  spends whatever account the machine is logged in as.
+## Sprint plan and automation
 
-The same PAT reaches the agent a second way, through the generated MCP config
-(`lib/mcp.ts`, `Setting.manageMcp`): one file per run under `tmpdir()/te-mcp`,
-holding the token in clear text and deleted the moment the turn ends (`releaseMcp`,
-plus a stale sweep on every write). It lives outside the repo on purpose — inside a
-worktree the run's own `git add` could pick it up.
+Binds `lib/execution/{triage,planStore,release,scheduler}.ts` and `lib/sprintPlan.ts`.
+
+1. **Implementing and releasing are two schedules; never collapse them.**
+   `implementOrder` is a queue worked back to back; `releaseDay` is a calendar paced by
+   `pointsPerDay` (**points**, not rows). A run finishing does not move a work item.
+2. **Every PR this app opens is a draft, and the harness publishes it, not the skill.**
+   `DRAFT_RULE` is carried by `publishPrompt()`, the only prompt of a node that opens
+   one; `isDraft` is a required contract field, never scraped.
+3. **Release is not a node** — it happens days later and may not hold a worktree or a
+   slot. Its three writes are three columns (`prPublished` / `reviewersSet` /
+   `statusMoved`), each re-reading current state; `releasedAt` is stamped only on a
+   complete release. This is the one retryable outward action.
+4. **The scheduler owns no policy.** `tick()` only calls `startRun()` and
+   `releasePlannedTicket()`, takes an advisory lock per tick, and writes an
+   `AutomationEvent` for **every** decision including "do nothing". A `draft` plan is
+   never scheduled.
+5. **Allocation is arithmetic, not an agent** — `buildPlan()` is pure and tested. The
+   agent's judgement enters only through `triage-sprint-v4`'s JSON contract
+   (`suggestedPoints`, `workOrder`, `needsClarification`); triage writes nothing and is
+   not a Run.
+6. **A sprint read is not the Backlog tab.** `deliverablesOnly()` drops hierarchy types
+   (Azure DevOps only — a GitHub `enhancement` is real work) and every
+   `/api/my-sprint*` route applies it **before** `mineOnly()`.
+7. **A sprint is what the developer carried, not what still bears their name.**
+   `lib/sprintClaim.ts` classifies `mine` / `handed-off` / `dropped` from the app's own
+   record (plan progress, `Run`, PR), never the tracker's revision history. So:
+   `savePlan()` deletes nothing and never re-dates a settled row; `handed-off` is
+   delivered and costs no capacity while `dropped` counts in nothing; `buildPlan()` and
+   `startNextTicket()` exclude non-`mine` but `dueForRelease()` deliberately does not;
+   `refreshClaims()` runs first each tick, cancels the run of a ticket that changed
+   hands, writes only `claim`/`assigneeNow`, and refuses on an empty sprint read, a
+   foreign `org` or a changed identity.
+
+## The notification bell
+
+`lib/notifications.ts` owns the merge; `lib/notificationSources.ts` owns the
+server-side sources, so the push watcher asks the same question with no browser.
+
+1. **No notification carries a human's words** — the ticket and what happened, only.
+2. **Read state is keyed `kind::ticketId::refId`** plus a fingerprint, so a changed
+   notification is unread again, and **only `severity: "action"` reaches the badge**.
+3. **A new source must be flat in cost** — nothing costing a round-trip per ticket
+   goes on this timer.
+4. **The lock screen is the same notification set**, built by `lib/pushWatcher.ts` from
+   the same two calls and deduped through `PushDelivery`; nothing else may push. It is
+   not on the scheduler tick, costs nothing with no subscriber or no VAPID keys, and
+   *seeds* the standing backlog as delivered on its first tick (`__seeded__`). There is
+   no "stale draft" notification and none for a degraded provider read, which stays the
+   dropdown's banner.
 
 ## Multi-provider support — mandatory
 
-Any change touching ticket/provider logic (API routes, `lib/tickets.ts`, the clients,
-review polling, execution flow, provider-tied UI copy) must branch on `ProviderId` the
-way existing code does (`loadTickets`, `loadReviewsSummary`) and keep unimplemented
-providers degrading gracefully (empty / "not connected") rather than throwing. Stub a
-provider following the existing pattern instead of skipping the abstraction.
+Any change touching ticket/provider logic branches on `ProviderId` the way
+`loadTickets` / `loadReviewsSummary` do, and unimplemented providers degrade
+gracefully (empty / "not connected") rather than throwing.
+
+## Redis cache on every load — mandatory
+
+**Every read that backs a load API goes through `cached()` (`lib/redis.ts`).** A new
+GET route, or a new provider/DB read behind an existing one, is unfinished until it does.
+
+1. **Provider reads** (Azure DevOps, GitHub, …) are cached in the provider module, keyed
+   under that module's prefix (`ADO_CACHE_PREFIX` = `ado:`, `GITHUB_CACHE_PREFIX` = `gh:`)
+   and scoped by org/repo, with the TTL taken from that module's `TTL` table.
+2. **Heavy DB reads** (aggregates, scans, reports) use `DB_CACHE_PREFIX` with a short TTL,
+   like `dashboardMetrics`.
+3. **Every write drops what it can stale** (`invalidateWorkItems`, `invalidatePullRequests`,
+   `invalidateSetting`, …) before returning, so the user never sees their own change
+   missing. A new write path adds its invalidation in the same change.
+4. **Only JSON-safe values**, and **never cache a failure**: a `load()` that would return a
+   placeholder (`[]`, `null`) for an error throws inside `cached()` and is caught outside.
+5. **Redis stays optional** — a miss or a down Redis is never an error.
+6. **Exempt, by design:** live execution state (runs, steps, SSE streams), watermark /
+   delta polls (notification activity), the System Check probe, the fresh re-read after a
+   failed write (`getWorkItemState`), and local-only reads (files, in-memory lists).
+
+## Mobile first — mandatory
+
+**The phone is the primary target; the desktop is the same screen with more room.**
+This app is driven from a phone as often as from the machine it runs on, so a feature
+that only works at 1440px is unfinished. Decide the 390px layout before the wide one,
+and check every UI change at **390 × 844** as well as at desktop width.
+
+1. **One breakpoint, `max-width: 900px`**, whose JS twin is `MOBILE_QUERY`
+   (`app/(app)/MobileNav.tsx`) — change both or neither.
+2. **Responsive rules live in CSS**, in the one media block at the foot of
+   `app/globals.css`; components only contribute a `te-*` class. `useIsMobile()` is for
+   the drawer only, never for choosing a layout.
+3. **Tap targets are at least 40px, and nothing important hides behind `:hover`.**
+4. **`var(--te-app-h)`, never `100vh`**; anything touching an edge respects
+   `env(safe-area-inset-*)` (enabled by `viewportFit: "cover"`).
+5. **State that matters lives server-side** and is re-read on focus — `localStorage`
+   diverges silently between the phone and the laptop.
 
 ## UI changes — mandatory
 
-Read `UI-STYLEGUIDE.md` and `lib/ui.ts` in full before writing or editing any
-React/CSS under `app/` — not from memory of a prior session. One design system
-(`COLORS`, `FONT`, `ringBorder`, `clipCorner`, `card`, `tintedCard`, `modalShellStyle`,
-`logoText`, `dropdownPanelStyle`, `pill`, `ctaButtonStyle`). Before calling a UI task
-done:
-
-1. Does an existing helper already produce this shape? Use it rather than a fresh
-   inline style object.
-2. Every colour from `COLORS`, every size from `FONT`, corner cuts from
-   `clipCorner(6|7|8)`, ring durations inside the existing ~1.6s–5.5s range.
-3. `COLORS.*` are `var(--te-…)` **CSS values, not hex**: no string concatenation (use
-   `color-mix(...)`), no `new THREE.Color(...)` (use `resolveColor`), and SVG
-   `fill`/`stroke` must go through `style={{ … }}`. A new token is added to
-   `app/globals.css`, never as a raw hex in a component.
-4. Need a variant a helper lacks? Extend that helper's `opts`/union in `lib/ui.ts` —
-   never hand-roll a one-off in a component. If you wrote a style object near-identical
-   to one in another component, consolidate it into `lib/ui.ts` instead.
-5. Combining `ringBorder(...)` with another animation uses `extraAnimation` /
-   `extraAnimationDelay` — spreading a second `animation` key silently kills the spin.
-6. Re-run `npx tsc --noEmit` and view the changed screen where practical.
-7. Anything genuinely new updates `lib/ui.ts` and the `UI-STYLEGUIDE.md` row in the
-   same change.
+Read `UI-STYLEGUIDE.md` and `lib/ui.ts` in full before editing anything under `app/` —
+not from memory of a prior session. Reuse a helper before writing an inline style,
+extend a helper rather than forking it, take every colour from `COLORS` and every size
+from `FONT`, and add a new token to `app/globals.css` rather than a hex to a component.
+Anything genuinely new updates `lib/ui.ts` **and** the `UI-STYLEGUIDE.md` table in the
+same change, then `npx tsc --noEmit` and look at the screen.
 
 ## Conventions that bite
 
 - **Root repo is per ticket, not configuration.** A run's cwd is exactly the ticket's
-  Root repo value (the project name is not appended); it is remembered per project in
-  `RootRepoProjectMap` and re-validated server-side by
-  `POST /api/tickets/[id]/implement` before any spawn.
-- **New preflight checks go in `lib/preflight.ts`** (read-only, token-free), never in
-  a route. It has two entry points and they are not interchangeable: `runPreflight()`
-  answers `GET /api/preflight` (the System Check page), while `validateRootRepo()` +
-  `validateAgentAccess()` are what `POST /api/tickets/[id]/implement` calls to refuse
-  a run *before* the spawn.
-- **Host and container must not run at once.** Both can share one Postgres, but
-  `recoverInterruptedRuns()` adopts any `running` row the current process does not hold
-  in memory, so a second copy re-spawns `claude` on the same worktree.
+  Root repo value, remembered in `RootRepoProjectMap` and re-validated server-side
+  before any spawn.
+- **New preflight checks go in `lib/preflight.ts`**, never in a route:
+  `runPreflight()` answers the System Check page, `validateRootRepo()` +
+  `validateAgentAccess()` refuse a run before the spawn.
+- **A finished run no longer moves the work item** — that lives in
+  `lib/execution/release.ts`, server-side, on the release day. Nothing in `app/` may
+  write a status on a run completing.
+- **Host and container must not run at once.** `recoverInterruptedRuns()` adopts any
+  `running` row this process does not hold, so a second copy re-spawns `claude` on the
+  same worktree; the scheduler is safe only because every tick locks first.
+- **`instrumentation.ts` starts the scheduler after the recovery sweep**, never before.
+  The push watcher has no such ordering constraint — it only reads.
+- **There is a second way to spawn `claude`, and it is deliberately not a run.**
+  `lib/terminal.ts` (Open Terminal) and `lib/ask.ts` (the Ask Claude tab, how a phone
+  drives it) start the CLI in the Root repo with full permissions and the machine's own
+  MCP servers — no graph, contract, worktree, branch, PR, `Run` row or admission check;
+  the moment one needs a schema or a gate it is a run and belongs in the engine.
+  `validateRootRepo()` still validates the path, `lib/ask.ts` allows one live session
+  per Root repo (it runs in the checkout itself), and an Ask transcript is in-process
+  only.
 - **No spend ceiling by design.** Watch cost on the Dashboard; Cancel stops a run.
-- There is no lint script and no test runner beyond `node --test`. Don't add tooling
-  implicitly; ask first.
+- **The Dashboard measures the loop, not just its cost.** LOOP PASS, REVIEW ESCAPES
+  (`reviewEscapes()`: an evaluator-passed implement run later followed by a
+  review- or QA-fix run on the same ticket), TEST GATE (check refusals) and FAILURE
+  LESSONS (`reflect` steps with `recorded: true`) come from `Step.output`, never the log.
+- No lint script and no test runner beyond `node --test`; don't add tooling
+  implicitly — ask first.
