@@ -15,22 +15,22 @@
  * developer's own machine, whose home directory persists. It is wrong in a
  * container: `~/.claude` is recreated with the container, so a fresh deploy
  * starts with no skills and the first run fails on
- * `Unknown command: /implement-ticket-v3`.
+ * `Unknown command: /implement-ticket-v4`.
  *
- * Idempotent and non-destructive. `installSkill()` without `force` refuses to
- * overwrite a copy whose contents differ, so a skill somebody deliberately
- * edited in place survives a restart — this seeds an empty directory, it does
- * not enforce the bundle.
+ * Idempotent. A copy older than the bundle is replaced — it answers an older
+ * contract, and startRun() refuses to run it — while a copy of the same version
+ * whose contents differ is left alone, so a skill somebody deliberately edited
+ * in place survives a restart.
  *
  * Never fatal. A read-only home directory is a reason for System Check to show
  * the skills as missing, not a reason for the server to refuse to boot.
  */
 async function installBundledSkills() {
-  const { BUNDLED_SKILLS, installSkill } = await import("./lib/skillPack");
+  const { installSkill, skillStates } = await import("./lib/skillPack");
   const installed: string[] = [];
-  for (const name of BUNDLED_SKILLS) {
+  for (const { name, status } of skillStates()) {
     try {
-      const outcome = installSkill(name);
+      const outcome = installSkill(name, { force: status === "outdated" });
       if (outcome.ok && !outcome.detail.startsWith("Already")) installed.push(name);
     } catch {
       /* reported by System Check, which reads the same state */

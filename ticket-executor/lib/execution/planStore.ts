@@ -1,7 +1,6 @@
 // Reads and writes for the sprint plan — the durable half of `lib/sprintPlan.ts`.
 //
-// The split is the same one `knowledge.ts` / `knowledgeStore.ts` already make:
-// the arithmetic is a pure module with a test suite, this file is the part that
+// The arithmetic is a pure module with a test suite, this file is the part that
 // touches Postgres. The scheduler reads what is written here; nothing recomputes
 // a release day at read time, because a plan that silently re-dates itself when
 // the sprint's data shifts is a plan nobody can be held to.

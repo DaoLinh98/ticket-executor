@@ -57,7 +57,7 @@ test("the read key separates kinds and occurrences on one ticket", () => {
   const [run] = fromWaitingRuns([{ ticketId: "101", runId: "r1" }]);
   assert.notEqual(notificationKey(rv), notificationKey(run));
 
-  // Reading the review comment must not mark the parked plan read — this is the
+  // Reading the review comment must not mark the held run read — this is the
   // exact collision the ticket-only key used to have.
   const read = markRead({}, rv, "2026-09-06T11:00:00Z");
   assert.equal(isUnread(rv, read), false);
@@ -121,10 +121,10 @@ test("reading an action drops the badge but not the list", () => {
 
 // ---- sources ----
 
-test("a parked plan is a standing condition with no timestamp", () => {
+test("a held run is a standing condition with no timestamp", () => {
   const [n] = fromWaitingRuns([{ ticketId: "101", runId: "r1" }]);
   assert.equal(n.severity, "action");
-  assert.equal(n.tab, "plan");
+  assert.equal(n.tab, "execution");
   assert.equal(n.at, "");
 });
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { startRun } from "@/lib/executionStore";
+import { IMPLEMENT_SKILL, startRun } from "@/lib/executionStore";
 import { prisma } from "@/lib/prisma";
 import { validateAgentAccess, validateRootRepo } from "@/lib/preflight";
 import { resolveCredential } from "@/lib/providerCredentials";
@@ -34,11 +34,9 @@ export async function POST(
   const { id } = await params;
   try {
     const body = await req.json().catch(() => ({}));
-    // What the client *asks* for. Which skill actually runs — and therefore
-    // whether the run has a plan gate — is resolved inside startRun() from the
-    // stored settings; see resolveSkill(). The route does not decide run shape.
-    const requestedSkill = String(body.skillName || "implement-ticket-v3");
-    const skillExplicit = body.skillExplicit === true;
+    // What the client *asks* for. Whether the engine runs it is decided inside
+    // startRun(); see resolveSkill(). The route does not decide run shape.
+    const requestedSkill = String(body.skillName || IMPLEMENT_SKILL);
     const project = String(body.projectName || "");
     const rootRepo = String(body.rootRepo || "");
     const prUrl = typeof body.prUrl === "string" ? body.prUrl : undefined;
@@ -76,7 +74,6 @@ export async function POST(
       ticketId: id,
       ticketUrl,
       requestedSkill,
-      skillExplicit,
       project,
       rootRepo,
       prUrl,

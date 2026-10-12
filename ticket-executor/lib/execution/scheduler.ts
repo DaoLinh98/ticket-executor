@@ -29,7 +29,7 @@ import { resolveCredential } from "../providerCredentials";
 import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadReviewsSummary, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
-import { QA_FIX_SKILL } from "./graph/graphs";
+import { IMPLEMENT_SKILL, QA_FIX_SKILL, REVIEW_FIX_SKILL } from "./graph/graphs";
 import { isFixingQa } from "../ticketLifecycle";
 import { openQaDraft } from "./qaReply";
 import { dueForRelease, releasePlannedTicket } from "./release";
@@ -387,11 +387,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
     provider: plan.provider,
     project: next.project || plan.project,
     rootRepo,
-    requestedSkill: "implement-ticket-v2",
-    // The plan *is* the human approval. A scheduled run must not park at a plan
-    // gate at two in the morning waiting for somebody who is asleep — the whole
-    // sprint was reviewed and activated before any of this started.
-    skillExplicit: true,
+    requestedSkill: IMPLEMENT_SKILL,
   });
 
   if (!result.ok) {
@@ -601,12 +597,7 @@ export async function startReviewRun(
     project: item.project || item.plan.project,
     rootRepo,
     prUrl: item.prUrl,
-    requestedSkill: "fix-code-review-v2",
-    // The same reasoning as the implement queue: the plan is the human approval,
-    // and a scheduled run must not park at a plan gate overnight. Without this,
-    // `resolveSkill()` reads `Setting.autoResolveCodeReview` and can route this
-    // into the gated v3 flow, where it would wait for somebody who is asleep.
-    skillExplicit: true,
+    requestedSkill: REVIEW_FIX_SKILL,
   });
   if (!result.ok) {
     await logAutomation({
@@ -672,7 +663,6 @@ export async function startQaFix(plannedId: string): Promise<{ ok: boolean; erro
     project: item.project || item.plan.project,
     rootRepo,
     requestedSkill: QA_FIX_SKILL,
-    skillExplicit: true,
   });
   if (!result.ok) {
     await logAutomation({

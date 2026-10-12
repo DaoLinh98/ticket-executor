@@ -32,7 +32,6 @@ type Props = {
   tabStyle: (name: string, enabled: boolean) => CSSProperties;
   execEnabled: boolean;
   planEnabled: boolean;
-  planNeedsReview: boolean;
   resultEnabled: boolean;
   unresolvedCount: number;
   // CTA
@@ -46,7 +45,7 @@ type Props = {
 export default function TicketDetailHeader({
   ticket: t, effStatus, projectName, state: st, execPillStyle, onOpenTicketLink,
   statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus, onBack,
-  tab, setTab, tabStyle, execEnabled, planEnabled, planNeedsReview, resultEnabled, unresolvedCount, action, gated, secondaryAction,
+  tab, setTab, tabStyle, execEnabled, planEnabled, resultEnabled, unresolvedCount, action, gated, secondaryAction,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   // zIndex 2, not 1: the scrolling detail pane below is a sibling that also creates
@@ -133,10 +132,7 @@ export default function TicketDetailHeader({
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("overview"); }} style={tabStyle("overview", true)}>Overview</button>
         <button onClick={(e) => { if (execEnabled) { fireBoltFromEvent(e); setTab("execution"); } }} style={tabStyle("execution", execEnabled)}>Execution</button>
         {planEnabled && (
-          <button onClick={(e) => { fireBoltFromEvent(e); setTab("plan"); }} style={{ ...tabStyle("plan", true), display: "flex", alignItems: "center", gap: "6px" }}>
-            Plan
-            {planNeedsReview && <span style={{ ...pill({ color: "var(--te-on-accent)", background: COLORS.indigo, size: "xs", weight: 700 }), padding: "1px 6px" }}>review</span>}
-          </button>
+          <button onClick={(e) => { fireBoltFromEvent(e); setTab("plan"); }} style={tabStyle("plan", true)}>Plan</button>
         )}
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("resolve-review"); }} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
           Resolve Review

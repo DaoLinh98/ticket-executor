@@ -1,3 +1,4 @@
+import path from "path";
 import type { RunContext } from "./types";
 
 // The ticket is addressed by its provider URL when we know it: a URL names the
@@ -31,15 +32,23 @@ export function invokeSkill(c: RunContext, mode: string): string {
 }
 
 /**
- * The opening prompt of a run, with what earlier runs learned about this repo
- * appended.
+ * The project's memory: `KNOWLEDGE.md` in the Root repo, never in the worktree.
  *
- * Only the *first* turn gets it. A `resume` node is already carrying the block
- * in its transcript, and re-stating it would pay for the same lines twice while
- * inviting the agent to treat a repetition as new emphasis. `publish` is fresh
- * but is not deciding anything a repo convention bears on — it pushes a branch
- * that is already final.
+ * An isolated run's worktree is deleted when the run finishes, so a lesson
+ * written there would die with it — and the file is local-only by design, never
+ * committed, so git would not carry it back either. Naming the Root repo copy
+ * by absolute path is what lets a lesson outlive the run that learned it. Two
+ * runs may share the file; the skills re-read it right before editing.
  */
+export function knowledgeFile(rootRepo: string): string {
+  return rootRepo ? path.join(rootRepo, "KNOWLEDGE.md") : "";
+}
+
+function withKnowledge(c: RunContext, prompt: string): string {
+  const file = knowledgeFile(c.rootRepo);
+  return file ? `${prompt} - Knowledge: ${file}` : prompt;
+}
+
 /**
  * Why a review run has to check out a branch that already exists.
  *
@@ -64,25 +73,13 @@ export const REVIEW_BRANCH_RULE =
   "further. Every read, commit and push in this run happens on that branch: never create a branch, and never commit " +
   "on a detached HEAD.\n";
 
-export function openingPrompt(
-  c: RunContext,
-  mode: string,
-  opts: { opensPr?: boolean; review?: boolean } = {}
-): string {
-  // The one-shot implement flow opens its pull request inside this same node —
-  // there is no separate publish prompt to carry the draft rule — so it is
-  // attached here instead. The graph says whether the node opens anything rather
-  // than this function inferring it from `mode`: the one-shot *review* flow
-  // shares both this prompt and that mode, and it opens nothing at all. It works
-  // on a pull request somebody else already published, so telling it to open a
-  // draft would be an instruction with no referent, and asking it for `isDraft`
-  // would ask for a field its contract does not declare.
-  const draft = opts.opensPr ? "\n\n" + DRAFT_RULE : "";
-  // Both review nodes that run `fresh` need this, and for the same reason: the
-  // plan phase reads the code under review, the one-shot reads and rewrites it,
-  // and neither is on the branch that holds it until it says so.
+/** The first turn of a run. It carries the project's memory path; the `fix`
+ *  turns that resume its session already hold that line in their transcript. */
+export function openingPrompt(c: RunContext, mode: string, opts: { review?: boolean } = {}): string {
+  // The review flow's first turn reads and rewrites the code under review, and
+  // it is not on the branch that holds that code until it checks it out.
   const branch = opts.review ? REVIEW_BRANCH_RULE : "";
-  return invokeSkill(c, mode) + branch + draft + c.knowledge;
+  return withKnowledge(c, invokeSkill(c, mode)) + branch;
 }
 
 // Resume prompts stay short: the session already holds the ticket and the
@@ -103,17 +100,6 @@ export const LIMIT_RESUME_PROMPT =
   "Continue. Your previous turn was cut off because the account hit its usage limit — nothing you did was rejected and " +
   "nothing about the task has changed. Check the current state of the working tree and the branch before acting, since " +
   "some of what you intended may already be done, then finish the work and report the result through your output contract.";
-
-export const REPLAN_PROMPT =
-  "Mode: replan. The plan was rejected. Read .te/feedback.md for the reviewer's reason, then rewrite .te/plan.md to address it. " +
-  "Stay in plan mode: no source edits, no branch, no commit. Re-read only the code the feedback actually questions.";
-
-export const IMPLEMENT_PROMPT =
-  "Mode: implement. The plan has been reviewed and approved. Re-read .te/plan.md from disk now — the reviewer may have edited it, " +
-  "and where that file differs from the plan you proposed earlier, the file wins. Then create the branch, implement the approved " +
-  "plan, verify it, and commit locally. " +
-  "Do NOT push and do NOT open a pull request — publishing is a separate phase that runs after this one. " +
-  "Do not ask for confirmation. You already explored this codebase in the plan phase — do not re-read files you have already read this session.";
 
 /**
  * The publish brief for the **implement** flow, sent in a *fresh* session.
@@ -140,9 +126,9 @@ export const IMPLEMENT_PROMPT =
  * **The review flow deliberately does not use this** — see REVIEW_PUBLISH_PROMPT.
  */
 export function publishPrompt(c: RunContext): string {
-  // Whichever node committed last owns the branch name: with the evaluator on,
-  // that is `fix`, otherwise `implement`. Both answer IMPLEMENT_OUTPUT, so the
-  // field is in the same place either way.
+  // Whichever node committed last owns the branch name: `fix` when a refusal
+  // sent the run round the loop, otherwise `implement`. Both answer
+  // STEP_OUTPUT, so the field is in the same place either way.
   const branch =
     String(c.channels.fix?.branch ?? c.channels.implement?.branch ?? "").trim();
   return (
@@ -163,43 +149,40 @@ export function publishPrompt(c: RunContext): string {
  *  other four rather than living as a paragraph in this file: `evaluate` is the
  *  only node that runs `fresh` *and* loads no other skill, so it is the one whose
  *  reading discipline is least constrained and most expensive to get wrong. */
-export const REVIEW_SKILL = "review-changes-v1";
+export const REVIEW_SKILL = "review-changes-v4";
 
 /** The evaluator's prompt. This node runs in a **fresh** session on purpose, so
  *  unlike the resume prompts above it can assume nothing: it has to be told the
  *  ticket and where the change set starts. Everything else — what counts as a
  *  blocker, what it may not touch, how much it is allowed to read — is the
  *  skill's job, so it can be edited and versioned without a code change. */
-export function evaluatePrompt(c: RunContext): string {
+export function evaluatePrompt(c: RunContext, mode = ""): string {
   const ticket = c.ticketUrl || c.ticketId;
-  return `/${REVIEW_SKILL} Provider: ${c.provider} - Ticket: ${ticket}${c.baseSha ? ` - Base: ${c.baseSha}` : ""}`;
+  const pr = mode === "review-fix" && c.prUrl ? ` - PR: ${c.prUrl}` : "";
+  const base = `/${REVIEW_SKILL} Provider: ${c.provider} - Ticket: ${ticket}${pr}${c.baseSha ? ` - Base: ${c.baseSha}` : ""}`;
+  return withKnowledge(c, base) + (mode ? ` - Mode: ${mode}` : "");
 }
 
-export function qaEvaluatePrompt(c: RunContext): string {
-  return `${evaluatePrompt(c)} - Mode: qa-fix`;
-}
-
-export function qaFixPrompt(c: RunContext): string {
+/** Fed whichever refusal sent the run round the loop back to the implementer.
+ *  Built from the refusing node's channel rather than from prose in the
+ *  transcript — the fix node resumes the implementer's session, so everything
+ *  else it needs is already there. The test gate is read first: it runs before
+ *  the reviewer, so a failed check is always the newer refusal. */
+export function fixPrompt(c: RunContext): string {
+  const lesson =
+    "Before you commit, record the lesson each item taught in KNOWLEDGE.md when it is reusable, as your skill describes. ";
   const check = c.channels.check;
   if (check && check.passed === false) {
-    const blockers = (check.blockers ?? []) as { file?: string; issue?: string }[];
-    const list = blockers.map((b, i) => `${i + 1}. ${b.issue ?? ""}`).join("\n");
+    const issues = (check.blockers ?? []) as { issue?: string }[];
+    const list = issues.map((b, i) => `${i + 1}. ${b.issue ?? ""}`).join("\n");
     return (
       "Mode: implement. The runner's own check of your change refused it:\n\n" +
       `${list}\n\n` +
       "Add or update a test that fails without your fix and passes with it, following the existing test style, re-run it, " +
       "and commit locally. If the change truly has nothing a test can cover (markup, style or copy only), say why in " +
-      "`testExemption` instead. Do NOT push or open a pull request."
+      "`testExemption` instead. " + lesson + "Do NOT push or open a pull request."
     );
   }
-  return fixPrompt(c);
-}
-
-/** Fed the reviewer's own findings back to the implementer. Built from the
- *  evaluate node's channel rather than from prose in the transcript — the fix
- *  node resumes the implementer's session, so everything else it needs is
- *  already there. */
-export function fixPrompt(c: RunContext): string {
   const blockers = (c.channels.evaluate?.blockers ?? []) as { file?: string; issue?: string }[];
   const list = blockers
     .map((b, i) => `${i + 1}. ${b.file ? `${b.file} — ` : ""}${b.issue ?? ""}`)
@@ -207,7 +190,7 @@ export function fixPrompt(c: RunContext): string {
   return (
     "Mode: implement. An independent review of your change found blocking issues:\n\n" +
     `${list}\n\n` +
-    "Fix exactly these, re-run the verification you ran before, and commit locally. " +
+    "Fix exactly these, re-run the verification you ran before, and commit locally. " + lesson +
     "Do not rewrite anything the review did not raise, and do NOT push or open a pull request — " +
     "publishing is a separate phase that runs after the review passes."
   );
@@ -219,8 +202,8 @@ export function fixPrompt(c: RunContext): string {
  *
  * This phase does not just ship code: it answers the reviewer, thread by thread,
  * for the threads *this run chose to act on*. Which threads those were, and what
- * was done about each, exists only in the session that did the work — it is not a
- * contract field, not in `.te/`, and not recoverable from the diff, since a
+ * was done about each, lives in the session that did the work — it is not a
+ * contract field, only summarised in `.te/plan.md`, and not recoverable from the diff, since a
  * commit does not say which comment it answers. A fresh session here would have
  * to guess, and guessing means replying on the wrong thread or resolving one
  * nobody addressed, on someone else's pull request, where it cannot be taken back.
@@ -230,6 +213,7 @@ export function fixPrompt(c: RunContext): string {
  * node a contract field that names the threads it answered.
  */
 export const REVIEW_PUBLISH_PROMPT =
-  "Mode: publish. The fixes are committed and final. Publish them and nothing else: push the branch, then reply to each review " +
-  "thread you addressed and mark it resolved. Check each thread first — if it already carries your reply or is already resolved, " +
-  "skip it, since this phase may be retried after a crash. Do not edit source, do not commit, do not re-verify.";
+  "Mode: publish. The fixes are committed and final. Publish them and nothing else: push the branch if anything was committed, " +
+  "then answer every thread in the Thread Decisions table of .te/plan.md — reply to each, and mark resolved only the ones you " +
+  "fixed. Check each thread first — if it already carries your reply or is already resolved, skip it, since this phase may be " +
+  "retried after a crash. Do not edit source, do not commit, do not re-verify, do not edit KNOWLEDGE.md.";

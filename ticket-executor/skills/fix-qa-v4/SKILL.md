@@ -1,10 +1,10 @@
 ---
-name: fix-qa-v3
-description: Handle a ticket that failed QA in two phases — review each QC finding against the code, fix the real defects with a regression test and commit locally (or, when none is a real defect, change nothing and draft the reply to QA); an independent review runs before a separate publish phase pushes the branch and opens the draft PR
-version: 3.0.0
+name: fix-qa-v4
+description: Handle a ticket that failed QA in two phases — review each QC finding against the code, fix the real defects with a regression test and commit locally (or, when none is a real defect, change nothing and draft the reply to QA); an independent review runs before a separate publish phase pushes the branch and opens the draft PR; records reusable lessons in the project's KNOWLEDGE.md
+version: 4.0.0
 ---
 
-Fix the QA findings on ticket $ARGUMENTS (format: `/fix-qa-v3 Provider: <id> - [PR: <previous-pr-url> - ]Ticket: <ticket-url> - Project name: <project> - Mode: <mode>`). The ticket was implemented, merged, handed to QA, and QA sent it back. **Review every finding against the ticket and the code before touching anything.** Only a real defect in this ticket's code is fixed — with the **smallest safe change that resolves it**, preserving all unrelated behavior and all uncommitted work in the tree. When no finding is a real defect, change nothing and answer QA instead.
+Fix the QA findings on ticket $ARGUMENTS (format: `/fix-qa-v4 Provider: <id> - [PR: <previous-pr-url> - ]Ticket: <ticket-url> - Project name: <project> - Mode: <mode> - Knowledge: <path>`). The ticket was implemented, merged, handed to QA, and QA sent it back. **Review every finding against the ticket and the code before touching anything.** Only a real defect in this ticket's code is fixed — with the **smallest safe change that resolves it**, preserving all unrelated behavior and all uncommitted work in the tree. When no finding is a real defect, change nothing and answer QA instead.
 
 ## Modes
 
@@ -61,7 +61,7 @@ $ARGUMENTS carries `Provider: <id>`. Use the same tools the implement skill uses
 ## Implement phase
 
 1. Parse `Provider:`, fetch the ticket, its Acceptance Criteria, and its comments; identify QA's findings as above. Read the previous PR's file list if `PR:` is given.
-2. Read root-level `CLAUDE.md`, `AGENTS.md`, `KNOWLEDGE.md` once if present.
+2. Read root-level `CLAUDE.md` and `AGENTS.md` once if present, and `KNOWLEDGE.md` as described under **Project memory**.
 3. **Review each finding.** Read the code path it describes and decide *Defect* or *Not a defect* as defined above. Do not edit anything yet.
 4. **No defect at all:** stop here — no branch, no edit, no commit. Write `qaReply` (see below), set `outcome: "no-fix-needed"`, `committed: false`, `branch: ""`, `testExemption: ""`, and call `StructuredOutput`. The remaining steps apply only to `fixed`.
 5. Write `.te/plan.md` (template below), then keep going without pausing.
@@ -70,7 +70,12 @@ $ARGUMENTS carries `Provider: <id>`. Use the same tools the implement skill uses
 8. Fix each finding you judged a defect. Before calling a fix done, check it against the **self-review checklist** below.
 9. **Add or update a regression test** for every defect: one that fails without the fix and passes with it, following the existing test style. Only a change with nothing a test can cover (markup, style or copy only) may skip this, and then `testExemption` says why in one sentence. The runner refuses a change with no test file and no reason.
 10. Run the narrowest checks that prove each fix — the test you added, and the project's type-check or build for the touched project — then re-check every Acceptance Criterion against the fixed code.
-11. Review the final diff: stage only what the findings need. Commit locally. **Do not push and do not open a pull request.**
+11. Update `KNOWLEDGE.md` with the lessons this QA round taught (see **Project memory**).
+12. Review the final diff: stage only what the findings need. Commit locally. **Do not push and do not open a pull request.**
+
+On a pass that hands you a list of blockers: fix exactly those, re-run the verification you ran before, record the lesson each blocker taught in `KNOWLEDGE.md` when it is reusable, commit locally, and stop.
+
+Never stage `.te/`, `.te-worktrees/` or `KNOWLEDGE.md`.
 
 ### Self-review checklist
 
@@ -82,13 +87,23 @@ These are the defects an automated PR reviewer most often raises on a QA fix. Ch
 - **Contract with the backend.** A field the client now sends or reads exists on the DTO and is persisted or returned by the API.
 - **Acceptance Criteria in full.** Every criterion the finding touches is satisfied, including any data, audit or migration requirement the ticket lists.
 
+## Project memory (`KNOWLEDGE.md`)
+
+$ARGUMENTS carries `Knowledge: <absolute path>` — the project's `KNOWLEDGE.md`, in the developer's own checkout rather than in this working tree, so what you write there outlives this run. It is project memory of lessons earned by earlier runs, reviews and QA rounds on this project.
+
+- **Read it once at the start** when it exists. It is input to the fix: before calling a fix done, re-scan the entries covering the layer you touched and confirm the fix neither violates one nor creates the situation one warns about. The independent reviewer checks the same file.
+- It never overrides ticket requirements, repository instructions, or current code behavior — investigate conflicts instead of applying entries blindly.
+- **A defect QA found is the main source of this file.** It shipped past implementation, verification and code review, so the mistake behind it is one the next, unrelated ticket will repeat unless it is written down. Before committing, ask of every finding you judged a defect, and of every blocker the runner or the reviewer handed back: what general rule would have prevented it? Record that rule when it is project-specific, reusable, and not already obvious from the code or an existing entry. Skip one-off ticket requirements, test-data or environment problems, and findings that were not defects.
+- **How to write it.** Re-read the file immediately before editing it — another run may have updated it since you first read it. Search for an equivalent entry first and refine it rather than adding a duplicate; add a new entry only when none fits. Write generalized guidance — when it applies, what to do or avoid, and why when that is not obvious — one bullet under a short `## <area>` heading, never the QA comment verbatim and never code. If it contradicts an existing entry, leave the entry and mention the conflict in `summary`. Create the file only when you have at least one lesson.
+- **Write it only at the `Knowledge:` path, and never stage or commit it** — not there and not in this working tree. If `Knowledge:` is absent, use `KNOWLEDGE.md` at the repository root and still never stage it. With `no-fix-needed` nothing is written: that outcome changes no file.
+
 ## Publish phase
 
 You are in a fresh session: the work is committed and final on the branch named in the prompt.
 
 1. Push the branch.
 2. Open the pull request against `main`, linking the ticket. Check first whether a PR already exists for this branch and reuse it if so.
-3. Do not edit source, do not commit, do not re-verify, and do not review the diff.
+3. Do not edit source, do not commit, do not re-verify, do not review the diff, and do not edit `KNOWLEDGE.md`.
 
 ## Plan record
 
@@ -139,5 +154,4 @@ The runner passes a JSON Schema and the CLI requires you to call `StructuredOutp
 - `committed` describes what really happened.
 - `blocked.is` is `true` only on a hard external blocker, with a one-sentence `reason`.
 - `summary` lists each QA finding, its verdict, and whether it was fixed.
-- `lessons` is repo memory for future, unrelated tickets. Usually `[]`.
 - In the publish phase, `prUrl` must be the real URL of the new pull request and `isDraft` its real state.

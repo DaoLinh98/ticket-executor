@@ -261,9 +261,10 @@ export function fromPullRequests(rows: PullRequestSource[]): AppNotification[] {
   return out;
 }
 
-/** A run parked at a plan gate. Read off current state rather than off an
- *  observed transition, because it is a standing condition: the plan stays
- *  unapproved until somebody approves it, however long ago the run stopped. */
+/** A run held for a person: the server restarted while it was publishing, and
+ *  nobody can tell whether the push landed. Read off current state rather than
+ *  off an observed transition, because it is a standing condition: the run stays
+ *  held until somebody looks, however long ago it stopped. */
 export type WaitingRunSource = { ticketId: string; runId: string };
 
 export function fromWaitingRuns(rows: WaitingRunSource[]): AppNotification[] {
@@ -272,9 +273,9 @@ export function fromWaitingRuns(rows: WaitingRunSource[]): AppNotification[] {
     ticketId: r.ticketId,
     refId: r.runId,
     severity: "action" as const,
-    summary: "Plan is parked at the gate, waiting for your review",
+    summary: "Run held mid-publish — check whether the push landed",
     at: "",
-    tab: "plan" as const,
+    tab: "execution" as const,
     fingerprint: `waiting::${r.runId}`,
   }));
 }

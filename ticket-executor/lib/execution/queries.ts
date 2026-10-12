@@ -2,7 +2,7 @@ import { prisma } from "../prisma";
 import { cached, DB_CACHE_PREFIX } from "../redis";
 import type { FileChange, LogLine, RunState } from "../types";
 import { asLogLines, fmtDuration, safeParseJson } from "./format";
-import { graphById, graphForSkill } from "./graph/graphs";
+import { graphById, graphOutline } from "./graph/graphs";
 import type { Graph } from "./graph/types";
 import { store } from "./store";
 
@@ -14,10 +14,8 @@ import { store } from "./store";
 export type NodeView = {
   id: string;
   label: string;
-  /** "agent" | "gate" | "check". Reported so the UI can ask what a node *is*
-   *  rather than recognising it by name: the Plan tab used to test for the id
-   *  "review", which silently stops being true the moment a graph names its gate
-   *  anything else. */
+  /** "agent" | "check". Reported so the UI can ask what a node *is* rather
+   *  than recognising it by name. */
   kind: string;
   effects: string;
   state: "pending" | "running" | "done" | "failed";
@@ -40,8 +38,8 @@ function nodeViews(graph: Graph, steps: StepRow[], currentNodeId: string, runSta
     if (s?.status === "succeeded") state = "done";
     else if (s?.status === "failed" || s?.status === "abandoned") state = "failed";
     else if (s?.status === "running") state = "running";
-    // A gate holds no Step until it is resolved, so the run parked on it would
-    // otherwise read as "pending" while it is precisely the active node.
+    // A node the run is parked on before its Step opens would otherwise read as
+    // "pending" while it is precisely the active node.
     if (state === "pending" && n.id === currentNodeId && (runState === "running" || runState === "waiting")) {
       state = "running";
     }
@@ -66,7 +64,7 @@ export type RunView = {
   errorMessage: string;
   prUrl: string;
   branch: string;
-  /** The latest plan Artifact, when the graph has a gate and one has been written. */
+  /** The latest plan Artifact, once the implement node has written one. */
   planMarkdown: string;
   filesChanged: FileChange[];
   /** Per-node structured output — the Result tab renders verification, deviations
@@ -101,7 +99,7 @@ export async function getRun(id: string): Promise<RunView | null> {
     prisma.step.findMany({ where: { runId: id }, select: { nodeId: true, status: true, attempt: true } }),
     loadExtras(id),
   ]);
-  const graph = graphById(live.graphId, live.ctx.skill);
+  const graph = graphById(live.graphId);
   const agg = await prisma.step.aggregate({
     where: { runId: id },
     _sum: { costUsd: true, inputTokens: true, outputTokens: true },
@@ -141,7 +139,7 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
   });
   if (!row) return null;
   const extras = await loadExtras(id);
-  const graph = graphById(row.graphId, row.skill);
+  const graph = graphById(row.graphId);
 
   const logLines: LogLine[] = [];
   for (const s of row.steps) logLines.push(...asLogLines(s.logLines));
@@ -216,15 +214,8 @@ export async function listRuns(ticketId: string) {
 }
 
 /** The graph a skill will run on, for the UI's pre-run progress preview. */
-export function outlineForSkill(
-  skill: string,
-  opts: { evaluate?: boolean } = {}
-): { id: string; label: string; effects: string }[] {
-  return Object.values(graphForSkill(skill, opts).nodes).map((n) => ({
-    id: n.id,
-    label: n.label,
-    effects: n.effects,
-  }));
+export function outlineForSkill(skill: string): { id: string; label: string; effects: string }[] {
+  return graphOutline(skill);
 }
 
 // ---- dashboard aggregation ----
@@ -265,9 +256,11 @@ export type DashboardMetrics = {
     ticketsShipped: number;
     firstPassRate: number;
     reworkFactor: number;
-    planApprovalRate: number;
-    planReviewedCount: number;
-    avgPlanRevisions: number;
+    /** Share of reviewed runs that needed no fix round. */
+    loopPassRate: number;
+    /** Runs that reached the independent reviewer. */
+    loopRuns: number;
+    avgFixRounds: number;
     reviewFixRatio: number;
     implementRuns: number;
     fixReviewRuns: number;
@@ -457,7 +450,7 @@ async function computeDashboardMetrics(filter?: {
       select: {
         id: true, ticketId: true, provider: true, org: true, project: true, skill: true, graphId: true,
         state: true, endReason: true, prUrl: true, model: true, effort: true,
-        humanWaitMs: true, resumedAfterRestart: true, channels: true,
+        humanWaitMs: true, resumedAfterRestart: true,
         filesTouched: true, linesAdded: true, linesDeleted: true, estimateHours: true,
         startedAt: true, endedAt: true,
       },
@@ -523,8 +516,9 @@ async function computeDashboardMetrics(filter?: {
   const cancelled = scoped.filter((r) => r.state === "cancelled" || isHumanEnded(r.endReason)).length;
   const running = scoped.filter((r) => r.state === "running").length;
   // `waiting` alone would also count runs parked on the Claude account's usage
-  // limit, and this number is read as "how many plans are sitting on somebody's
-  // desk". A run waiting for a quota is on nobody's desk.
+  // limit, and this number is read as "how many runs are sitting on somebody's
+  // desk" — held after a restart mid-publish. A run waiting for a quota is on
+  // nobody's desk.
   const awaitingApproval = scoped.filter((r) => r.state === "waiting" && r.endReason !== "rate-limited").length;
   const decided = completed + failed;
 
@@ -571,23 +565,22 @@ async function computeDashboardMetrics(filter?: {
   const ticketsAttempted = byTicket.size;
   const changedRuns = scoped.filter((r) => r.filesTouched > 0);
 
-  // The gate's own outcome is a channel value now, so plan approval is read
-  // directly rather than inferred from a planStatus column.
-  const gateAction = (r: (typeof scoped)[number]) => {
-    const ch = (r.channels as Record<string, Record<string, unknown>> | null) ?? {};
-    return String(ch.review?.action ?? "");
-  };
-  const planApproved = scoped.filter((r) => gateAction(r) === "approve").length;
-  const planRejected = scoped.filter((r) => {
-    const a = gateAction(r);
-    return a === "cancel" || r.endReason === "plan-rejected";
-  }).length;
-  const planReviewedCount = planApproved + planRejected;
-  // Each revise round is a fresh attempt at the replan node, so the count of
-  // those Steps *is* the revision count.
-  const replanSteps = await prisma.step.count({
-    where: { nodeId: "replan", runId: { in: scoped.map((r) => r.id) } },
+  // How the check / review / fix loop is doing. A run that reached the reviewer
+  // was judged; one that needed no `fix` step passed the test gate and the
+  // reviewer as written. Each refusal is one more attempt at the fix node, so
+  // the count of those Steps *is* the fix-round count.
+  const loopSteps = await prisma.step.groupBy({
+    by: ["runId", "nodeId"],
+    where: { nodeId: { in: ["evaluate", "fix"] }, runId: { in: scoped.map((r) => r.id) } },
+    _count: { _all: true },
   });
+  const reviewedRunIds = new Set(loopSteps.filter((s) => s.nodeId === "evaluate").map((s) => s.runId));
+  const fixedRunIds = new Set(loopSteps.filter((s) => s.nodeId === "fix").map((s) => s.runId));
+  const loopRuns = reviewedRunIds.size;
+  const loopCleanRuns = [...reviewedRunIds].filter((id) => !fixedRunIds.has(id)).length;
+  const fixSteps = loopSteps
+    .filter((s) => s.nodeId === "fix" && reviewedRunIds.has(s.runId))
+    .reduce((n, s) => n + s._count._all, 0);
   // Counted off the routing decision itself, not guessed from the run's shape.
   // The old proxy — "failed, and no PR" — counted *every* agent failure, so a run
   // that died on a missing credential was reported as one the harness had stopped
@@ -700,9 +693,9 @@ async function computeDashboardMetrics(filter?: {
       ticketsShipped,
       firstPassRate: ticketsAttempted ? firstPassTickets / ticketsAttempted : 0,
       reworkFactor: ticketsAttempted ? implementRows.length / ticketsAttempted : 0,
-      planApprovalRate: planReviewedCount ? planApproved / planReviewedCount : 0,
-      planReviewedCount,
-      avgPlanRevisions: planReviewedCount ? replanSteps / planReviewedCount : 0,
+      loopPassRate: loopRuns ? loopCleanRuns / loopRuns : 0,
+      loopRuns,
+      avgFixRounds: loopRuns ? fixSteps / loopRuns : 0,
       reviewFixRatio: implementRows.length ? fixReviewRuns / implementRows.length : 0,
       implementRuns: implementRows.length,
       fixReviewRuns,

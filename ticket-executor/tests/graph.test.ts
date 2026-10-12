@@ -2,7 +2,7 @@
 //
 // This is the payoff of edges being pure, synchronous functions of
 // (RunContext, NodeResult): the entire decision surface of the engine — what
-// ships, what is blocked, what loops back to a human — is checkable in about a
+// ships, what is blocked, what loops back for a fix — is checkable in about a
 // second, for zero tokens. Before the graph runtime this logic lived inside an
 // async IIFE and could not be tested at all.
 //
@@ -15,8 +15,8 @@ import assert from "node:assert/strict";
 
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
 import { parseLimitReset } from "../lib/execution/claudeCli";
-import { graphById, graphForSkill, isTestPath, resolveSkill, testGap } from "../lib/execution/graph/graphs";
-import { DRAFT_RULE, qaEvaluatePrompt, qaFixPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
+import { graphById, graphForSkill, isTestPath, KNOWN_SKILLS, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
+import { DRAFT_RULE, evaluatePrompt, fixPrompt, publishPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
 
 // ---- fixtures ----
@@ -28,11 +28,10 @@ const CTX: RunContext = {
   provider: "azure-devops",
   project: "Demo",
   prUrl: "",
-  skill: "implement-ticket-v3",
+  skill: "implement-ticket-v4",
   rootRepo: "C:/repo",
   cwd: "C:/repo",
   baseSha: "abc123",
-  knowledge: "",
   channels: {},
   visits: {},
 };
@@ -52,20 +51,22 @@ function result(data: Record<string, unknown>, ok = true, error = ""): NodeResul
   };
 }
 
-function route(graph: Graph, nodeId: string, r: NodeResult) {
-  const edge = graph.edges[nodeId];
-  assert.ok(edge, `graph ${graph.id} has no edge out of "${nodeId}"`);
-  return edge(CTX, r);
+function graphOf(skill: string): Graph {
+  const g = graphForSkill(skill);
+  assert.ok(g, `no graph for ${skill}`);
+  return g;
 }
 
-const v3 = graphForSkill("implement-ticket-v3");
-const reviewV3 = graphForSkill("fix-code-review-v3");
-const v2 = graphForSkill("implement-ticket-v2");
-const reviewV2 = graphForSkill("fix-code-review-v2");
-// The same graphs with the independent reviewer switched on.
-const v3e = graphForSkill("implement-ticket-v3", { evaluate: true });
-const reviewV3e = graphForSkill("fix-code-review-v3", { evaluate: true });
-const qaV3 = graphForSkill("fix-qa-v3");
+function route(graph: Graph, nodeId: string, r: NodeResult, c: RunContext = CTX) {
+  const edge = graph.edges[nodeId];
+  assert.ok(edge, `graph ${graph.id} has no edge out of "${nodeId}"`);
+  return edge(c, r);
+}
+
+const impl = graphOf("implement-ticket-v4");
+const review = graphOf("fix-code-review-v4");
+const qa = graphOf("fix-qa-v4");
+const ALL = [impl, review, qa];
 
 /** A RunContext with a given number of prior visits to a node — the cycle
  *  accounting a bounded loop's edge reads. */
@@ -73,326 +74,142 @@ function ctxWithVisits(visits: Record<string, number>): RunContext {
   return { ...CTX, visits };
 }
 
-// ---- the plan phase ----
-
-test("plan: a finished turn goes on to the plan check", () => {
-  const r = result({ planWritten: true, summary: "s", assumptions: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "plan", r).to, "planCheck");
-});
-
-test("plan: a failed turn fails the run", () => {
-  const r = result({}, false, "claude exited with code 1");
-  const next = route(v3, "plan", r);
-  assert.equal(next.to, FAIL);
-  assert.match(next.reason, /exited with code 1/);
-});
-
-test("plan: a declared blocker fails the run and keeps the agent's reason", () => {
-  const r = result({ planWritten: false, summary: "", assumptions: [], blocked: { is: true, reason: "no credentials" } });
-  const next = route(v3, "plan", r);
-  assert.equal(next.to, FAIL);
-  assert.match(next.reason, /no credentials/);
-});
-
-test("plan: an agent that reports planWritten=false fails without paying planCheck", () => {
-  const r = result({ planWritten: false, summary: "s", assumptions: [], blocked: NOT_BLOCKED });
-  for (const graph of [v3, reviewV3]) {
-    const next = route(graph, "plan", r);
-    assert.equal(next.to, FAIL);
-    assert.match(next.reason, /no plan was written/);
-  }
-});
-
-test("plan: planWritten=true still goes through planCheck — the claim is not the proof", () => {
-  const r = result({ planWritten: true, summary: "s", assumptions: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "plan", r).to, "planCheck");
-});
-
-test("replan routes exactly like plan — one edge serves both", () => {
-  const r = result({ planWritten: true, summary: "s", assumptions: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "replan", r).to, "planCheck");
-});
-
-test("planCheck: a written plan reaches the human gate", () => {
-  assert.equal(route(v3, "planCheck", result({ planLength: 120 })).to, "review");
-});
-
-test("planCheck: no plan on disk fails rather than parking on an empty gate", () => {
-  const next = route(v3, "planCheck", result({ planLength: 0 }, false, "nothing to review"));
-  assert.equal(next.to, FAIL);
-});
-
-// ---- the human gate ----
-// The reviewer's decision arrives as this node's own NodeResult, so it routes
-// through the same edge machinery as any agent output.
-
-test("gate: approve → implement", () => {
-  assert.equal(route(v3, "review", result({ action: "approve" })).to, "implement");
-});
-
-test("gate: revise → replan (the one cycle in this graph)", () => {
-  assert.equal(route(v3, "review", result({ action: "revise" })).to, "replan");
-});
-
-test("gate: cancel → FAIL", () => {
-  assert.equal(route(v3, "review", result({ action: "cancel" }, false)).to, FAIL);
-});
-
-test("gate: an unrecognised action is rejected, not treated as approval", () => {
-  assert.equal(route(v3, "review", result({ action: "" })).to, FAIL);
-});
-
-// ---- the verification gate: the one place unverified code is stopped ----
-
-test("implement: committed and verified → publish", () => {
-  const r = result({ committed: true, branch: "feature/1234", summary: "s", verification: CLEAN_VERIFICATION, deviations: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "implement", r).to, "publish");
-});
-
-test("implement: failing tests stop the run BEFORE anything is pushed", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: { ...CLEAN_VERIFICATION, tests: "failed" }, deviations: [], blocked: NOT_BLOCKED });
-  const next = route(v3, "implement", r);
-  assert.equal(next.to, FAIL);
-  assert.equal(next.reason, "verification.tests=failed");
-});
-
-test("implement: a failing build stops the run too", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: { ...CLEAN_VERIFICATION, build: "failed" }, deviations: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "implement", r).reason, "verification.build=failed");
-});
-
-test("implement: tests that were never run are NOT a failure — plenty of repos have none", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: { tests: "not-run", build: "not-run", acceptanceCriteria: "cannot-verify" }, deviations: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "implement", r).to, "publish");
-});
-
-// The dashboard's `blockedOnVerification` counts Transition rows whose reason
-// starts with "verification.". That makes this prefix a contract between the
-// edge and the metric, not cosmetic text — so it is asserted here rather than
-// left to be discovered when the tile silently reads zero.
-test("implement: a verification FAIL reason carries the prefix the dashboard counts on", () => {
-  for (const field of ["tests", "build"] as const) {
-    const r = result({
-      committed: true, branch: "b", summary: "s",
-      verification: { ...CLEAN_VERIFICATION, [field]: "failed" },
-      deviations: [], blocked: NOT_BLOCKED,
-    });
-    for (const graph of [v3, reviewV3]) {
-      const next = route(graph, "implement", r);
-      assert.equal(next.to, FAIL);
-      assert.ok(
-        next.reason.startsWith("verification."),
-        `${graph.id}: reason "${next.reason}" no longer matches the prefix dashboardMetrics() counts`
-      );
-    }
-  }
-});
-
-test("implement: a non-verification failure must NOT borrow that prefix", () => {
-  const r = result({ committed: false, branch: "", summary: "s", verification: CLEAN_VERIFICATION, deviations: [], blocked: NOT_BLOCKED });
-  assert.ok(!route(v3, "implement", r).reason.startsWith("verification."));
-});
-
-test("implement: nothing committed → FAIL (there is nothing to publish)", () => {
-  const r = result({ committed: false, branch: "", summary: "s", verification: CLEAN_VERIFICATION, deviations: [], blocked: NOT_BLOCKED });
-  const next = route(v3, "implement", r);
-  assert.equal(next.to, FAIL);
-  assert.match(next.reason, /nothing was committed/);
-});
-
-// ---- publish: the external leaf ----
-
-test("publish: a pushed branch ends the run", () => {
-  const r = result({ pushed: true, prUrl: "https://example.invalid/pr/1", linked: true, reusedExisting: false, blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "publish", r).to, END);
-});
-
-test("publish: reusing an existing PR is success, and the transition says so", () => {
-  const r = result({ pushed: true, prUrl: "https://example.invalid/pr/1", linked: true, reusedExisting: true, blocked: NOT_BLOCKED });
-  const next = route(v3, "publish", r);
-  assert.equal(next.to, END);
-  assert.match(next.reason, /reused/);
-});
-
-test("publish: not pushed → FAIL", () => {
-  const r = result({ pushed: false, prUrl: "", linked: false, reusedExisting: false, blocked: NOT_BLOCKED });
-  assert.equal(route(v3, "publish", r).to, FAIL);
-});
-
-test("fix-code-review-v3 publish reports threads and ends the run", () => {
-  const r = result({ pushed: true, prUrl: "https://example.invalid/pr/9", threadsReplied: 3, threadsResolved: 3, blocked: NOT_BLOCKED });
-  assert.equal(route(reviewV3, "publish", r).to, END);
-});
-
-// ---- the one-shot graphs ----
-
-test("v2 deliver: pushed → END", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: CLEAN_VERIFICATION, pushed: true, prUrl: "u", linked: true, blocked: NOT_BLOCKED });
-  assert.equal(route(v2, "deliver", r).to, END);
-});
-
-test("v2 deliver: not pushed → FAIL", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: CLEAN_VERIFICATION, pushed: false, prUrl: "", linked: false, blocked: NOT_BLOCKED });
-  assert.equal(route(v2, "deliver", r).to, FAIL);
-});
-
-// The one-shot flow cannot stop a push it already made. What it must not do is
-// call the run a success anyway — that is what made `verification` decorative in
-// auto mode.
-test("v2 deliver: a reported test failure fails the run even though the PR exists", () => {
-  const r = result({
-    committed: true, branch: "b", summary: "s",
-    verification: { ...CLEAN_VERIFICATION, tests: "failed" },
-    pushed: true, prUrl: "u", linked: true, blocked: NOT_BLOCKED,
-  });
-  for (const graph of [v2, reviewV2]) {
-    const next = route(graph, "deliver", r);
-    assert.equal(next.to, FAIL, `${graph.id} still reported success over a failed test`);
-    assert.match(next.reason, /verification\.tests=failed/);
-    // Must NOT be counted as "stopped before publishing" — it wasn't.
-    assert.ok(
-      !next.reason.startsWith("verification."),
-      "a shipped-then-failed run must not match the blockedOnVerification prefix"
-    );
-  }
-});
-
-test("v2 deliver: a clean verification still ends the run successfully", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: CLEAN_VERIFICATION, pushed: true, prUrl: "u", linked: true, blocked: NOT_BLOCKED });
-  assert.equal(route(v2, "deliver", r).to, END);
-});
-
-test("v2 deliver: not-run verification is still a success — it is not a failure", () => {
-  const r = result({ committed: true, branch: "b", summary: "s", verification: { tests: "not-run", build: "not-run", acceptanceCriteria: "cannot-verify" }, pushed: true, prUrl: "u", linked: true, blocked: NOT_BLOCKED });
-  assert.equal(route(v2, "deliver", r).to, END);
-});
-
-test("v2 deliver: a declared blocker fails the run", () => {
-  const r = result({ committed: false, branch: "", summary: "", verification: CLEAN_VERIFICATION, pushed: false, prUrl: "", linked: false, blocked: { is: true, reason: "repo absent" } });
-  assert.match(route(reviewV2, "deliver", r).reason, /repo absent/);
-});
-
-// ---- the independent reviewer (opt-in) and its bounded fix loop ----
-
-const IMPLEMENTED = {
-  committed: true, branch: "b", summary: "s",
-  verification: CLEAN_VERIFICATION, deviations: [], blocked: NOT_BLOCKED,
+const STEP = {
+  committed: true, branch: "feature/1234-x", summary: "s", verification: CLEAN_VERIFICATION,
+  deviations: [], testExemption: "", blocked: NOT_BLOCKED,
 };
+const PASS = result({ verdict: "pass", blockers: [], blocked: NOT_BLOCKED });
+const REFUSE = result({ verdict: "changes-required", blockers: [{ file: "a.ts:1", issue: "x" }], blocked: NOT_BLOCKED });
+const GAP = result({ passed: false, blockers: [{ file: "", issue: "no test" }] });
 
-test("evaluator off: the graph keeps its original shape and implement goes straight to publish", () => {
-  assert.equal(v3.id, "implement-v3");
-  assert.ok(!v3.nodes.evaluate, "evaluate must not exist when the setting is off");
-  assert.ok(!v3.nodes.fix);
-  assert.equal(route(v3, "implement", result(IMPLEMENTED)).to, "publish");
-});
+// ---- one shape for every flow ----
 
-test("evaluator on: the graph gets its own id, so a parked run resumes on the shape it started on", () => {
-  assert.equal(v3e.id, "implement-v3-eval");
-  assert.equal(reviewV3e.id, "fix-review-v3-eval");
-  assert.equal(graphById("implement-v3-eval", "implement-ticket-v3").id, "implement-v3-eval");
-  // Flipping the setting must not retarget a run already walking the other shape.
-  assert.equal(graphById("implement-v3", "implement-ticket-v3").id, "implement-v3");
-});
-
-test("evaluator on: implement routes to the reviewer, not to publish", () => {
-  for (const graph of [v3e, reviewV3e]) {
-    assert.equal(route(graph, "implement", result(IMPLEMENTED)).to, "evaluate");
+test("every flow walks the same loop, with no gate anywhere", () => {
+  for (const g of ALL) {
+    assert.deepEqual(Object.keys(g.nodes), ["implement", "check", "evaluate", "fix", "publish"], g.id);
+    assert.equal(g.entry, "implement");
+    for (const n of Object.values(g.nodes)) assert.ok(n.kind === "agent" || n.kind === "check", `${g.id}: ${n.id} is a ${n.kind}`);
   }
+  assert.deepEqual(ALL.map((g) => g.id), ["implement-v4", "fix-review-v4", "fix-qa-v4"]);
 });
 
-test("evaluator on: the verification gate still fires before the reviewer is paid for", () => {
-  const r = result({ ...IMPLEMENTED, verification: { ...CLEAN_VERIFICATION, tests: "failed" } });
-  assert.equal(route(v3e, "implement", r).to, FAIL);
-});
-
-test("evaluate: a pass releases the run to publish", () => {
-  const r = result({ verdict: "pass", blockers: [], blocked: NOT_BLOCKED });
-  assert.equal(route(v3e, "evaluate", r).to, "publish");
-});
-
-test("evaluate: blocking findings send the run to fix, not to publish", () => {
-  const r = result({ verdict: "changes-required", blockers: [{ file: "a.ts:10", issue: "off-by-one" }], blocked: NOT_BLOCKED });
-  const next = v3e.edges.evaluate(ctxWithVisits({}), r);
-  assert.equal(next.to, "fix");
-  assert.match(next.reason, /1 blocker/);
-});
-
-test("evaluate: the fix loop is bounded — after MAX_FIX_ATTEMPTS it fails instead of publishing", () => {
-  const r = result({ verdict: "changes-required", blockers: [{ file: "a.ts", issue: "still wrong" }], blocked: NOT_BLOCKED });
-  // One fix already attempted: still allowed to try again.
-  assert.equal(v3e.edges.evaluate(ctxWithVisits({ fix: 1 }), r).to, "fix");
-  // Two attempted: the reviewer is still refusing, so a human is needed. It must
-  // NOT fall through to publish — publishing over a standing objection would make
-  // the whole review decorative.
-  const capped = v3e.edges.evaluate(ctxWithVisits({ fix: 2 }), r);
-  assert.equal(capped.to, FAIL);
-  assert.match(capped.reason, /still blocking after 2 fix attempt/);
-});
-
-test("fix: a committed fix goes back to the reviewer, never straight to publish", () => {
-  assert.equal(route(v3e, "fix", result(IMPLEMENTED)).to, "evaluate");
-});
-
-test("fix: a fix that breaks the tests fails the run", () => {
-  const r = result({ ...IMPLEMENTED, verification: { ...CLEAN_VERIFICATION, tests: "failed" } });
-  assert.equal(route(v3e, "fix", r).to, FAIL);
-});
-
-test("fix: a fix that commits nothing fails rather than looping", () => {
-  const r = result({ ...IMPLEMENTED, committed: false });
-  const next = route(v3e, "fix", r);
-  assert.equal(next.to, FAIL);
-  assert.match(next.reason, /committed nothing/);
+test("nothing leaves the machine before the review — only publish is external", () => {
+  for (const g of ALL) {
+    const external = Object.values(g.nodes).filter((n) => n.effects === "external").map((n) => n.id);
+    assert.deepEqual(external, ["publish"], g.id);
+    assert.equal(g.nodes.implement.effects, "local");
+    assert.equal(g.nodes.fix.effects, "local");
+    assert.equal(g.nodes.check.kind, "check");
+  }
 });
 
 test("the reviewer judges with a FRESH context — anything else is marking its own homework", () => {
-  for (const graph of [v3e, reviewV3e]) {
-    const evaluate = graph.nodes.evaluate;
-    assert.equal(evaluate.kind, "agent");
-    assert.equal(evaluate.effects, "pure", "a reviewer must not write anything");
-    assert.equal(
-      evaluate.kind === "agent" ? evaluate.context : "",
-      "fresh",
-      `${graph.id}: the evaluate node resumed the implementer's session — it would inherit the very conclusions it is meant to check`
-    );
-    // The node it reviews is the one that produced the work, and that one resumes.
-    const impl = graph.nodes.implement;
-    assert.equal(impl.kind === "agent" ? impl.context : "", "resume");
+  for (const g of ALL) {
+    assert.equal((g.nodes.evaluate as { context?: string }).context, "fresh", g.id);
+    assert.equal(g.nodes.evaluate.effects, "pure", g.id);
+    // The fix continues the implementer's session: it is the same author
+    // answering the refusal, and re-reading the ticket would be paid twice.
+    assert.equal((g.nodes.fix as { context?: string }).context, "resume", g.id);
   }
 });
 
 test("publish resumes only where it must: fresh to open a PR, resume to answer review threads", () => {
-  // Opening a PR needs the branch, the ticket, .te/plan.md and git log — all of
-  // which the harness hands over — so it must NOT replay the plan+implement
-  // transcript. That replay was measured at roughly a fifth of a run's cost.
-  for (const graph of [v3, v3e]) {
-    const publish = graph.nodes.publish;
-    assert.equal(
-      publish.kind === "agent" ? publish.context : "",
-      "fresh",
-      `${graph.id}: publish resumed the implement session to run a push and a PR create — the transcript it replays is never read`
-    );
-  }
-  // The review flow is the exception, and deliberately so: which threads this run
-  // addressed exists only in the session that addressed them. A fresh session
-  // would have to guess, on someone else's pull request.
-  for (const graph of [reviewV3, reviewV3e]) {
-    const publish = graph.nodes.publish;
-    assert.equal(
-      publish.kind === "agent" ? publish.context : "",
-      "resume",
-      `${graph.id}: publish went fresh, so it cannot know which review threads to reply to`
-    );
+  assert.equal((impl.nodes.publish as { context?: string }).context, "fresh");
+  assert.equal((qa.nodes.publish as { context?: string }).context, "fresh");
+  assert.equal((review.nodes.publish as { context?: string }).context, "resume");
+});
+
+test("every flow leaves its plan record at implement, where nothing waits on it", () => {
+  for (const g of ALL) assert.equal((g.nodes.implement as { artifact?: string }).artifact, "plan", g.id);
+});
+
+// ---- implement ----
+
+test("implement: a committed, verified change goes to the test gate, never straight to publish", () => {
+  for (const g of ALL) assert.equal(route(g, "implement", result(STEP)).to, "check", g.id);
+});
+
+test("implement: failing tests or build stop the run BEFORE anything is pushed", () => {
+  for (const g of ALL) {
+    assert.equal(route(g, "implement", result({ ...STEP, verification: { ...CLEAN_VERIFICATION, tests: "failed" } })).to, FAIL);
+    assert.equal(route(g, "implement", result({ ...STEP, verification: { ...CLEAN_VERIFICATION, build: "failed" } })).to, FAIL);
   }
 });
 
-test("publish stays the external leaf whichever context it runs in", () => {
-  for (const graph of [v3, v3e, reviewV3, reviewV3e]) {
-    assert.equal(graph.nodes.publish.effects, "external");
+test("implement: tests that were never run are NOT a failure — plenty of repos have none", () => {
+  const r = result({ ...STEP, verification: { tests: "not-run", build: "not-run", acceptanceCriteria: "cannot-verify" } });
+  assert.equal(route(impl, "implement", r).to, "check");
+});
+
+test("implement: a verification FAIL reason carries the prefix the dashboard counts on", () => {
+  const next = route(impl, "implement", result({ ...STEP, verification: { ...CLEAN_VERIFICATION, tests: "failed" } }));
+  assert.match(next.reason, /^verification\./);
+});
+
+test("implement: nothing committed fails the implement and QA flows", () => {
+  assert.equal(route(impl, "implement", result({ ...STEP, committed: false })).to, FAIL);
+  assert.equal(route(qa, "implement", result({ ...STEP, outcome: "fixed", qaReply: "", committed: false })).to, FAIL);
+});
+
+test("implement: a review where every thread is reply-only skips the gate and goes to publish", () => {
+  assert.equal(route(review, "implement", result({ ...STEP, committed: false })).to, "publish");
+  // …but a declared blocker or a failed turn still fails it.
+  assert.equal(route(review, "implement", result({ ...STEP, committed: false, blocked: { is: true, reason: "no PR" } })).to, FAIL);
+  assert.equal(route(review, "implement", result({}, false, "turn failed")).to, FAIL);
+});
+
+test("implement: a declared blocker fails the run and keeps the agent's reason", () => {
+  const next = route(impl, "implement", result({ ...STEP, blocked: { is: true, reason: "no credentials" } }));
+  assert.equal(next.to, FAIL);
+  assert.match(next.reason, /no credentials/);
+});
+
+// ---- the bounded check / review / fix loop ----
+
+test("check: a passing test gate goes to the reviewer; a gap goes back to fix, bounded", () => {
+  for (const g of ALL) {
+    assert.equal(route(g, "check", result({ passed: true, blockers: [] })).to, "evaluate");
+    assert.equal(route(g, "check", GAP).to, "fix");
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, FAIL);
+    assert.equal(route(g, "check", result({}, false, "could not diff the branch")).to, FAIL);
   }
 });
 
-// ---- the invariant everything else rests on ----
+test("evaluate: a pass releases the run to publish; blockers go to fix, bounded", () => {
+  for (const g of ALL) {
+    assert.equal(route(g, "evaluate", PASS).to, "publish");
+    assert.equal(route(g, "evaluate", REFUSE).to, "fix");
+    const next = route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 2 }));
+    assert.equal(next.to, FAIL);
+    assert.match(next.reason, /after 2 fix attempt/);
+  }
+});
+
+test("fix: a committed fix goes back through the test gate, never straight to publish", () => {
+  for (const g of ALL) {
+    assert.equal(route(g, "fix", result(STEP)).to, "check");
+    assert.equal(route(g, "fix", result({ ...STEP, committed: false })).to, FAIL);
+    assert.equal(route(g, "fix", result({ ...STEP, verification: { ...CLEAN_VERIFICATION, tests: "failed" } })).to, FAIL);
+  }
+});
+
+// ---- publish ----
+
+test("publish: a pushed branch ends the run; reusing an existing PR says so", () => {
+  const committed = { ...CTX, channels: { implement: { committed: true } } };
+  assert.equal(route(impl, "publish", result({ pushed: true, prUrl: "u", linked: true, reusedExisting: false, isDraft: true, blocked: NOT_BLOCKED }), committed).to, END);
+  const reused = route(impl, "publish", result({ pushed: true, prUrl: "u", linked: true, reusedExisting: true, isDraft: true, blocked: NOT_BLOCKED }), committed);
+  assert.equal(reused.to, END);
+  assert.match(reused.reason, /reused/);
+  assert.equal(route(impl, "publish", result({ pushed: false, prUrl: "", linked: false, reusedExisting: false, isDraft: false, blocked: NOT_BLOCKED }), committed).to, FAIL);
+});
+
+test("publish: a reply-only review needs no push to succeed", () => {
+  const replyOnly = { ...CTX, channels: { implement: { committed: false } } };
+  assert.equal(route(review, "publish", result({ pushed: false, prUrl: "u", threadsReplied: 3, threadsResolved: 0, blocked: NOT_BLOCKED }), replyOnly).to, END);
+});
+
+// ---- architecture laws, for every graph ----
 
 // Probes spanning every field any contract in the engine declares, so an edge
 // cannot dodge the check by reading something the probes omit.
@@ -404,7 +221,7 @@ const PROBES: NodeResult[] = [
   result({}, false, "turn failed"),
 ];
 
-for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e, qaV3]) {
+for (const graph of ALL) {
   test(`invariant: every "external" node in ${graph.id} is a leaf`, () => {
     const external = Object.values(graph.nodes).filter((n) => n.effects === "external");
     assert.ok(external.length > 0, `${graph.id} declares no external node — did the effect classes drift?`);
@@ -422,7 +239,6 @@ for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e, qaV3]) {
 
   test(`invariant: every node in ${graph.id} has an edge, and every agent node a contract`, () => {
     for (const node of Object.values(graph.nodes)) {
-      if (node.kind === "gate") continue; // drive() parks here; the edge is exercised by resolveGate
       assert.ok(graph.edges[node.id], `${graph.id}: node "${node.id}" has no outgoing edge`);
     }
     for (const node of Object.values(graph.nodes)) {
@@ -435,79 +251,26 @@ for (const graph of [v3, reviewV3, v2, reviewV2, v3e, reviewV3e, qaV3]) {
   });
 }
 
-// The one-shot flow has no gate to park at, so the only place its plan can be
-// captured is the node itself declaring that it leaves one. Asserted on the
-// graph rather than in drive(): if this declaration is dropped, an auto run
-// still opens its PR and nothing fails — the Plan tab just quietly goes empty.
-test("both one-shot flows declare the plan record they leave behind", () => {
-  for (const graph of [v2, reviewV2]) {
-    const deliver = graph.nodes.deliver;
-    assert.equal(deliver.kind, "agent");
-    assert.equal(
-      (deliver as { artifact?: string }).artifact,
-      "plan",
-      `${graph.id}: the only node in this graph must declare the plan it writes, or nothing captures it`
-    );
+// ---- resolution ----
+
+test("graphById resolves a persisted run onto its flow, retired shapes included", () => {
+  assert.equal(graphById("implement-v4").id, "implement-v4");
+  assert.equal(graphById("fix-review-v4").id, "fix-review-v4");
+  assert.equal(graphById("fix-qa-v4").id, "fix-qa-v4");
+  // A finished run from a retired graph is shown on its own flow's loop.
+  assert.equal(graphById("implement-v3-eval").id, "implement-v4");
+  assert.equal(graphById("fix-review-v2").id, "fix-review-v4");
+  assert.equal(graphById("fix-qa-v2").id, "fix-qa-v4");
+  assert.equal(skillOfGraph("fix-review-v3"), "fix-code-review-v4");
+  assert.equal(skillOfGraph(""), "implement-ticket-v4");
+});
+
+test("resolveSkill: only the three v4 skills run; anything else is refused, not defaulted", () => {
+  for (const s of KNOWN_SKILLS) assert.equal(resolveSkill(s), s);
+  for (const s of ["implement-ticket-v2", "implement-ticket-v3", "fix-code-review-v2", "fix-qa-v3", "", "fix-issue"]) {
+    assert.equal(resolveSkill(s), null, s);
+    assert.equal(graphForSkill(s), null, s);
   }
-});
-
-test("the gated flow still shows its plan at the gate, not at a node", () => {
-  for (const graph of [v3, v3e]) {
-    const gate = Object.values(graph.nodes).find((n) => n.kind === "gate");
-    assert.equal(gate?.artifact, "plan", `${graph.id}: the review gate must name the plan it shows`);
-    // The plan node writes the file; the gate is what captures it. Declaring it
-    // on both would be a second place to keep in sync.
-    assert.equal((graph.nodes.plan as { artifact?: string }).artifact, undefined);
-  }
-});
-
-test("graphById resolves a persisted run back onto the shape it started on", () => {
-  assert.equal(graphById("implement-v3", "anything").id, "implement-v3");
-  assert.equal(graphById("fix-review-v2", "anything").id, "fix-review-v2");
-  // Unknown id falls back to the skill, which is what a pre-graphId row has.
-  assert.equal(graphById("", "fix-code-review-v3").id, "fix-review-v3");
-});
-
-// ---- admission: the server, not the client, decides the run's shape ----
-
-const AUTO = { autoImplement: true, autoResolveCodeReview: true };
-const PLAN = { autoImplement: false, autoResolveCodeReview: false };
-
-test("resolveSkill: an unknown skill is rejected instead of silently one-shotting", () => {
-  assert.equal(resolveSkill("implement-ticket-v9", false, AUTO), null);
-  assert.equal(resolveSkill("", false, AUTO), null);
-});
-
-test("resolveSkill: auto mode collapses either implement skill to the one-shot flow", () => {
-  assert.equal(resolveSkill("implement-ticket-v3", false, AUTO), "implement-ticket-v2");
-  assert.equal(resolveSkill("implement-ticket-v2", false, AUTO), "implement-ticket-v2");
-});
-
-test("resolveSkill: plan mode forces the gated flow even when the client asked for v2", () => {
-  assert.equal(resolveSkill("implement-ticket-v2", false, PLAN), "implement-ticket-v3");
-  assert.equal(resolveSkill("fix-code-review-v2", false, PLAN), "fix-code-review-v3");
-});
-
-test("resolveSkill: the two families are independent", () => {
-  const mixed = { autoImplement: true, autoResolveCodeReview: false };
-  assert.equal(resolveSkill("implement-ticket-v3", false, mixed), "implement-ticket-v2");
-  assert.equal(resolveSkill("fix-code-review-v2", false, mixed), "fix-code-review-v3");
-});
-
-test("resolveSkill: the family the caller asked for is never changed", () => {
-  for (const modes of [AUTO, PLAN]) {
-    for (const skill of ["implement-ticket-v2", "implement-ticket-v3"]) {
-      assert.match(resolveSkill(skill, false, modes)!, /^implement-ticket-/);
-    }
-    for (const skill of ["fix-code-review-v2", "fix-code-review-v3"]) {
-      assert.match(resolveSkill(skill, false, modes)!, /^fix-code-review-/);
-    }
-  }
-});
-
-test("resolveSkill: a hand-picked skill on the ticket is honoured verbatim", () => {
-  assert.equal(resolveSkill("implement-ticket-v3", true, AUTO), "implement-ticket-v3");
-  assert.equal(resolveSkill("fix-code-review-v2", true, PLAN), "fix-code-review-v2");
 });
 
 // ---- admission: how many runs may be in flight ----
@@ -560,9 +323,9 @@ test("admission: the concurrency cap is enforced server-side, not only by the cl
   assert.equal(admissionDenial({ ...FREE, runningOthers: 5, cap: 2 })?.blocked, "concurrency-cap");
 });
 
-test("admission: a run parked at a gate does NOT consume a concurrency slot", () => {
+test("admission: a parked run does NOT consume a concurrency slot", () => {
   // The cap bounds machine load, and a parked run holds no child process and
-  // spends nothing. Counting it would let two unanswered plan reviews block every
+  // spends nothing. Counting it would let two stalled runs block every
   // other ticket — and it would disagree with the client, which releases its batch
   // slot the moment a run parks. `runningOthers` is therefore counted from
   // state="running" only, while duplicate-ticket and single-ticket still count
@@ -587,7 +350,7 @@ test("admission: the duplicate check reports before the cap — the specific rea
   assert.equal(d?.blocked, "duplicate-ticket");
 });
 
-// ---- the review flow's opening prompt ----
+// ---- prompts ----
 //
 // An isolated worktree is created detached at the root repo's HEAD, so a review
 // run does not start on the branch holding the code it was sent to fix. That is
@@ -595,26 +358,59 @@ test("admission: the duplicate check reports before the cap — the specific rea
 // which makes it exactly the kind of guard invariant 4 says must be observable:
 // these assertions are the wiring being visible.
 
-function promptOf(graph: Graph, nodeId: string): string {
+function promptOf(graph: Graph, nodeId: string, c: RunContext = CTX): string {
   const node = graph.nodes[nodeId];
   assert.ok(node, `graph ${graph.id} has no node "${nodeId}"`);
   assert.equal(node.kind, "agent", `node "${nodeId}" is not an agent node`);
-  return (node as { prompt: (c: RunContext) => string }).prompt(CTX);
+  return (node as { prompt: (c: RunContext) => string }).prompt(c);
 }
 
-test("review flow: both fresh nodes are told to check out the pull request's branch", () => {
-  assert.ok(promptOf(reviewV2, "deliver").includes(REVIEW_BRANCH_RULE));
-  assert.ok(promptOf(reviewV3, "plan").includes(REVIEW_BRANCH_RULE));
+test("review flow: its first turn is told to check out the pull request's branch", () => {
+  assert.ok(promptOf(review, "implement").includes(REVIEW_BRANCH_RULE));
+  assert.ok(!promptOf(impl, "implement").includes(REVIEW_BRANCH_RULE));
+  assert.ok(!promptOf(qa, "implement").includes(REVIEW_BRANCH_RULE));
 });
 
-test("implement flow: nothing tells it to check out a branch that does not exist yet", () => {
-  assert.ok(!promptOf(v2, "deliver").includes(REVIEW_BRANCH_RULE));
-  assert.ok(!promptOf(v3, "plan").includes(REVIEW_BRANCH_RULE));
+test("only the node that opens a pull request carries the draft rule", () => {
+  assert.ok(publishPrompt(CTX).includes(DRAFT_RULE));
+  for (const g of ALL) assert.ok(!promptOf(g, "implement").includes(DRAFT_RULE), g.id);
+  assert.ok(!promptOf(review, "publish").includes(DRAFT_RULE));
 });
 
-test("the two rules do not cross: only the flow that opens a pull request carries the draft rule", () => {
-  assert.ok(promptOf(v2, "deliver").includes(DRAFT_RULE));
-  assert.ok(!promptOf(reviewV2, "deliver").includes(DRAFT_RULE));
+test("memory: the first turn and the reviewer are pointed at the Root repo's KNOWLEDGE.md", () => {
+  // The worktree is deleted when the run ends, so a lesson written there would
+  // die with it — the path must be the Root repo's, never the worktree's.
+  const worktree = { ...CTX, cwd: "C:/repo/.te-worktrees/Demo-run_test" };
+  for (const g of ALL) {
+    const opening = promptOf(g, "implement", worktree);
+    assert.match(opening, /Knowledge: C:[\\/]repo[\\/]KNOWLEDGE\.md/, g.id);
+    assert.doesNotMatch(opening, /te-worktrees/, g.id);
+    assert.match(promptOf(g, "evaluate", worktree), /Knowledge: C:[\\/]repo[\\/]KNOWLEDGE\.md/, g.id);
+  }
+  // Publishing writes no lesson, so it is not told where the file is.
+  assert.doesNotMatch(publishPrompt(CTX), /Knowledge:/);
+});
+
+test("the reviewer runs in the mode of its flow, and sees the PR only when reviewing one", () => {
+  const withPr = { ...CTX, prUrl: "https://example.invalid/pr/7" };
+  assert.match(promptOf(impl, "evaluate"), /^\/review-changes-v4 /);
+  assert.doesNotMatch(promptOf(impl, "evaluate"), /Mode:/);
+  assert.match(promptOf(qa, "evaluate", withPr), / - Mode: qa-fix$/);
+  assert.doesNotMatch(promptOf(qa, "evaluate", withPr), /PR:/);
+  assert.match(promptOf(review, "evaluate", withPr), /PR: https:\/\/example\.invalid\/pr\/7 .* - Mode: review-fix$/);
+  assert.equal(evaluatePrompt(CTX), promptOf(impl, "evaluate"));
+});
+
+test("the fix brief follows whoever refused, and asks for the lesson", () => {
+  const byCheck = fixPrompt({ ...CTX, channels: { check: { passed: false, blockers: [{ issue: "no test" }] }, evaluate: { blockers: [{ file: "old.ts", issue: "stale" }] } } });
+  assert.match(byCheck, /no test/);
+  assert.doesNotMatch(byCheck, /stale/);
+  const byReview = fixPrompt({ ...CTX, channels: { check: { passed: true, blockers: [] }, evaluate: { blockers: [{ file: "a.ts:3", issue: "two rules" }] } } });
+  assert.match(byReview, /a\.ts:3 — two rules/);
+  for (const p of [byCheck, byReview]) {
+    assert.match(p, /KNOWLEDGE\.md/);
+    assert.match(p, /^Mode: implement\./);
+  }
 });
 
 // ---- account limits: park, don't fail ----
@@ -673,103 +469,28 @@ test("admission: a ticket-specific refusal still outranks the pause", () => {
   assert.equal(d?.blocked, "duplicate-ticket");
 });
 
-test("a persisted v1/v2 QA fix run still resumes on its one-shot graph", () => {
-  const g = graphById("fix-qa-v2", "fix-qa-v2");
-  assert.equal(g.id, "fix-qa-v2");
-  assert.deepEqual(Object.keys(g.nodes), ["deliver"]);
-  assert.equal(g.nodes.deliver.effects, "external");
-  assert.equal(graphById("fix-qa-v1", "fix-qa-v1").id, "fix-qa-v1");
-});
+// ---- fix-qa: the one flow that may end with no change at all ----
 
-const qaFix = graphById("fix-qa-v2", "fix-qa-v2");
-const QA_FIXED = {
-  outcome: "fixed", qaReply: "", committed: true, branch: "bug/1-qa-fix", summary: "", verification: CLEAN_VERIFICATION,
-  pushed: true, prUrl: "https://example/pr/1", linked: true, isDraft: true, lessons: [], blocked: NOT_BLOCKED,
-};
-const QA_NO_FIX = {
-  ...QA_FIXED, outcome: "no-fix-needed", qaReply: "Works as the AC describes.", committed: false, branch: "",
-  pushed: false, prUrl: "", linked: false, isDraft: false,
-};
-
-test("QA fix: a real defect is delivered like any one-shot run", () => {
-  assert.deepEqual(route(qaFix, "deliver", result(QA_FIXED)), { to: END, reason: "delivered" });
-  assert.equal(route(qaFix, "deliver", result({ ...QA_FIXED, pushed: false })).to, FAIL);
-});
-
-test("QA fix: no defect ends the run with a reply and no repository change", () => {
-  assert.deepEqual(route(qaFix, "deliver", result(QA_NO_FIX)), { to: END, reason: "no-fix-needed" });
-});
-
-test("QA fix: 'no fix needed' is refused when the run changed the repository or wrote no reply", () => {
-  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, pushed: true })).to, FAIL);
-  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, committed: true })).to, FAIL);
-  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, prUrl: "https://example/pr/2" })).to, FAIL);
-  assert.equal(route(qaFix, "deliver", result({ ...QA_NO_FIX, qaReply: "  " })).to, FAIL);
-});
-
-// ---- fix-qa-v3: QA fix with a local commit, a test gate and an independent review ----
-
-const QA_LOCAL = {
-  outcome: "fixed", qaReply: "", committed: true, branch: "bug/1-qa-fix", summary: "s", verification: CLEAN_VERIFICATION,
-  deviations: [], testExemption: "", lessons: [], blocked: NOT_BLOCKED,
-};
+const QA_LOCAL = { ...STEP, outcome: "fixed", qaReply: "" };
 const QA_LOCAL_NO_FIX = { ...QA_LOCAL, outcome: "no-fix-needed", qaReply: "Works as the AC describes.", committed: false, branch: "" };
 
-test("fix-qa-v3: the QA skill resolves to the gated graph whatever the settings say", () => {
-  const modes = { autoImplement: true, autoResolveCodeReview: true };
-  assert.equal(resolveSkill("fix-qa-v3", false, modes), "fix-qa-v3");
-  assert.equal(qaV3.id, "fix-qa-v3");
-  assert.deepEqual(Object.keys(qaV3.nodes), ["implement", "check", "evaluate", "fix", "publish"]);
-  assert.equal(graphById("fix-qa-v3", "fix-qa-v3").id, "fix-qa-v3");
+test("fix-qa: a real defect goes to the test gate like any other change", () => {
+  assert.equal(route(qa, "implement", result(QA_LOCAL)).to, "check");
 });
 
-test("fix-qa-v3: nothing leaves the machine before the review — only publish is external", () => {
-  const external = Object.values(qaV3.nodes).filter((n) => n.effects === "external").map((n) => n.id);
-  assert.deepEqual(external, ["publish"]);
-  assert.equal(qaV3.nodes.implement.effects, "local");
-  assert.equal((qaV3.nodes.evaluate as { context?: string }).context, "fresh");
-  assert.equal(qaV3.nodes.check.kind, "check");
+test("fix-qa: no defect ends the run at implement with a reply and no commit", () => {
+  assert.deepEqual(route(qa, "implement", result(QA_LOCAL_NO_FIX)), { to: END, reason: "no-fix-needed" });
+  assert.equal(route(qa, "implement", result({ ...QA_LOCAL_NO_FIX, committed: true })).to, FAIL);
+  assert.equal(route(qa, "implement", result({ ...QA_LOCAL_NO_FIX, qaReply: " " })).to, FAIL);
 });
 
-test("fix-qa-v3: a committed fix goes to the test gate, not to publish", () => {
-  assert.equal(route(qaV3, "implement", result(QA_LOCAL)).to, "check");
-  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL, committed: false })).to, FAIL);
-  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL, verification: { ...CLEAN_VERIFICATION, tests: "failed" } })).to, FAIL);
+test("fix-qa: 'no fix needed' is a QA outcome only — other flows ignore the field", () => {
+  assert.equal(route(impl, "implement", result({ ...QA_LOCAL_NO_FIX, committed: true, branch: "b" })).to, "check");
 });
 
-test("fix-qa-v3: no defect ends the run at implement with a reply and no commit", () => {
-  assert.deepEqual(route(qaV3, "implement", result(QA_LOCAL_NO_FIX)), { to: END, reason: "no-fix-needed" });
-  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL_NO_FIX, committed: true })).to, FAIL);
-  assert.equal(route(qaV3, "implement", result({ ...QA_LOCAL_NO_FIX, qaReply: " " })).to, FAIL);
-});
+// ---- the test gate ----
 
-test("fix-qa-v3: the test gate sends a change with no test back to fix, bounded", () => {
-  assert.equal(route(qaV3, "check", result({ passed: true, blockers: [] })).to, "evaluate");
-  const gap = result({ passed: false, blockers: [{ file: "", issue: "no test" }] });
-  assert.equal(route(qaV3, "check", gap).to, "fix");
-  assert.equal(qaV3.edges.check(ctxWithVisits({ fix: 2 }), gap).to, FAIL);
-  assert.equal(route(qaV3, "check", result({}, false, "could not diff the branch")).to, FAIL);
-});
-
-test("fix-qa-v3: review blockers loop through fix and back through the test gate", () => {
-  assert.equal(route(qaV3, "evaluate", result({ verdict: "pass", blockers: [], lessons: [], blocked: NOT_BLOCKED })).to, "publish");
-  const refuse = result({ verdict: "changes-required", blockers: [{ file: "a.ts:1", issue: "x" }], lessons: [], blocked: NOT_BLOCKED });
-  assert.equal(route(qaV3, "evaluate", refuse).to, "fix");
-  assert.equal(qaV3.edges.evaluate(ctxWithVisits({ fix: 2 }), refuse).to, FAIL);
-  assert.equal(route(qaV3, "fix", result(QA_LOCAL)).to, "check");
-  assert.equal(route(qaV3, "fix", result({ ...QA_LOCAL, committed: false })).to, FAIL);
-});
-
-test("fix-qa-v3: the reviewer runs in qa-fix mode and the fix brief follows whoever refused", () => {
-  assert.match(qaEvaluatePrompt(CTX), /^\/review-changes-v1 .* - Mode: qa-fix$/);
-  const byCheck = qaFixPrompt({ ...CTX, channels: { check: { passed: false, blockers: [{ issue: "no test" }] }, evaluate: { blockers: [{ file: "old.ts", issue: "stale" }] } } });
-  assert.match(byCheck, /no test/);
-  assert.doesNotMatch(byCheck, /stale/);
-  const byReview = qaFixPrompt({ ...CTX, channels: { check: { passed: true, blockers: [] }, evaluate: { blockers: [{ file: "a.ts:3", issue: "two rules" }] } } });
-  assert.match(byReview, /two rules/);
-});
-
-test("fix-qa-v3: test files are recognised across the stacks the app runs on", () => {
+test("test gate: test files are recognised across the stacks the app runs on", () => {
   for (const p of [
     "angular/src/app/pages/fund/edit/edit.component.spec.ts",
     "tests/graph.test.ts",
@@ -783,7 +504,7 @@ test("fix-qa-v3: test files are recognised across the stacks the app runs on", (
   }
 });
 
-test("fix-qa-v3: testGap — a test file or a stated reason passes, neither refuses", () => {
+test("test gate: testGap — a test file or a stated reason passes, neither refuses", () => {
   assert.equal(testGap(["a.ts", "a.spec.ts"], ""), "");
   assert.equal(testGap(["a.html"], "markup only"), "");
   assert.notEqual(testGap(["a.ts"], ""), "");

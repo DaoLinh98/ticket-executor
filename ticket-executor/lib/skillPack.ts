@@ -8,27 +8,24 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { homedir } from "os";
 import path from "path";
 
-/** The skills every install needs: all four are reachable from the Settings
- *  toggles, so a missing one is a blocker. Lives here rather than in preflight.ts
- *  so preflight can depend on this module without a cycle. */
+/** The skills every install needs: the implement and review-fix runs, and the
+ *  reviewer every run's `evaluate` node invokes — so a missing one is a blocker.
+ *  Lives here rather than in preflight.ts so preflight can depend on this module
+ *  without a cycle. */
 export const REQUIRED_SKILLS = [
-  "implement-ticket-v2",
-  "implement-ticket-v3",
-  "fix-code-review-v2",
-  "fix-code-review-v3",
+  "implement-ticket-v4",
+  "fix-code-review-v4",
+  "review-changes-v4",
 ] as const;
 
-/** Bundled and installable exactly like the required four, but only reached when
- *  a setting switches its node on — so a missing copy is a *warning* in System
- *  Check, not a blocker on every run. What makes it a hard requirement is the
- *  setting being on, and that is enforced where it belongs: in startRun()'s
- *  admission check, which refuses the run rather than letting it fail on an
- *  unknown slash command a turn later. */
+/** Bundled and installable exactly like the required ones, but only reached from
+ *  Flow Runner — so a missing copy is a *warning* in System Check, not a blocker
+ *  on every run. startRun()'s admission check still refuses a run whose skill is
+ *  missing, rather than letting it fail on an unknown slash command a turn later. */
 export const OPTIONAL_SKILLS = [
-  "review-changes-v1", // the `evaluate` node — Setting.evaluateBeforePublish
-  "triage-sprint-v1", // Flow Runner's triage turn — invoked by hand, never by a run
-  "fix-qa-v3", // Flow Runner's QA fix run — started from the row after QA fails
-  "reply-qa-v1", // Flow Runner's drafted reply to QC — a turn that writes nothing
+  "triage-sprint-v4", // Flow Runner's triage turn — invoked by hand, never by a run
+  "fix-qa-v4", // Flow Runner's QA fix run — started from the row after QA fails
+  "reply-qa-v4", // Flow Runner's drafted reply to QC — a turn that writes nothing
 ] as const;
 
 /** Every skill this repo ships a copy of. */
@@ -140,24 +137,43 @@ export function isBundled(name: string): name is SkillName {
 
 /** Bundled-vs-installed state for every required skill. Read-only. */
 export function skillStates(): SkillState[] {
-  return BUNDLED_SKILLS.map((name) => {
-    const src = path.join(packDir(), name, "SKILL.md");
-    const bundledVersion = existsSync(src) ? readVersion(src) : "0.0.0";
-    const installedPath = findSkill(name);
-    if (!installedPath) {
-      return {
-        name, required: isRequiredSkill(name),
-        bundledVersion, installedVersion: null, installedPath: null, status: "missing" as const,
-      };
-    }
-    const installedVersion = readVersion(path.join(installedPath, "SKILL.md"));
-    let status: SkillState["status"] = "ok";
-    if (cmpVersion(bundledVersion, installedVersion) > 0) status = "outdated";
-    // Same version but different bytes: someone edited their copy. Say so
-    // rather than silently offering to overwrite it.
-    else if (!sameContent(src, path.join(installedPath, "SKILL.md"))) status = "modified";
-    return { name, required: isRequiredSkill(name), bundledVersion, installedVersion, installedPath, status };
-  });
+  return BUNDLED_SKILLS.map(skillState);
+}
+
+/** Why a bundled skill cannot be run right now, or "" when it can: missing, or
+ *  an installed copy older than the one this repo ships. An older copy answers
+ *  an older contract — a field the edges route on, a mode the prompt passes —
+ *  so it is refused before the spawn rather than failing a node later. A copy
+ *  of the same version that someone edited by hand is theirs to keep. */
+export function skillProblem(name: string): string {
+  if (!(BUNDLED_SKILLS as readonly string[]).includes(name)) {
+    return findSkill(name) ? "" : `The ${name} skill is not installed.`;
+  }
+  const s = skillState(name as SkillName);
+  if (s.status === "missing") return `The ${name} skill is not installed.`;
+  if (s.status === "outdated") {
+    return `The installed ${name} skill is version ${s.installedVersion}, older than the bundled ${s.bundledVersion}.`;
+  }
+  return "";
+}
+
+function skillState(name: SkillName): SkillState {
+  const src = path.join(packDir(), name, "SKILL.md");
+  const bundledVersion = existsSync(src) ? readVersion(src) : "0.0.0";
+  const installedPath = findSkill(name);
+  if (!installedPath) {
+    return {
+      name, required: isRequiredSkill(name),
+      bundledVersion, installedVersion: null, installedPath: null, status: "missing" as const,
+    };
+  }
+  const installedVersion = readVersion(path.join(installedPath, "SKILL.md"));
+  let status: SkillState["status"] = "ok";
+  if (cmpVersion(bundledVersion, installedVersion) > 0) status = "outdated";
+  // Same version but different bytes: someone edited their copy. Say so
+  // rather than silently offering to overwrite it.
+  else if (!sameContent(src, path.join(installedPath, "SKILL.md"))) status = "modified";
+  return { name, required: isRequiredSkill(name), bundledVersion, installedVersion, installedPath, status };
 }
 
 export type InstallOutcome = {

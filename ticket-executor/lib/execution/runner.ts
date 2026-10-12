@@ -6,23 +6,20 @@ import { resolveCredential } from "../providerCredentials";
 import type { LogLine, RunState } from "../types";
 import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
-import { bankParkedTime, cancel, drive, finish, resolveGate, type GateAction } from "./graph/drive";
-import { clearRunArtifacts, FEEDBACK_FILE, graphById, graphForSkill, isReviewSkill, KNOWN_SKILLS, PLAN_FILE, QA_FIX_SKILL, resolveSkill } from "./graph/graphs";
-import { loadKnowledge } from "./knowledgeStore";
+import { bankParkedTime, cancel, drive, finish, knowledgeStamp } from "./graph/drive";
+import { clearRunArtifacts, graphById, graphForSkill, KNOWN_SKILLS, resolveSkill, skillOfGraph } from "./graph/graphs";
 import { REVIEW_SKILL } from "./graph/prompts";
-import { latestArtifact, saveArtifact, saveRun } from "./graph/persist";
+import { saveRun } from "./graph/persist";
 import type { LiveRun } from "./graph/types";
-import { findSkill } from "../skillPack";
+import { skillProblem } from "../skillPack";
 import { store } from "./store";
-
-export type { GateAction };
 
 // ---- repo hygiene ----
 
 /** Instruction files a run reads but git will not carry into a worktree.
  *
  *  `git worktree add` materialises tracked files only. A repo that keeps its
- *  CLAUDE.md / KNOWLEDGE.md untracked or gitignored — which is the normal case for
+ *  CLAUDE.md untracked or gitignored — which is the normal case for
  *  a client repo nobody wants agent files committed into — hands an isolated run
  *  an empty tree of guidance, and the agent rediscovers the layout from scratch
  *  every time. Copying is best-effort and never overwrites: a file the worktree
@@ -31,7 +28,9 @@ export type { GateAction };
  *  Only isolated runs need this. A single-ticket run executes in rootRepo itself
  *  and already sees every one of these files.
  */
-const CONTEXT_FILES = ["CLAUDE.md", "AGENTS.md", "KNOWLEDGE.md", path.join(".claude", "CLAUDE.md")];
+// KNOWLEDGE.md is deliberately absent: a run reads and writes the Root repo's
+// copy by absolute path (knowledgeFile()), so a lesson outlives the worktree.
+const CONTEXT_FILES = ["CLAUDE.md", "AGENTS.md", path.join(".claude", "CLAUDE.md")];
 
 function carryRepoContext(rootRepo: string, worktree: string): string[] {
   const copied: string[] = [];
@@ -133,14 +132,16 @@ function returnToDefaultBranch(rootRepo: string): { ok: boolean; detail: string 
   return { ok: true, detail: `Base branch "${branch}"${pulled}` };
 }
 
-// The run writes two things into the developer's repo that must never reach a
-// commit: the plan-gate contract (`.te/`) and the isolated worktrees
-// (`.te-worktrees/`). Ignoring them is done here rather than left to the skill:
-// an agent that forgets commits the plan, and a stale worktree left by a crashed
-// run would otherwise show up as untracked noise in every later diff.
+// The run writes three things into the developer's repo that must never reach a
+// commit: the plan record (`.te/`), the isolated worktrees (`.te-worktrees/`)
+// and the project memory (`KNOWLEDGE.md`, local-only by design). Ignoring them
+// is done here rather than left to the skill: an agent that forgets commits the
+// plan, and a stale worktree left by a crashed run would otherwise show up as
+// untracked noise in every later diff. An exclude cannot hide a file the
+// project already tracks, so the skills also never stage KNOWLEDGE.md.
 // `.git/info/exclude` (not `.gitignore`) because that file is the project's own
 // tracked file — the app has no business editing it.
-const TE_EXCLUDES = ["/.te/", "/.te-worktrees/"];
+const TE_EXCLUDES = ["/.te/", "/.te-worktrees/", "/KNOWLEDGE.md"];
 
 function excludeTeArtifacts(rootRepo: string) {
   try {
@@ -191,11 +192,6 @@ function applyGitIdentity(rootRepo: string, name: string, email: string) {
   }
 }
 
-function writeWorktreeFile(cwd: string, rel: string, body: string) {
-  mkdirSync(path.join(cwd, path.dirname(rel)), { recursive: true });
-  writeFileSync(path.join(cwd, rel), body, "utf8");
-}
-
 // ---- start ----
 
 /** A run may not start. Thrown inside the admission transaction so the whole
@@ -207,27 +203,22 @@ class AdmissionError extends Error {
   }
 }
 
-/** A run occupying a slot: computing, or parked waiting on a human. Both are
- *  "in flight" — a parked run still owns its worktree and its branch. */
+/** A run occupying a slot: computing, or parked (on a usage limit, or for a
+ *  person after a crash mid-publish). Both are "in flight" — a parked run still
+ *  owns its worktree and its branch. */
 const ACTIVE_STATES = ["running", "waiting"];
 
 /** A run actually computing: it holds a child process and is spending money.
  *  This — not ACTIVE_STATES — is what the concurrency cap counts, because the cap
- *  bounds machine load. A run parked at a gate costs nothing while it waits, and
- *  counting it would let two unanswered plan reviews block the whole queue. */
+ *  bounds machine load. A parked run costs nothing while it waits, and counting
+ *  it would let two stalled runs block the whole queue. */
 const COMPUTING_STATES = ["running"];
 
 export type StartRunInput = {
   ticketId: string;
   ticketUrl?: string;
-  /** What the caller asked for. The *engine* decides the skill actually run —
-   *  see resolveSkill(); the caller only picks the family. */
+  /** What the caller asked for; resolveSkill() decides whether the engine runs it. */
   requestedSkill: string;
-  /** True only when this ticket carries a hand-picked skill on its Overview tab.
-   *  A quick-action button choosing a skill is not "explicit": that choice is
-   *  itself derived from the settings, and re-pinning it here would let the
-   *  client smuggle a graph shape past resolveSkill(). */
-  skillExplicit?: boolean;
   project: string;
   rootRepo: string;
   prUrl?: string;
@@ -262,11 +253,9 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // switching the active connection later must not re-attribute past runs.
   const { org } = await resolveCredential(provider);
 
-  const skill = resolveSkill(cleanPath(params.requestedSkill), !!params.skillExplicit, {
-    autoImplement: setting?.autoImplement ?? true,
-    autoResolveCodeReview: setting?.autoResolveCodeReview ?? true,
-  });
-  if (!skill) {
+  const skill = resolveSkill(cleanPath(params.requestedSkill));
+  const graph = skill ? graphForSkill(skill) : null;
+  if (!skill || !graph) {
     return {
       ok: false,
       status: 400,
@@ -279,43 +268,21 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // (single-ticket mode) → execute directly in rootRepo, which is only safe
   // because the admission check below guarantees nothing else is in flight.
   const isolate = setting?.multiTicketMode ?? true;
-  // The evaluator changes the graph's shape, so it is resolved here (server-side,
-  // from the stored setting) and baked into graphId — a run parked at the gate
-  // must finish on the shape it started on even if the switch is flipped while it
-  // waits.
-  const evaluate = setting?.evaluateBeforePublish ?? false;
-  const graph = graphForSkill(skill, { evaluate });
 
-  // The evaluate node invokes a skill, so it can only run if that skill is on the
-  // machine. Refuse here rather than letting the run reach the node and hand the
-  // CLI an unknown slash command — by then the plan has been written, a human has
-  // approved it and the code is committed, which is an expensive place to
-  // discover a missing file.
-  if (skill === QA_FIX_SKILL && !findSkill(QA_FIX_SKILL)) {
-    return {
-      ok: false,
-      status: 400,
-      blocked: "missing-skill",
-      error: `The ${QA_FIX_SKILL} skill is not installed. Install it from the Guide or the System Check page.`,
-    };
-  }
-  if (skill === QA_FIX_SKILL && !findSkill(REVIEW_SKILL)) {
-    return {
-      ok: false,
-      status: 400,
-      blocked: "missing-skill",
-      error: `The QA fix run reviews its change with ${REVIEW_SKILL}, which is not installed. Install it from the Guide or the System Check page.`,
-    };
-  }
-  if (evaluate && !findSkill(REVIEW_SKILL)) {
-    return {
-      ok: false,
-      status: 400,
-      blocked: "missing-skill",
-      error:
-        `"Review before publishing" is on, but the ${REVIEW_SKILL} skill is not installed. ` +
-        `Install it from the Guide or the System Check page, or turn the setting off.`,
-    };
+  // Every graph invokes two skills: its own, and the reviewer's. Refuse here
+  // rather than letting the run reach a node and hand the CLI an unknown slash
+  // command — or an older copy than the contract this engine routes on, which
+  // fails later and more expensively: after the code is written and committed.
+  for (const name of [skill, REVIEW_SKILL]) {
+    const problem = skillProblem(name);
+    if (problem) {
+      return {
+        ok: false,
+        status: 400,
+        blocked: "missing-skill",
+        error: `${problem} Install it from the Guide or the System Check page.`,
+      };
+    }
   }
 
   // Prefer the provider's own hours; fall back to converting story points.
@@ -422,7 +389,6 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       rootRepo,
       cwd: rootRepo,
       baseSha: "",
-      knowledge: "", // resolved below, once the worktree exists
       channels: {},
       visits: {},
     },
@@ -452,6 +418,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     prUrl: "",
     branch: "",
     resultText: "",
+    knowledgeAtStart: knowledgeStamp(rootRepo),
   };
   store.set(row.id, live);
 
@@ -516,22 +483,9 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // token-costing thing for the agent to have to recognise and discard.
   clearRunArtifacts(live.ctx.cwd);
 
-  // What earlier runs learned about this repo, resolved once here so the prompt
-  // builders stay pure and synchronous. Best-effort: a run that cannot read its
-  // knowledge is a run that costs a few more tokens, not a run that must not
-  // start.
-  try {
-    live.ctx.knowledge = await loadKnowledge(rootRepo, isReviewSkill(skill) ? "review" : "implement");
-    if (live.ctx.knowledge) {
-      live.logLines.push({ text: `● Applying what earlier runs learned about ${rootRepo}`, kind: "step" });
-    }
-  } catch {
-    /* no knowledge this run */
-  }
-
   await saveRun(live);
   // Fire-and-forget: the route returns immediately and the walk continues in the
-  // background until it ends or parks at a gate.
+  // background until it ends or parks.
   void drive(live, graph, graph.entry);
   return { ok: true, runId: row.id };
 }
@@ -539,7 +493,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
 // ---- rehydration ----
 
 /** Rebuild a usable LiveRun from its rows. The in-process map is process-local:
- *  a run parked at a gate can outlive a dev-server restart, and its approval
+ *  a parked run can outlive a dev-server restart, and its wake-up or cancel
  *  still has to work. */
 export async function rehydrate(id: string): Promise<LiveRun | null> {
   const row = await prisma.run.findUnique({
@@ -571,11 +525,6 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
       rootRepo: row.rootRepo,
       cwd: row.worktreePath || row.rootRepo,
       baseSha: row.baseSha,
-      // Not restored, and not re-read: only the run's *first* turn carries the
-      // knowledge block, and a rehydrated run has already taken that turn. Every
-      // node it can still reach either resumes a session that already holds the
-      // block or is publishing work that is final.
-      knowledge: "",
       channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
       // Restored, not reset: the hop and cycle counters belong to the run. A
       // recovered run that started its counters over would be allowed to loop
@@ -611,82 +560,16 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     prUrl: row.prUrl,
     branch: row.branch,
     resultText: row.resultText,
+    // Not persisted: a run rebuilt after a restart cannot tell what the file
+    // held when it started, so it does not report on it.
+    knowledgeAtStart: null,
   };
   store.set(id, live);
   return live;
 }
 
-/** The skill a graph id came from. The graph is what actually drives the run;
- *  the skill name only reappears in the prompt, and every graph maps to exactly
- *  one skill. */
-function skillOfGraph(graphId: string): string {
-  switch (graphId) {
-    case "implement-v3":
-      return "implement-ticket-v3";
-    case "fix-review-v3":
-      return "fix-code-review-v3";
-    case "fix-review-v2":
-      return "fix-code-review-v2";
-    default:
-      return "implement-ticket-v2";
-  }
-}
-
 async function liveOf(id: string): Promise<LiveRun | null> {
   return store.get(id) ?? (await rehydrate(id));
-}
-
-// ---- gate resolution ----
-
-/** Resolve a run parked at the plan gate. `plan` carries the reviewer's (possibly
- *  edited) markdown, which is written back to .te/plan.md *and* stored as a new
- *  human-authored Artifact version before the walk resumes — so what the agent
- *  proposed and what the human approved both survive. */
-export async function resolvePlan(
-  id: string,
-  action: GateAction,
-  opts?: { plan?: string; feedback?: string }
-): Promise<{ ok: true } | { ok: false; error: string; code: number }> {
-  const live = await liveOf(id);
-  if (!live) return { ok: false, error: "Run not found", code: 404 };
-  if (live.state !== "waiting") return { ok: false, error: `Run is not awaiting review (state: ${live.state})`, code: 409 };
-
-  const graph = graphById(live.graphId, live.ctx.skill);
-  const node = graph.nodes[live.currentNodeId];
-  if (!node || node.kind !== "gate") {
-    return { ok: false, error: `Run is parked on "${live.currentNodeId}", which is not a gate`, code: 409 };
-  }
-  if (action !== "cancel" && !live.sessionId) {
-    return { ok: false, error: "This run has no Claude session to resume", code: 409 };
-  }
-
-  const edited = (opts?.plan ?? "").trim();
-  if (edited) {
-    const current = await latestArtifact(id, "plan");
-    if (!current || current.body !== edited) {
-      try {
-        writeWorktreeFile(live.ctx.cwd, PLAN_FILE, edited);
-      } catch (e) {
-        return { ok: false, error: `Failed to write the edited plan: ${e instanceof Error ? e.message : e}`, code: 500 };
-      }
-      await saveArtifact(id, "plan", edited, "human");
-      live.logLines.push({ text: "✎ Plan edited by reviewer", kind: "file" });
-    }
-  }
-
-  if (action === "revise") {
-    const feedback = (opts?.feedback ?? "").trim();
-    if (!feedback) return { ok: false, error: "Feedback is required to request changes", code: 400 };
-    try {
-      writeWorktreeFile(live.ctx.cwd, FEEDBACK_FILE, feedback);
-    } catch (e) {
-      return { ok: false, error: `Failed to write feedback: ${e instanceof Error ? e.message : e}`, code: 500 };
-    }
-    await saveArtifact(id, "feedback", feedback, "human");
-  }
-
-  await resolveGate(live, graph, action);
-  return { ok: true };
 }
 
 // ---- cancellation ----
@@ -735,7 +618,7 @@ export async function resumeRateLimitedRuns(now = new Date()): Promise<number> {
     live.logLines.push({ text: "↻ Usage limit reset — continuing where the run stopped", kind: "step" });
     await saveRun(live);
 
-    const graph = graphById(live.graphId, live.ctx.skill);
+    const graph = graphById(live.graphId);
     void drive(live, graph, live.currentNodeId || graph.entry);
     resumed += 1;
   }
@@ -789,7 +672,7 @@ export async function recoverInterruptedRuns(): Promise<number> {
       continue;
     }
 
-    const graph = graphById(live.graphId, live.ctx.skill);
+    const graph = graphById(live.graphId);
     const resumeFrom = open?.nodeId || live.currentNodeId || graph.entry;
     live.logLines.push({ text: `↻ Resuming "${resumeFrom}" after a server restart`, kind: "step" });
     void drive(live, graph, resumeFrom);

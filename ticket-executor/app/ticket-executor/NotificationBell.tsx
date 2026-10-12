@@ -46,7 +46,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "pr.conflict": "CONFLICT",
   "ticket.mention": "MENTIONED",
   "ticket.comment": "COMMENT",
-  "run.waiting": "PLAN",
+  "run.waiting": "NEEDS YOU",
   "run.failed": "FAILED",
   "run.succeeded": "DONE",
   "scheduler.started": "AUTO",

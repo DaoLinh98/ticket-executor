@@ -12,20 +12,17 @@ import { AccessDiagram, Bullets, Callout, Cmd, Code, DocsLink, P, Shot, SkillIns
 // module is server-only (it reaches child_process through lib/mcp.ts), and a
 // value import would pull it into the client bundle. Keep the two in sync.
 const SKILLS = [
-  "implement-ticket-v2",
-  "implement-ticket-v3",
-  "fix-code-review-v2",
-  "fix-code-review-v3",
+  "implement-ticket-v4",
+  "fix-code-review-v4",
+  "review-changes-v4",
 ] as const;
 
-// What each one actually does. The v2/v3 suffix is the plan gate; the
-// implement/fix-code-review prefix is a different job entirely — one builds
-// the ticket and opens a PR, the other works an existing PR's review threads.
+// What each one actually does. Every run commits locally, passes a test gate and
+// an independent review (looping back to fix what they refuse), then publishes.
 const SKILL_BLURB: Record<(typeof SKILLS)[number], string> = {
-  "implement-ticket-v2": "builds the ticket and opens a PR in one uninterrupted run. Used when Auto implement is on.",
-  "implement-ticket-v3": "same job, but writes a plan and waits for your approval before touching any code. Used when Auto implement is off.",
-  "fix-code-review-v2": "works an existing PR's open review threads — fixes, replies, resolves — in one uninterrupted run. Used when Auto resolve code review is on.",
-  "fix-code-review-v3": "same job, but drafts a thread-by-thread resolution plan for your approval first. Used when Auto resolve code review is off.",
+  "implement-ticket-v4": "builds the ticket, commits locally, and opens a draft PR once the test gate and the reviewer pass it.",
+  "fix-code-review-v4": "works an existing PR's open review threads — fixes, then replies and resolves once the test gate and the reviewer pass the fixes.",
+  "review-changes-v4": "the independent reviewer every run calls before publishing. Read-only; it never sees the implementer's reasoning.",
 };
 
 export type GuideSection = {
@@ -218,8 +215,8 @@ git --version`}</Cmd>
         <Bullets
           items={[
             <><strong>Set the Root repo per ticket.</strong> On the Overview tab. It is used verbatim as the working directory — the project name is never appended. It is remembered per project afterwards.</>,
-            <><strong>Keep plan review on for anything non-trivial.</strong> With <em>Auto implement</em> off, the run stops after writing a plan and waits. Reading and correcting a plan costs a fraction of re-running an implementation.</>,
-            <><strong>Edit the plan, do not just reject it.</strong> The Plan tab is an editor — your edited text is what gets executed. Request changes only when the whole approach is wrong.</>,
+            <><strong>Nobody approves a plan.</strong> The run writes one as a record (the Plan tab), then a test gate and an independent reviewer judge the finished diff and send it back to be fixed, at most twice, before anything is pushed.</>,
+            <><strong>Keep a <Code>KNOWLEDGE.md</Code> in each project.</strong> Runs read it before coding and add the lessons that reviewers and QA had to teach them. It is never committed.</>,
             <><strong>Multi-ticket mode gives each run its own worktree.</strong> Leave it on to run tickets concurrently. Turn it off if you want to watch a single run in your own checkout — the app then refuses a second concurrent start.</>,
             <><strong>Run System Check before your first ticket of the day.</strong> Every blocker it lists is a run that would have failed after spending tokens.</>,
           ]}
@@ -245,7 +242,7 @@ git --version`}</Cmd>
             <><strong>Connection test passes but runs fail reading the ticket</strong> — that is the MCP lane, not the app lane. Go back to step 3.</>,
             <><strong>Run starts then dies immediately</strong> — usually a bad Root repo. It must exist, be a git repository, and have a pushable remote.</>,
             <><strong>Deep check takes ~30 seconds</strong> — expected. It health-probes every MCP server on the machine. Remove dead connectors to speed it up.</>,
-            <><strong>A run is stuck at &quot;Awaiting your review&quot;</strong> — that is the plan gate, not a hang. Open the Plan tab and approve, revise, or cancel.</>,
+            <><strong>A run is waiting on you after a restart</strong> — the server stopped while it was publishing, and nobody can tell whether the push landed. Check the branch and the PR, then cancel it.</>,
             <><strong>Nothing loads after a restart</strong> — parked runs survive restarts, live ones do not. Cancel and start again.</>,
           ]}
         />

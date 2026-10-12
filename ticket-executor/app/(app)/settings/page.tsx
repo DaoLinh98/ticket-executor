@@ -20,10 +20,9 @@ import PushNotifications from "./PushNotifications";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
-  animatedBackground: true, clickEffects: true, ringAnimation: true, autoImplement: true, autoResolveCodeReview: true,
+  animatedBackground: true, clickEffects: true, ringAnimation: true,
   scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
   manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
-  evaluateBeforePublish: false,
   gitUserName: "", gitUserEmail: "",
 };
 
@@ -493,30 +492,6 @@ export default function SettingsPage() {
           </label>
         </div>
       </div>
-
-      <div style={divider} />
-      <ToggleRow
-        label="Auto-implementation"
-        on={settings.autoImplement}
-        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, autoImplement: !s.autoImplement })); }}
-        desc={<>On: run to a PR in one shot (<span style={mono}>implement-ticket-v2</span>).<br />Off: draft a plan and wait for your review before coding (<span style={mono}>implement-ticket-v3</span>).</>}
-      />
-
-      <div style={divider} />
-      <ToggleRow
-        label="Auto-resolve code review"
-        on={settings.autoResolveCodeReview}
-        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, autoResolveCodeReview: !s.autoResolveCodeReview })); }}
-        desc={<>On: resolve every open review thread in one shot (<span style={mono}>fix-code-review-v2</span>).<br />Off: draft a resolution plan and wait for your review before coding (<span style={mono}>fix-code-review-v3</span>).</>}
-      />
-
-      <div style={divider} />
-      <ToggleRow
-        label="Review before publishing"
-        on={settings.evaluateBeforePublish}
-        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, evaluateBeforePublish: !s.evaluateBeforePublish })); }}
-        desc={<>Adds an independent reviewer between coding and the pull request. It reads only the diff, in its own session, so it can disagree with the agent that wrote the code — blocking findings go back for up to two fix rounds.<br />Costs roughly one extra review turn per run. Applies to the plan-review flows only (<span style={mono}>-v3</span>); the one-shot flows have already published by then.</>}
-      />
     </div>
   );
 

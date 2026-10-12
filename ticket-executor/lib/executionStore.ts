@@ -10,7 +10,7 @@
 //   claudeCli.ts      — CLI args and the NDJSON stream-json turn runner
 //   git.ts            — post-run diff collection against the worktree's base commit
 //   queries.ts        — read models and the dashboard aggregate
-//   runner.ts         — worktree isolation, run lifecycle, gate resolution, recovery
+//   runner.ts         — worktree isolation, run lifecycle, limit and crash recovery
 //   store.ts          — the globalThis-backed in-process Map of live runs
 //   triage.ts         — the sprint-triage turn (no run, no worktree, one contract)
 //   planStore.ts      — reads/writes for the sprint plan and the automation log
@@ -19,10 +19,8 @@
 export {
   cancelRun,
   recoverInterruptedRuns,
-  resolvePlan,
   resumeRateLimitedRuns,
   startRun,
-  type GateAction,
   type StartRunInput,
   type StartRunResult,
 } from "./execution/runner";
@@ -38,6 +36,7 @@ export {
   type RunView,
   type SkillConsistency,
 } from "./execution/queries";
+export { IMPLEMENT_SKILL, KNOWN_SKILLS, QA_FIX_SKILL, REVIEW_FIX_SKILL } from "./execution/graph/graphs";
 export {
   getTriage,
   latestTriage,
