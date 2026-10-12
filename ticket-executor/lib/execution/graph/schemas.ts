@@ -23,7 +23,7 @@ const BLOCKED = {
 const VERIFICATION = {
   type: "object",
   description:
-    "Report only what you actually ran. In the two-phase flow the runner blocks publishing on these values; in the one-shot flow publishing has already happened, so a reported failure instead marks the whole run failed and leaves the ticket where it was. Either way a false 'passed' is how unverified code reaches a pull request.",
+    "Report only what you actually ran. The runner blocks publishing on these values, so a false 'passed' is how unverified code reaches a pull request.",
   properties: {
     tests: { type: "string", enum: ["passed", "failed", "not-run"] },
     build: { type: "string", enum: ["passed", "failed", "not-run"] },
@@ -44,56 +44,8 @@ const ASSUMPTIONS = {
   },
 } as const;
 
-/**
- * Durable facts about the *repository*, harvested into `KnowledgeNote` and read
- * back into the next run's opening prompt (lib/execution/knowledge.ts).
- *
- * Its consumer is that table, not an edge: nothing routes on it and no run fails
- * over it. It rides on contracts that already exist rather than on a `learn`
- * node of its own, because a node would change every graph's shape — and the
- * one-shot graph has nowhere to put one, since its single node has already
- * published by the time anything could reflect.
- *
- * The description is doing the real work here. Left open, a model answers this
- * with a summary of the ticket it just finished, which is worth nothing to the
- * next ticket and costs output tokens every run; the constraints below are what
- * make the difference between a knowledge base and a diary.
- */
-const LESSONS = {
-  type: "array",
-  maxItems: 3,
-  description:
-    "Durable facts about THIS REPOSITORY that would have saved you time if you had known them when you started, and that will still be true for an unrelated ticket next month. Good: the command that actually builds/tests it, a generated file that must never be hand-edited, a convention reviewers keep enforcing, a trap in the setup. Not this: anything about this ticket, this branch, this PR or these files; anything already written in the repo's CLAUDE.md/README; anything you are guessing at. Usually empty — return [] rather than inventing one.",
-  items: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description: "One sentence, imperative, self-contained. It will be shown with no other context.",
-      },
-    },
-    required: ["text"],
-    additionalProperties: false,
-  },
-} as const;
-
-/** plan / replan — consumed by the plan edge (park vs fail) and the Plan tab. */
-export const PLAN_OUTPUT = {
-  type: "object",
-  properties: {
-    planWritten: {
-      type: "boolean",
-      description: "True only if .te/plan.md now exists on disk with the full plan in it.",
-    },
-    summary: { type: "string", description: "One or two sentences on what the plan covers." },
-    assumptions: ASSUMPTIONS,
-    blocked: BLOCKED,
-  },
-  required: ["planWritten", "summary", "assumptions", "blocked"],
-  additionalProperties: false,
-} as const;
-
-/** implement — consumed by the implement edge (publish vs fail) and the Result tab. */
+/** The delivering contract every local phase shares — consumed by the implement
+ *  and fix edges (check vs fail) and the Result tab. */
 export const IMPLEMENT_OUTPUT = {
   type: "object",
   properties: {
@@ -106,7 +58,7 @@ export const IMPLEMENT_OUTPUT = {
     verification: VERIFICATION,
     deviations: {
       type: "array",
-      description: "Anything that diverged from the approved .te/plan.md.",
+      description: "Anything that diverged from .te/plan.md.",
       items: {
         type: "object",
         properties: { what: { type: "string" }, why: { type: "string" } },
@@ -114,10 +66,9 @@ export const IMPLEMENT_OUTPUT = {
         additionalProperties: false,
       },
     },
-    lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["committed", "branch", "summary", "verification", "deviations", "lessons", "blocked"],
+  required: ["committed", "branch", "summary", "verification", "deviations", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -151,10 +102,9 @@ export const EVALUATE_OUTPUT = {
     },
     // The reviewer is the best-placed node to spot a *recurring* defect: it is
     // fresh, it judges rather than defends, and it sees the finished diff.
-    lessons: LESSONS,
     blocked: BLOCKED,
   },
-  required: ["verdict", "blockers", "lessons", "blocked"],
+  required: ["verdict", "blockers", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -180,52 +130,9 @@ export const PUBLISH_OUTPUT = {
   additionalProperties: false,
 } as const;
 
-/** The v2 one-shot skills do implement + publish in a single external leaf node,
- *  so their contract is the union of the two. */
-export const ONESHOT_OUTPUT = {
-  type: "object",
-  properties: {
-    committed: { type: "boolean" },
-    branch: { type: "string" },
-    summary: { type: "string" },
-    verification: VERIFICATION,
-    pushed: { type: "boolean" },
-    prUrl: { type: "string" },
-    linked: { type: "boolean" },
-    isDraft: {
-      type: "boolean",
-      description: "True if the pull request is in draft state. The harness publishes it later, on the sprint plan's release day.",
-    },
-    lessons: LESSONS,
-    blocked: BLOCKED,
-  },
-  required: ["committed", "branch", "summary", "verification", "pushed", "prUrl", "linked", "isDraft", "lessons", "blocked"],
-  additionalProperties: false,
-} as const;
-
-export const QA_FIX_OUTPUT = {
-  type: "object",
-  properties: {
-    ...ONESHOT_OUTPUT.properties,
-    outcome: {
-      type: "string",
-      enum: ["fixed", "no-fix-needed"],
-      description:
-        "fixed: at least one QA finding was a real defect and the fix is in a draft pull request. " +
-        "no-fix-needed: every finding was reviewed against the code and none is a defect in this ticket — nothing was changed, committed, pushed or opened.",
-    },
-    qaReply: {
-      type: "string",
-      description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty when outcome is fixed.",
-    },
-  },
-  required: [...ONESHOT_OUTPUT.required, "outcome", "qaReply"],
-  additionalProperties: false,
-} as const;
-
-/** fix-qa-v3 `fix` — an implement attempt that must also say why it adds no
- *  test, read by the `check` node's test gate. */
-export const QA_FIX_STEP_OUTPUT = {
+/** implement / fix — a local attempt that must also say why it adds no test,
+ *  read by the `check` node's test gate. */
+export const STEP_OUTPUT = {
   type: "object",
   properties: {
     ...IMPLEMENT_OUTPUT.properties,
@@ -239,16 +146,25 @@ export const QA_FIX_STEP_OUTPUT = {
   additionalProperties: false,
 } as const;
 
-/** fix-qa-v3 `implement` — reviews the findings and either commits the fix
+/** fix-qa `implement` — reviews the findings and either commits the fix
  *  locally or ends the run with a reply to QA. Nothing is pushed here. */
-export const QA_FIX_LOCAL_OUTPUT = {
+export const QA_IMPLEMENT_OUTPUT = {
   type: "object",
   properties: {
-    ...QA_FIX_STEP_OUTPUT.properties,
-    outcome: QA_FIX_OUTPUT.properties.outcome,
-    qaReply: QA_FIX_OUTPUT.properties.qaReply,
+    ...STEP_OUTPUT.properties,
+    outcome: {
+      type: "string",
+      enum: ["fixed", "no-fix-needed"],
+      description:
+        "fixed: at least one QA finding was a real defect and the fix is committed locally. " +
+        "no-fix-needed: every finding was reviewed against the code and none is a defect in this ticket — nothing was changed or committed.",
+    },
+    qaReply: {
+      type: "string",
+      description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty when outcome is fixed.",
+    },
   },
-  required: [...QA_FIX_STEP_OUTPUT.required, "outcome", "qaReply"],
+  required: [...STEP_OUTPUT.required, "outcome", "qaReply"],
   additionalProperties: false,
 } as const;
 
@@ -264,28 +180,6 @@ export const REVIEW_PUBLISH_OUTPUT = {
     blocked: BLOCKED,
   },
   required: ["pushed", "prUrl", "threadsReplied", "threadsResolved", "blocked"],
-  additionalProperties: false,
-} as const;
-
-/** The v2 fix-code-review one-shot. */
-export const REVIEW_ONESHOT_OUTPUT = {
-  type: "object",
-  properties: {
-    committed: { type: "boolean" },
-    branch: { type: "string" },
-    summary: { type: "string" },
-    verification: VERIFICATION,
-    pushed: { type: "boolean" },
-    prUrl: { type: "string" },
-    threadsReplied: { type: "integer" },
-    threadsResolved: { type: "integer" },
-    lessons: LESSONS,
-    blocked: BLOCKED,
-  },
-  required: [
-    "committed", "branch", "summary", "verification",
-    "pushed", "prUrl", "threadsReplied", "threadsResolved", "lessons", "blocked",
-  ],
   additionalProperties: false,
 } as const;
 
@@ -318,16 +212,6 @@ export function verificationOf(data: Record<string, unknown>): Verification {
 /** A verification result that must stop the run before anything is published.
  *  "not-run" is not a failure — plenty of repos have no test command — but a
  *  check that ran and failed is. */
-/** The `lessons` a node reported, as plain strings. Absent on the contracts that
- *  do not carry the field (plan, publish, gate) — those simply yield none. */
-export function lessonsOf(data: Record<string, unknown>): string[] {
-  const raw = data.lessons;
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((l) => (typeof (l as { text?: unknown })?.text === "string" ? (l as { text: string }).text : ""))
-    .filter(Boolean);
-}
-
 export function verificationFailed(v: Verification): string {
   if (v.tests === "failed") return "verification.tests=failed";
   if (v.build === "failed") return "verification.build=failed";

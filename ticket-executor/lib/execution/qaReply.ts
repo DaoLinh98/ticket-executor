@@ -8,7 +8,7 @@ import { normalizeProvider, postTicketComment } from "../tickets";
 import { logAutomation } from "./planStore";
 import { scratchCwd, triageLive } from "./triage";
 
-export const QA_REPLY_SKILL = "reply-qa-v1";
+export const QA_REPLY_SKILL = "reply-qa-v4";
 
 export const QA_REPLY_OUTPUT = {
   type: "object",

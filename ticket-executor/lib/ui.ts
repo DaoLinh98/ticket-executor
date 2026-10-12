@@ -104,7 +104,7 @@ export type ActionInfo = { label: string; skill: string };
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
   if (IMPLEMENTABLE_STATES.has(s))
-    return { label: "Implement Ticket", skill: "implement-ticket-v3" };
+    return { label: "Implement Ticket", skill: "implement-ticket-v4" };
   // if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
   return null;
 }
@@ -115,10 +115,10 @@ export function actionInfoFor(status: string): ActionInfo | null {
 // `lib/execution/release.ts` (RELEASE_STATUS), not at the moment the agent
 // stopped typing.
 
-// True for either code-review-resolution skill (auto v2 or plan-review-gated v3) —
-// used everywhere the UI needs to treat both the same regardless of which one ran.
+// True for any code-review-resolution skill, including the retired v2/v3 ones a
+// past run may still carry — used everywhere the UI treats a review-fix run apart.
 export function isFixReviewSkill(skill?: string): boolean {
-  return skill === "fix-code-review-v2" || skill === "fix-code-review-v3";
+  return !!skill?.startsWith("fix-code-review-");
 }
 
 export const RUN_COLOR: Record<UiRunState, string> = {

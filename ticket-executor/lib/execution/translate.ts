@@ -121,7 +121,7 @@ function translateLive(id: string, cwd: string): LiveRun {
     graphId: "translate",
     ctx: {
       runId: id, ticketId: "", ticketUrl: "", provider: "", project: "", prUrl: "",
-      skill: "", rootRepo: cwd, cwd, baseSha: "", knowledge: "",
+      skill: "", rootRepo: cwd, cwd, baseSha: "",
       channels: {}, visits: {},
     },
     state: "running",
@@ -150,6 +150,7 @@ function translateLive(id: string, cwd: string): LiveRun {
     prUrl: "",
     branch: "",
     resultText: "",
+    knowledgeAtStart: null,
   };
 }
 

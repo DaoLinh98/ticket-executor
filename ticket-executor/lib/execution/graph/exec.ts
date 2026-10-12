@@ -9,7 +9,7 @@ import { ZERO_USAGE } from "./types";
 
 // ---- MCP access for one turn ----
 
-// Resolved per turn rather than once per run: a run parked at a gate can resume
+// Resolved per turn rather than once per run: a run parked by a usage limit can resume
 // after a restart (when the previous turn's config file is long gone), and
 // Settings may have changed in between. Never fails the node — the implement
 // route is what blocks on a missing provider server; here a bad decision is only
@@ -147,9 +147,7 @@ async function execCheck(live: LiveRun, node: CheckNode): Promise<NodeResult> {
   }
 }
 
-/** Run one node. Gates never reach here — drive() parks on them instead. */
+/** Run one node. */
 export async function execNode(live: LiveRun, node: Node): Promise<NodeResult> {
-  if (node.kind === "agent") return execAgent(live, node);
-  if (node.kind === "check") return execCheck(live, node);
-  throw new Error(`execNode called on a ${node.kind} node (${node.id})`);
+  return node.kind === "agent" ? execAgent(live, node) : execCheck(live, node);
 }

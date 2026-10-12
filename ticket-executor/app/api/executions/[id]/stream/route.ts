@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 // replaces client-side 1.2s polling with push updates. Polls the in-process
 // store internally (cheap, no network) and only emits a `data:` frame when
 // the run actually changed, closing the stream once it reaches a terminal
-// state or parks at a gate, or the client disconnects.
+// state or parks, or the client disconnects.
 const POLL_MS = 700;
 
 export async function GET(

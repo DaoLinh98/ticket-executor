@@ -24,7 +24,7 @@ Install these before touching the app.
 | 1 | Node.js 20+ | `node -v` | `@types/node` is pinned to 20. |
 | 2 | PostgreSQL | `psql --version` | Any local instance. The repo's convention is port **5438**. |
 | 3 | Claude Code CLI, logged in | `claude --version` | The engine spawns this binary. If it is not on `PATH`, set `CLAUDE_BIN`. |
-| 4 | The four skills installed | `ls ~/.claude/skills` | `implement-ticket-v2`, `implement-ticket-v3`, `fix-code-review-v2`, `fix-code-review-v3`. See §4. |
+| 4 | The v4 skills installed | `ls ~/.claude/skills` | Installed by the app on boot. See §4. |
 | 5 | Target repo cloned | `git -C <path> status` | The clone you want runs to happen in. Its path is the ticket's **Root repo** value. See §5. |
 | 6 | Azure DevOps PAT | — | Scopes in §6. |
 
@@ -62,22 +62,29 @@ Settings page), `ProviderCredential` (org URL + encrypted PAT per provider),
 
 ## 4. Skills
 
-The app does not ship the skills — it runs whichever skill name you select, so
-the skill must exist on your machine under `~/.claude/skills/<name>/`. The four
-the UI depends on:
+The skills ship in `skills/` and the app copies them into `~/.claude/skills/<name>/`
+when the server boots; an installed copy older than the bundled one is replaced,
+and a run is refused while one is missing or outdated. Every run walks the same
+loop — implement and commit locally, a test gate, an independent review, up to two
+fix rounds, then publish — so there is one skill per job:
 
 | Skill | Used when |
 |-------|-----------|
-| `implement-ticket-v2` | Implement, **Auto implement = on** (one-shot, no plan gate) |
-| `implement-ticket-v3` | Implement, **Auto implement = off** (plan → review → implement) |
-| `fix-code-review-v2` | Resolve Review, **Auto resolve = on** |
-| `fix-code-review-v3` | Resolve Review, **Auto resolve = off** |
+| `implement-ticket-v4` | Implement |
+| `fix-code-review-v4` | Resolve Review |
+| `fix-qa-v4` | Flow Runner, a ticket QA sent back |
+| `review-changes-v4` | The independent reviewer inside every run |
+| `triage-sprint-v4`, `reply-qa-v4` | Flow Runner triage and the drafted reply to QA |
 
 Sanity check:
 
 ```bash
-ls ~/.claude/skills | grep -E 'implement-ticket-v[23]|fix-code-review-v[23]'
+ls ~/.claude/skills | grep -E -- '-v4$'
 ```
+
+The implement, review-fix and QA skills read the project's `KNOWLEDGE.md` (repo root of
+the **Root repo**) and add the lessons the test gate, the reviewer and QA taught them.
+The file is local project memory: it is excluded from git and never committed.
 
 > **Known sharp edge:** the skill dropdown falls back to a hard-coded list when
 > it cannot read the directory, so a name can appear in the UI that is *not*
@@ -282,18 +289,15 @@ single run rather than to your machine:
 3. **Overview** tab — set **Root repo** (flagged `· REQUIRED` while empty) and
    confirm **Skill**. The command preview under the fields shows exactly what
    will be spawned.
-4. Hit the primary CTA.
-   - Two-phase skill (`*-v3`): the run stops at **Awaiting your review** and the
-     **Plan** tab shows `.te/plan.md`. Edit it if you like, then
-     **Accept** (resume and implement) / **Request changes** (re-plan) /
-     **Cancel**.
-   - One-shot skill (`*-v2`): it goes end-to-end without a gate.
+4. Hit the primary CTA. The run goes end-to-end without stopping: the **Plan** tab
+   shows `.te/plan.md` as a record, and the Execution tab shows the test gate and
+   the reviewer sending work back to be fixed before anything is pushed.
 5. **Execution** tab for the live log, **Result** tab for the diff, duration,
    tokens and cost, **Commits** tab for what landed.
 6. **Dashboard** for run metrics across tickets.
 
-A parked plan survives a dev-server restart (the resume state is persisted), so
-you can stop `npm run dev` and come back to it.
+A run parked on the account's usage limit survives a dev-server restart (the
+resume state is persisted) and continues by itself when the quota resets.
 
 What happens when you press the CTA, in order — the cheap guards come first:
 

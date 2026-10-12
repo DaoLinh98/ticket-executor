@@ -71,8 +71,8 @@ export type MentionCandidate = {
 // Where a run is. This is the whole answer — there is deliberately no separate
 // phase/planStatus pair to keep consistent with it; which *node* the run sits on
 // carries that, and the node comes from the graph.
-//   waiting — parked at a gate (or held for human review after a crash on an
-//             external node). No child process is alive.
+//   waiting — parked on the account's usage limit, or held for human review
+//             after a crash on an external node. No child process is alive.
 export type RunState = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 
 /** RunState plus the one thing the engine has no opinion about: a ticket that

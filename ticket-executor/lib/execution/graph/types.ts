@@ -79,12 +79,6 @@ export type RunContext = {
   cwd: string;
   /** Commit the worktree branched from; the run's diff is measured against it. */
   baseSha: string;
-  /** What earlier runs against this `rootRepo` learned, already rendered as a
-   *  prompt block (lib/execution/knowledge.ts). Resolved once at run start and
-   *  carried here rather than fetched by the prompt builder — a builder is a
-   *  pure synchronous function of this context, and it stays one. Empty when
-   *  there is nothing learned yet, which is the normal state of a new repo. */
-  knowledge: string;
   /** nodeId → that node's validated output. The only channel between nodes. */
   channels: Record<string, Record<string, unknown>>;
   /** nodeId → how many times it has been entered. Cycle accounting for edges. */
@@ -110,20 +104,11 @@ export type AgentNode = NodeBase & {
   prompt: (c: RunContext) => string;
   output: Record<string, unknown>; // JSON Schema, passed to the CLI as --json-schema
   /** A human-readable deliverable this node leaves in the worktree, captured as
-   *  an Artifact row when the node ends. Same vocabulary as `GateNode.artifact`,
-   *  and for the same reason: what a person is shown is declared on the graph,
-   *  not recognised from a node id. Only `"plan"` exists today — it is how the
-   *  one-shot flow keeps a readable record of what it intended, given it has no
-   *  gate to park at and `.te/` is thrown away with the worktree. */
+   *  an Artifact row when the node ends. What a person is shown is declared on
+   *  the graph, not recognised from a node id. Only `"plan"` exists today — it
+   *  is the readable record of what the run intended, kept because `.te/` is
+   *  thrown away with the worktree. */
   artifact?: string;
-};
-
-/** A stop. The run parks here holding no child process until a human resolves it.
- *  `artifact` names what they are shown (an Artifact row of that kind). */
-export type GateNode = NodeBase & {
-  kind: "gate";
-  effects: "pure";
-  artifact: string;
 };
 
 /** Plain code, zero tokens — used where the harness can check something itself
@@ -134,7 +119,7 @@ export type CheckNode = NodeBase & {
   run: (c: RunContext) => Promise<NodeResult>;
 };
 
-export type Node = AgentNode | GateNode | CheckNode;
+export type Node = AgentNode | CheckNode;
 
 /** Where to go after a node, and why. The `reason` is not decoration: it is
  *  persisted as a Transition row and is the primary artifact for debugging a
@@ -181,8 +166,9 @@ export type LiveRun = {
   parkedAt: number | null;
   humanWaitMs: number;
   /** When a run parked by an account limit may continue. Null for every other
-   *  kind of park: a gate waits for a person, not for a clock. It is also what
-   *  tells the two parks apart when the wait is banked. */
+   *  kind of park: a run held after a crash mid-publish waits for a person, not
+   *  for a clock. It is also what tells the two parks apart when the wait is
+   *  banked. */
   resumeAt: number | null;
   /** Time spent parked on a spent quota. Beside humanWaitMs rather than folded
    *  into it: one is a person who has not answered and the other is a bill, and
@@ -201,7 +187,7 @@ export type LiveRun = {
   /** Monotonic counter for Transition.seq. */
   seq: number;
   /** Transitions taken so far, across every re-entry of drive(). Persisted: a
-   *  gate resolution and a crash resume both call drive() again, and a hop
+   *  limit wake-up and a crash resume both call drive() again, and a hop
    *  counter that restarts there would never catch the loop it exists to catch. */
   hops: number;
   resumedAfterRestart: boolean;
@@ -211,4 +197,8 @@ export type LiveRun = {
   prUrl: string;
   branch: string;
   resultText: string;
+  /** A fingerprint of the project's KNOWLEDGE.md when the run started ("" when
+   *  absent), so the run can say whether it added to the project's memory.
+   *  Null when unknown — a run rebuilt after a restart. */
+  knowledgeAtStart: string | null;
 };

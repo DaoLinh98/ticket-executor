@@ -31,7 +31,7 @@ import { findSkill } from "../skillPack";
 import type { LiveRun } from "./graph/types";
 import type { Ticket } from "../types";
 
-export const TRIAGE_SKILL = "triage-sprint-v1";
+export const TRIAGE_SKILL = "triage-sprint-v4";
 
 // ---- the contract ----
 
@@ -214,7 +214,7 @@ export function triageLive(id: string, cwd: string, provider: string, skill: str
     graphId: skill === TRIAGE_SKILL ? "triage" : skill,
     ctx: {
       runId: id, ticketId: "", ticketUrl: "", provider, project: "", prUrl: "",
-      skill, rootRepo: cwd, cwd, baseSha: "", knowledge: "",
+      skill, rootRepo: cwd, cwd, baseSha: "",
       channels: {}, visits: {},
     },
     state: "running",
@@ -243,6 +243,7 @@ export function triageLive(id: string, cwd: string, provider: string, skill: str
     prUrl: "",
     branch: "",
     resultText: "",
+    knowledgeAtStart: null,
   };
 }
 

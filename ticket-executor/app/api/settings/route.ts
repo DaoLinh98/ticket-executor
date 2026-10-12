@@ -28,15 +28,12 @@ function publicSettings(s: SettingRow, cred: ConnectionView | null) {
     animatedBackground: s.animatedBackground,
     clickEffects: s.clickEffects,
     ringAnimation: s.ringAnimation,
-    autoImplement: s.autoImplement,
-    autoResolveCodeReview: s.autoResolveCodeReview,
     multiTicketMode: s.multiTicketMode,
     manageMcp: s.manageMcp,
     concurrentRuns: s.concurrentRuns,
     hourlyRateUsd: s.hourlyRateUsd,
     hoursPerStoryPoint: s.hoursPerStoryPoint,
     sprintAnchorProject: s.sprintAnchorProject,
-    evaluateBeforePublish: s.evaluateBeforePublish,
     gitUserName: s.gitUserName,
     gitUserEmail: s.gitUserEmail,
     // The organization this provider currently runs as, and whether it has a
@@ -72,15 +69,9 @@ export async function POST(req: Request) {
     data.clickEffects = body.clickEffects;
   if (typeof body.ringAnimation === "boolean")
     data.ringAnimation = body.ringAnimation;
-  if (typeof body.autoImplement === "boolean")
-    data.autoImplement = body.autoImplement;
-  if (typeof body.autoResolveCodeReview === "boolean")
-    data.autoResolveCodeReview = body.autoResolveCodeReview;
   if (typeof body.multiTicketMode === "boolean")
     data.multiTicketMode = body.multiTicketMode;
   if (typeof body.manageMcp === "boolean") data.manageMcp = body.manageMcp;
-  if (typeof body.evaluateBeforePublish === "boolean")
-    data.evaluateBeforePublish = body.evaluateBeforePublish;
   if (
     typeof body.concurrentRuns === "number" &&
     Number.isFinite(body.concurrentRuns)

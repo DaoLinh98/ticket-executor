@@ -24,15 +24,6 @@ model Setting {
   // borders paint as a flat line: the app sets --te-ring-image globally, which
   // is the override hook ringBorder already reads.
   ringAnimation  Boolean  @default(true)
-  // Auto-implementation mode. true → the original one-shot flow (implement-ticket-v2,
-  // runs to a PR without stopping). false → the two-phase plan-review flow
-  // (implement-ticket-v3, parks for plan approval before touching code).
-  autoImplement  Boolean  @default(true)
-  // Auto-resolve-code-review mode — same on/off split as autoImplement, but for
-  // the Resolve Review flow. true → the original one-shot flow (fix-code-review-v2,
-  // resolves all threads without stopping). false → the two-phase plan-review flow
-  // (fix-code-review-v3, parks for plan approval before touching code).
-  autoResolveCodeReview Boolean @default(true)
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
   concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
@@ -41,13 +32,6 @@ model Setting {
   // converts point-sized tickets to hours when the provider has no hour estimate.
   hourlyRateUsd  Float    @default(0)
   hoursPerStoryPoint Float @default(6)
-  // Insert an independent review node between `implement` and `publish` in the
-  // two-phase flow, with a bounded fix loop behind it. Off by default on
-  // purpose: it costs roughly one extra review turn per run plus whatever the
-  // fixes cost, and whether that pays for itself is a question the dashboard
-  // answers (firstPassRate / reworkFactor against costPerShippedTicket), not one
-  // a default should presume. Flip it, run a batch, compare.
-  evaluateBeforePublish Boolean @default(false)
   // true → multi-ticket mode: multi-select/batch runs allowed, each execution
   // isolated in its own git worktree. false → single-ticket mode: only one
   // ticket may run at a time, and it runs directly in rootRepo (no worktree).
@@ -385,50 +369,6 @@ model TicketPullRequest {
   updatedAt DateTime @updatedAt
 
   @@unique([provider, ticketId])
-}
-
-// What the harness has learned about one repository, accumulated across runs.
-//
-// A run already discovers durable facts about the repo it works in — which test
-// command actually exists, where a generated file must not be edited, the
-// convention a reviewer keeps re-raising — and then throws all of it away: the
-// worktree is removed, the session ends, and the next ticket rediscovers the
-// same thing at full token price. This table is the only place that survives
-// both.
-//
-// It is written from **contract fields**, not from prose: the delivering and
-// reviewing nodes each answer a `lessons` array in their JSON Schema (see
-// graph/schemas.ts), so nothing here comes from scraping a log. That is also why
-// there is no `learn` node — an extra node would change every graph's shape
-// (and therefore its `graphId`), cost an extra agent turn per run, and be
-// impossible to fit into the one-shot graph, which publishes inside its only
-// node.
-//
-// Scoped by `rootRepo` because that is what a lesson is *about*. `fingerprint`
-// is the normalized text and carries the uniqueness: the same lesson learned by
-// ten runs is one row with `hits = 10`, which is also the ranking signal when
-// more notes exist than may be injected into a prompt.
-//
-// `active` exists so a wrong lesson can be retired without deleting the evidence
-// that it was learned. Nothing routes on this table and no run fails because of
-// it — it only shapes a prompt.
-model KnowledgeNote {
-  id          String   @id @default(cuid())
-  rootRepo    String
-  // "implement" | "review" — which flow family reported it. Kept so a review
-  // convention is not injected into a plan prompt that has no PR in sight.
-  scope       String
-  text        String
-  fingerprint String
-  active      Boolean  @default(true)
-  hits        Int      @default(1)
-  firstRunId  String
-  lastRunId   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([rootRepo, fingerprint])
-  @@index([rootRepo, active])
 }
 
 // One triage turn over one developer's slice of one sprint.

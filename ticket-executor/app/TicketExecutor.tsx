@@ -22,7 +22,7 @@ import PlanTab from "./ticket-executor/tabs/PlanTab";
 import ResolveReviewTab from "./ticket-executor/tabs/ResolveReviewTab";
 import ResultTab from "./ticket-executor/tabs/ResultTab";
 import {
-  ACCENT, DEFAULT_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
+  ACCENT, DEFAULT_SKILL, FIX_REVIEW_SKILL, RESULT_SKILL_ORDER, RESULT_SKILL_TITLE, SKILL_OPTIONS,
 } from "./ticket-executor/constants";
 import type { AskView } from "@/lib/ask";
 import type { RunEventSource } from "@/lib/notifications";
@@ -100,10 +100,10 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
 }
 
 // `waiting` is two different situations, and only one of them is asking the
-// developer for anything. A run parked at a plan gate wants a decision; a run
-// parked on the Claude account's usage limit wants nothing at all and continues
-// by itself. Told apart by `endReason`, which the harness already owns — the
-// alternative is the UI guessing from the absence of a plan.
+// developer for anything. A run held after the server restarted mid-publish
+// wants a person to check whether the push landed; a run parked on the Claude
+// account's usage limit wants nothing at all and continues by itself. Told apart
+// by `endReason`, which the harness already owns.
 const isRateLimited = (e?: ExecView) => e?.state === "waiting" && e.endReason === "rate-limited";
 const isAwaitingReview = (e?: ExecView) => e?.state === "waiting" && e.endReason !== "rate-limited";
 
@@ -234,8 +234,6 @@ export default function TicketExecutor() {
     pat: "",
     hasPat: false,
     animatedBackground: true,
-    autoImplement: true,
-    autoResolveCodeReview: true,
     scope: "team",
     personalAccount: "",
     concurrentRuns: 2,
@@ -243,7 +241,6 @@ export default function TicketExecutor() {
     manageMcp: true,
     hourlyRateUsd: 0,
     hoursPerStoryPoint: 6,
-    evaluateBeforePublish: false,
     gitUserName: "",
     gitUserEmail: "",
   });
@@ -269,10 +266,6 @@ export default function TicketExecutor() {
   // re-memoizing them on every selection change.
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
-  // Per-ticket "resolving the plan" flag — disables the Plan tab's buttons (and
-  // shows a spinner on whichever one was clicked) while the approve/revise/cancel
-  // POST is in flight.
-  const [planBusy, setPlanBusy] = useState<Record<string, "approve" | "revise" | "cancel" | undefined>>({});
 
   const { fireBoltFromEvent } = useBoltsContext();
   // The bell itself lives in the shared shell. This screen is only the source
@@ -886,9 +879,7 @@ export default function TicketExecutor() {
       if (!run) return;
       setExecs((s) => ({ ...s, [ticketId]: toExecView(run, s[ticketId]) }));
       setTab(
-        run.state === "succeeded" ? "result"
-          : run.state === "waiting" && run.endReason !== "rate-limited" ? "plan"
-            : "execution"
+        run.state === "succeeded" ? "result" : "execution"
       );
     } catch {
       /* ignore */
@@ -1033,19 +1024,10 @@ export default function TicketExecutor() {
   // Note: use `??` (not `||`) against the override so that clearing a field to ""
   // stays empty instead of instantly snapping back to the fallback default.
   const getArea = (t: Ticket) => overrides[t.id]?.area ?? t.project;
-  // The Implement action maps to implement-ticket-v3 (plan-review flow) by default;
-  // the "Auto-implementation" setting flips it back to the original one-shot v2 flow.
-  // An explicit per-ticket skill override always wins over both.
-  const getSkill = (t: Ticket) => {
-    if (overrides[t.id]?.skill) return overrides[t.id]!.skill!;
-    const resolved = actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL;
-    if (resolved === "implement-ticket-v3" && settings.autoImplement) return "implement-ticket-v2";
-    return resolved;
-  };
-  // Same on/off split as getSkill, for the Resolve Review flow: the
-  // "Auto resolve code review" setting picks the one-shot v2 vs the
-  // plan-review-gated v3.
-  const getReviewSkill = () => (settings.autoResolveCodeReview ? "fix-code-review-v2" : "fix-code-review-v3");
+  // The Implement action's skill, unless the ticket carries a hand-picked one on
+  // its Overview tab.
+  const getSkill = (t: Ticket) => overrides[t.id]?.skill || actionInfoFor(getStatus(t))?.skill || DEFAULT_SKILL;
+  const getReviewSkill = () => FIX_REVIEW_SKILL;
   // The repo a run executes in. Chosen per ticket: one provider connection spans
   // many projects, so there is nothing app-wide to fall back to.
   const getRootRepo = (t: Ticket) => overrides[t.id]?.rootRepo ?? "";
@@ -1315,9 +1297,9 @@ export default function TicketExecutor() {
           // in the session it was cut off in when the quota resets.
           showToast(`#${ticketId} — usage limit reached; the run continues when it resets`);
         } else {
-          if (ticketId === selectedIdRef.current) setTab("plan");
-          showToast(`#${ticketId} — plan ready for review`);
-          notify("Ticket Executor", `#${ticketId} plan is ready for your review`);
+          if (ticketId === selectedIdRef.current) setTab("execution");
+          showToast(`#${ticketId} — needs you: check whether the push landed`, 9000, "error");
+          notify("Ticket Executor", `#${ticketId} needs you — the server restarted while it was publishing`);
         }
         if (batchRunningRef.current.delete(ticketId)) tryStartNextQueuedRef.current();
         return true;
@@ -1531,12 +1513,6 @@ export default function TicketExecutor() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             skillName,
-            // The server resolves the actual skill from Settings (auto vs plan
-            // flow); it only honours `skillName` verbatim when the ticket carries
-            // a hand-picked skill on its Overview tab. A quick-action button's
-            // choice is itself derived from those same settings, so it must not
-            // claim to be explicit.
-            skillExplicit: !!overrides[t.id]?.skill && !skillOverride,
             projectName,
             rootRepo,
             model,
@@ -1685,45 +1661,6 @@ export default function TicketExecutor() {
     [tickets, selectedId, execs, fireBoltFromEvent]
   );
 
-  // Resolve a run parked at the plan gate. On approve/revise the run resumes,
-  // so we flip it back to "running" locally and re-attach the live stream; on
-  // cancel it becomes a failed run. `plan` is the (possibly edited) markdown.
-  const resolvePlan = useCallback(
-    async (ticketId: string, action: "approve" | "revise" | "cancel", plan?: string, feedback?: string) => {
-      const execId = execs[ticketId]?.runId;
-      if (!execId) return;
-      setPlanBusy((b) => ({ ...b, [ticketId]: action }));
-      try {
-        const r = await fetch(`/api/executions/${execId}/plan`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, plan, feedback }),
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          showToast(data.error || "Failed to resolve the plan", 9000, "error");
-          return;
-        }
-        if (action === "cancel") {
-          setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], state: "failed", endReason: "plan-rejected", error: "Plan rejected — run cancelled." } }));
-          showToast(`#${ticketId} run cancelled`);
-          loadHistory(ticketId);
-          return;
-        }
-        // Approve or revise → the run is live again; resume tracking it.
-        setExecs((s) => ({ ...s, [ticketId]: { ...s[ticketId], state: "running" } }));
-        if (ticketId === selectedIdRef.current) {
-          setTab(action === "approve" ? "execution" : "plan");
-          try { window.__reactor?.setMode("running"); } catch { }
-        }
-        startPolling(ticketId, execId);
-      } finally {
-        setPlanBusy((b) => ({ ...b, [ticketId]: undefined }));
-      }
-    },
-    [execs, showToast, loadHistory, startPolling]
-  );
-
   // Translate one comment. A second press hides the block again rather than
   // spending another turn — the translation is already in hand.
   const translateComment = useCallback(async (key: string, html: string) => {
@@ -1856,7 +1793,7 @@ export default function TicketExecutor() {
   // ---- derived ----
   const execStatusOf = (id: string): UiRunState => execs[id]?.state ?? "none";
   const activeCount = Object.values(execs).filter((e) => e.state === "running" || e.state === "waiting").length;
-  // Waiting runs are read off current state because a parked plan is a standing
+  // Waiting runs are read off current state because a held run is a standing
   // condition; the rest are events.
   const waitingRuns = useMemo(
     () =>
@@ -1901,13 +1838,7 @@ export default function TicketExecutor() {
   const st: UiRunState = ex ? ex.state : "none";
   const execEnabled = st !== "none";
   const resultEnabled = st === "succeeded";
-  // The Plan tab exists only where the run's graph actually has a gate — asked of
-  // the node's declared `kind`, not recognised by its id. Matching on "review"
-  // was a second, quieter copy of "hard-code what the engine already reports":
-  // rename the node, or add a second gate, and the tab would vanish.
-  const hasGate = !!ex?.nodes?.some((n) => n.kind === "gate");
-  const planEnabled = !!ex?.planMarkdown || isAwaitingReview(ex) || (hasGate && st === "running");
-  const planBusyForSel = t ? planBusy[t.id] : undefined;
+  const planEnabled = !!ex?.planMarkdown || st === "running";
 
   // Single-ticket mode: only one run at a time. Find any other ticket currently
   // occupying the one slot, so this ticket's CTA can be blocked while it does.
@@ -1942,8 +1873,8 @@ export default function TicketExecutor() {
     };
   else if (st === "waiting")
     action = {
-      label: "Review Plan", spinner: false, playIcon: false,
-      onClick: (e) => { fireBoltFromEvent(e); setTab("plan"); },
+      label: "Needs you", spinner: false, playIcon: false,
+      onClick: (e) => { fireBoltFromEvent(e); setTab("execution"); },
       style: ctaButtonStyle("ghost"),
     };
   else if (st === "succeeded")
@@ -2232,7 +2163,6 @@ export default function TicketExecutor() {
                 tabStyle={tabStyle}
                 execEnabled={execEnabled}
                 planEnabled={planEnabled}
-                planNeedsReview={isAwaitingReview(ex)}
                 resultEnabled={resultEnabled}
                 unresolvedCount={ticketReview.unresolvedCount}
                 action={action}
@@ -2309,15 +2239,7 @@ export default function TicketExecutor() {
                 )}
 
                 {tab === "plan" && ex && (
-                  <PlanTab
-                    plan={ex.planMarkdown ?? ""}
-                    awaiting={isAwaitingReview(ex)}
-                    busy={!!planBusyForSel}
-                    busyAction={planBusyForSel}
-                    onApprove={(plan) => resolvePlan(t.id, "approve", plan)}
-                    onRevise={(plan, feedback) => resolvePlan(t.id, "revise", plan, feedback)}
-                    onCancel={() => resolvePlan(t.id, "cancel")}
-                  />
+                  <PlanTab plan={ex.planMarkdown ?? ""} />
                 )}
 
                 {tab === "resolve-review" && (

@@ -1,6 +1,7 @@
 ---
-name: triage-sprint-v1
+name: triage-sprint-v4
 description: Review one developer's tickets in one sprint for readiness, estimate accuracy and work order, and return the result as structured data
+version: 4.0.0
 ---
 
 Review the sprint tickets named in $ARGUMENTS: decide whether each one is ready to

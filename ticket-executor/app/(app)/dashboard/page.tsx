@@ -490,9 +490,9 @@ function DashboardPageInner() {
                 <KpiTile index={8} label="REWORK FACTOR" value={data.quality.ticketsAttempted ? `${data.quality.reworkFactor.toFixed(2)}×` : "—"}
                   sub={`${data.quality.implementRuns} implement runs`}
                   hint="1.00× would mean no ticket was ever re-run" />
-                <KpiTile index={9} label="PLAN APPROVAL" value={data.quality.planReviewedCount ? fmtPct(data.quality.planApprovalRate) : "—"} tone={COLORS.indigo}
-                  sub={`${data.quality.planReviewedCount} plans · ${data.quality.avgPlanRevisions.toFixed(2)} revisions each`}
-                  hint="did the agent read the ticket right?" />
+                <KpiTile index={9} label="LOOP PASS" value={data.quality.loopRuns ? fmtPct(data.quality.loopPassRate) : "—"} tone={COLORS.indigo}
+                  sub={`${data.quality.loopRuns} reviewed runs · ${data.quality.avgFixRounds.toFixed(2)} fix rounds each`}
+                  hint="passed the test gate and the reviewer with no fix round" />
                 <KpiTile index={10} label="REVIEW-FIX RATIO" value={data.quality.implementRuns ? fmtPct(data.quality.reviewFixRatio) : "—"} tone={COLORS.warning}
                   sub={`${data.quality.fixReviewRuns} fix-review runs`}
                   hint="lower = less reviewer pushback per feature" />

@@ -74,8 +74,6 @@ export type SettingsView = {
   clickEffects: boolean;
   /** Sweep the energy ring around every ringBorder() edge. Off = flat borders. */
   ringAnimation: boolean;
-  autoImplement: boolean;
-  autoResolveCodeReview: boolean;
   scope: "team" | "personal";
   personalAccount: string;
   concurrentRuns: number;
@@ -85,9 +83,6 @@ export type SettingsView = {
   /** Dashboard ROI inputs. 0 hides the ROI tile rather than showing a made-up number. */
   hourlyRateUsd: number;
   hoursPerStoryPoint: number;
-  /** Insert the independent review node (+ its bounded fix loop) between
-   *  implement and publish, in the two-phase flow only. */
-  evaluateBeforePublish: boolean;
   /** The git author every run commits as. Needed because the app executes
    *  inside a container, which has no developer `~/.gitconfig` to inherit —
    *  without one `git commit` fails at the first implementing node. Empty

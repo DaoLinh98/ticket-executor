@@ -1,7 +1,7 @@
 ---
-name: reply-qa-v1
+name: reply-qa-v4
 description: Draft the developer's reply to QA/QC comments on a work item — read the ticket, the new QC comments and the code, and return a reply as structured data. Writes nothing.
-version: 1.0.0
+version: 4.0.0
 ---
 
 Draft a reply to the QA/QC comments on the work item described in $ARGUMENTS (format: `Provider: <id> - Ticket: <id-or-url> - Project name: <project> - Developer: <name> <email> - Since: <iso-time or "(not known)">`, followed by a `Repository:` line). The developer reads your draft, edits it if they want, and posts it themselves.
