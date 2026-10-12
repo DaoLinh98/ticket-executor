@@ -111,7 +111,7 @@ function handleEvent(s: AskSession, obj: Record<string, unknown>) {
   }
 }
 
-function claudeArgs(prompt: string, resumeId: string): string[] {
+function claudeArgs(prompt: string, resumeId: string, model: string, effort: string): string[] {
   const args = [
     "-p",
     prompt,
@@ -121,6 +121,8 @@ function claudeArgs(prompt: string, resumeId: string): string[] {
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
   ];
+  if (model) args.push("--model", model);
+  if (effort) args.push("--effort", effort);
   if (resumeId) args.push("--resume", resumeId);
   return args;
 }
@@ -153,7 +155,7 @@ export function cancelAsk(ticketId: string): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-export function startAsk(input: { ticketId: string; rootRepo: string; prompt: string }): { ok: boolean; error?: string } {
+export function startAsk(input: { ticketId: string; rootRepo: string; prompt: string; model?: string; effort?: string }): { ok: boolean; error?: string } {
   const prompt = input.prompt.trim();
   if (!prompt) return { ok: false, error: "Type a prompt first." };
 
@@ -185,7 +187,7 @@ export function startAsk(input: { ticketId: string; rootRepo: string; prompt: st
 
   let child: ChildProcess;
   try {
-    child = spawn("claude", claudeArgs(prompt, session.sessionId), {
+    child = spawn("claude", claudeArgs(prompt, session.sessionId, input.model ?? "", input.effort ?? ""), {
       cwd: session.rootRepo,
       env: { ...process.env, ...sandboxEnv() },
       windowsHide: true,

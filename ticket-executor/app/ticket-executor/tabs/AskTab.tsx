@@ -3,9 +3,11 @@
 import { useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, RefObject } from "react";
 import type { AskState } from "@/lib/ask";
+import { CLAUDE_EFFORTS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
 import { COLORS, FONT, card, ctaButtonStyle, dropdownPanelStyle, pill, ringBorder, tintedCard, chipShape } from "@/lib/ui";
 import type { LogLineView } from "../types";
 import LoadingRing from "../LoadingRing";
+import SelectMenu from "../../SelectMenu";
 
 type Props = {
   rootRepo: string;
@@ -17,6 +19,11 @@ type Props = {
   prompt: string;
   /** Every skill installed on this machine, for the `/` picker. */
   skillOptions: string[];
+  model: string;
+  modelOptions: readonly ClaudeModel[];
+  effort: string;
+  onModelChange: (id: string) => void;
+  onEffortChange: (value: string) => void;
   onPromptChange: (value: string) => void;
   onSend: () => void;
   onCancel: () => void;
@@ -34,7 +41,7 @@ const STATUS: Record<AskState, [string, string]> = {
 // Terminal button launches, run in the ticket's Root repo on this machine, with
 // its output streamed back here.
 export default function AskTab({
-  rootRepo, logLines, state, resuming, error, prompt, skillOptions, onPromptChange, onSend, onCancel, onReset, logRef,
+  rootRepo, logLines, state, resuming, error, prompt, skillOptions, model, modelOptions, effort, onModelChange, onEffortChange, onPromptChange, onSend, onCancel, onReset, logRef,
 }: Props) {
   const running = state === "running";
   const ready = !!rootRepo.trim();
@@ -183,6 +190,10 @@ export default function AskTab({
             outline: "none",
           }}
         />
+        <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "8px" }}>
+          <SelectMenu value={modelLabel(model, modelOptions)} onChange={(v) => onModelChange(modelIdForLabel(v, modelOptions))} options={modelOptions.map((m) => m.label)} ariaLabel="Claude model" />
+          <SelectMenu value={effort} onChange={onEffortChange} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" />
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
           <span style={{ flex: 1, minWidth: "120px", fontSize: FONT.sm, color: COLORS.textMuted }}>
             {menuOpen ? "Tap a skill, or Enter to pick it" : "Enter sends · Shift+Enter new line · / for skills"}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
@@ -12,6 +13,7 @@ import {
   FONT,
   card,
   ctaButtonStyle,
+  dropdownPanelStyle,
   fieldInput,
   fieldLabel,
   pill,
@@ -290,64 +292,86 @@ function originLabel(iterationPath: string | undefined, sprint: string): string 
   return leaf === sprint ? "" : leaf;
 }
 
+type PlanResponse = { plan: StoredPlan | null; events: AutomationRow[]; drafts: QaDraft[] };
+
+const PROJECTS_KEY = ["projects"] as const;
+const SPRINT_KEY = ["my-sprint"] as const;
+const PLAN_KEY = ["my-sprint", "plan"] as const;
+const PLAN_POLL_MS = 5000;
+
+const planRunning = (p?: PlanResponse) =>
+  (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
+
+const fetchProjects = async (): Promise<string[]> => {
+  try {
+    const d = await fetch("/api/projects").then((r) => r.json());
+    return Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : [];
+  } catch {
+    return [];
+  }
+};
+
+const fetchPlan = async (): Promise<PlanResponse> => {
+  const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
+  return {
+    plan: d.plan ?? null,
+    events: Array.isArray(d.events) ? d.events : [],
+    drafts: Array.isArray(d.drafts) ? d.drafts : [],
+  };
+};
+
 export default function MySprintPage() {
   const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
   const showToast = useToast();
-  const [projects, setProjects] = useState<string[]>([]);
-  const [data, setData] = useState<MySprint | null>(null);
+  const queryClient = useQueryClient();
   // Triage is switched off on this page for now.
   // const [triage, setTriage] = useState<TriageRow | null>(null);
   // const [reportOpen, setReportOpen] = useState(false);
-  const [stored, setStored] = useState<StoredPlan | null>(null);
-  const [events, setEvents] = useState<AutomationRow[]>([]);
-  const [drafts, setDrafts] = useState<QaDraft[]>([]);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [settledNeedle, setSettledNeedle] = useState("");
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const r = await fetch("/api/projects");
-      const d = await r.json();
-      setProjects(Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : []);
-    } catch {
-      setProjects([]);
-    }
-  }, []);
+  const projectsQuery = useQuery({ queryKey: PROJECTS_KEY, queryFn: fetchProjects });
+  const sprintQuery = useQuery({
+    queryKey: SPRINT_KEY,
+    queryFn: (): Promise<MySprint> => fetch("/api/my-sprint").then((r) => r.json()),
+  });
+  // A run outlives the request that started it, so a plan holding a running
+  // ticket is re-read until it stops — that is what keeps the "implementing
+  // now" label and the State column live.
+  const planQuery = useQuery({
+    queryKey: PLAN_KEY,
+    queryFn: fetchPlan,
+    refetchInterval: (q) => (planRunning(q.state.data) ? PLAN_POLL_MS : false),
+  });
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [sprintRes, planRes] = await Promise.all([
-        fetch("/api/my-sprint").then((r) => r.json()),
-        fetch("/api/my-sprint/plan").then((r) => r.json()),
-        // fetch("/api/my-sprint/triage").then((r) => r.json()),
-      ]);
-      if (sprintRes.error) setError(sprintRes.error);
-      setData(sprintRes);
-      setStored(planRes.plan ?? null);
-      setEvents(Array.isArray(planRes.events) ? planRes.events : []);
-      setDrafts(Array.isArray(planRes.drafts) ? planRes.drafts : []);
-      // setTriage(triageRes.triage ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const projects = projectsQuery.data ?? [];
+  const data = sprintQuery.data ?? null;
+  const stored = planQuery.data?.plan ?? null;
+  const events = planQuery.data?.events ?? [];
+  const drafts = planQuery.data?.drafts ?? [];
+  const loading = sprintQuery.isFetching || planQuery.isPending;
+  const loadError = data?.error || (sprintQuery.error as Error | null)?.message || (planQuery.error as Error | null)?.message || "";
 
-  useEffect(() => { loadProjects(); load(); }, [loadProjects, load]);
+  const load = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY });
+  const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY });
+  const setStored = (plan: StoredPlan | null) =>
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], ...old, plan }));
 
   useEffect(() => {
-    const onChanged = () => { loadProjects(); load(); };
+    const onChanged = () => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_KEY });
+      load();
+    };
     window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [loadProjects, load]);
+  }, [queryClient]);
 
   // A triage turn outlives the request that started it, so the row is polled
   // rather than awaited.
@@ -366,30 +390,22 @@ export default function MySprintPage() {
   //   return () => { if (triagePoll.current) clearInterval(triagePoll.current); };
   // }, [triage?.status, triage?.id]);
 
-  // A run outlives the request that started it, so a plan holding a running
-  // ticket is re-read until it stops — that is what keeps the "implementing
-  // now" label and the State column live.
-  const anyRunning =
-    (stored?.items ?? []).some((t) => t.implementState === "running") || drafts.some((d) => d.status === "running");
+  const needle = query.trim().toLowerCase().replace(/^#/, "");
+  const searchTerm = query.trim().replace(/^#/, "");
   useEffect(() => {
-    if (!anyRunning) return;
-    const id = setInterval(async () => {
-      try {
-        const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
-        if (d.plan) setStored(d.plan);
-        if (Array.isArray(d.events)) setEvents(d.events);
-        if (Array.isArray(d.drafts)) setDrafts(d.drafts);
-      } catch { /* the next tick tries again */ }
-    }, 5000);
-    return () => clearInterval(id);
-  }, [anyRunning]);
-
-  const reloadPlan = async () => {
-    const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
-    if (d.plan) setStored(d.plan);
-    if (Array.isArray(d.events)) setEvents(d.events);
-    if (Array.isArray(d.drafts)) setDrafts(d.drafts);
-  };
+    const timer = setTimeout(() => setSettledNeedle(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+  const searchQuery = useQuery({
+    queryKey: ["ticket-search", settledNeedle],
+    queryFn: ({ signal }): Promise<Ticket[]> =>
+      fetch("/api/tickets/search?q=" + encodeURIComponent(settledNeedle), { signal })
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d.tickets) ? d.tickets : [])),
+    enabled: !!settledNeedle,
+  });
+  const found = searchTerm ? searchQuery.data ?? [] : [];
+  const searching = !!searchTerm && (searchTerm !== settledNeedle || searchQuery.isFetching);
 
   const post = async (url: string, body: unknown, method = "POST") => {
     const r = await fetch(url, {
@@ -465,6 +481,24 @@ export default function MySprintPage() {
           ? "Marked ready to run — the scheduler will pick it up despite the clarification flag."
           : "Back to waiting on clarification."
       );
+    });
+
+  const addToPlan = (t: Ticket) =>
+    act("add-" + t.id, async () => {
+      const d = await post(
+        "/api/my-sprint/plan",
+        { addToRelease: { ticketId: t.id, title: t.title, project: t.project, points: t.storyPoints, estimateHours: t.estimateHours } },
+        "PUT"
+      );
+      if (d.plan) setStored(d.plan);
+      setMessage(`#${t.id} added to the release plan.`);
+    });
+
+  const removeNow = (plannedId: string, ticketId: string) =>
+    act("remove-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { removeFromRelease: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      setMessage(`#${ticketId} removed from the release plan.`);
     });
 
   const releaseNow = (plannedId: string) =>
@@ -580,6 +614,9 @@ export default function MySprintPage() {
           stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
         }));
 
+  const planned = new Set(rows.map((t) => t.ticketId));
+  const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
+
   const runningRows = rows.filter((t) => t.implementState === "running");
   // The second lane. Kept apart from `runningRows` because the two are different
   // work on different tickets and the banner has to name which is which.
@@ -640,6 +677,50 @@ export default function MySprintPage() {
           />
         </div>
         {busy === "anchor" && <LoadingRing size={14} />}
+        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: "340px", minWidth: "150px" }}>
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+            placeholder="Search ticket by ID or title"
+            aria-label="Search tickets by ID or title"
+            autoComplete="off"
+            spellCheck={false}
+            style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
+          />
+          {searchOpen && needle && stored && addable.length === 0 && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 10px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                {searching ? <><LoadingRing size={14} /> Searching all projects…</> : "No other ticket matches."}
+              </div>
+            </div>
+          )}
+          {searchOpen && addable.length > 0 && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              {addable.map((t) => (
+                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 6px 0 10px" }}>
+                  <span title={`#${t.id} · ${t.title}`} style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    #{t.id} · {t.title}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Add #${t.id} to the release plan`}
+                    title="Add to Release plan"
+                    disabled={busy === "add-" + t.id}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { fireBoltFromEvent(e); addToPlan(t); }}
+                    style={{ flex: "0 0 auto", width: "40px", height: "40px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.accent, cursor: "pointer" }}
+                  >
+                    {busy === "add-" + t.id ? <LoadingRing size={14} /> : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M12 5v14M5 12h14" /></svg>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
@@ -655,14 +736,14 @@ export default function MySprintPage() {
           ) : !summary ? (
             <div style={tintedCard("warning")}>
               <span style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>
-                {error || "Nothing to plan yet."}
+                {error || loadError || "Nothing to plan yet."}
               </span>
             </div>
           ) : (
             <>
-              {error && (
+              {(error || loadError) && (
                 <div style={tintedCard("danger")}>
-                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</span>
+                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error || loadError}</span>
                 </div>
               )}
               {message && (
@@ -982,9 +1063,10 @@ export default function MySprintPage() {
                           </span>
                           <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" }}>
                             <a
-                              href={t.prUrl || ticket?.url}
+                              href={ticket?.url}
                               target="_blank"
                               rel="noreferrer"
+                              title={`#${t.ticketId} · ${t.title}`}
                               style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                             >
                               #{t.ticketId} · {t.title}
@@ -1141,6 +1223,8 @@ export default function MySprintPage() {
                               button("Start QA fix", "warning", () => startQaFixNow(t.id, t.ticketId), "qafix-" + t.id)}
                             {t.id && t.pendingAction === "move-to-qa" &&
                               button("Move to In QA", "primary", () => moveToQaNow(t.id), "qa-" + t.id)}
+                            {t.id && t.implementState === "pending" && !t.runId && !t.prUrl && !t.releasedAt &&
+                              button("Remove", "ghost", () => removeNow(t.id, t.ticketId), "remove-" + t.id)}
                           </span>
                         </div>
                       );

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  addTicketToPlan,
   dismissQaReply,
   findPlan,
   listQaDrafts,
@@ -10,6 +11,7 @@ import {
   rebuildPlan,
   recentAutomation,
   releasePlannedTicket,
+  removeTicketFromPlan,
   retryPlannedTicket,
   setPlanAutomation,
   setPlanStatus,
@@ -149,6 +151,8 @@ export async function PATCH(req: Request) {
 //   { release: "<plannedTicketId>" }  hand one finished ticket over now
 //   { retry:   "<plannedTicketId>" }  put a stopped ticket back in the queue
 //   { tick: true }                    run one scheduler pass immediately
+//   { addToRelease: { ticketId, ... } }  append a ticket to the plan, last in the implement queue
+//   { removeFromRelease: "<plannedTicketId>" }  take an unstarted ticket out of the plan
 //
 // The button and the timer call exactly the same code on purpose: an automation
 // nobody can trigger by hand is one nobody can check.
@@ -206,6 +210,36 @@ export async function PUT(req: Request) {
   if (typeof body.moveToQa === "string" && body.moveToQa) {
     const outcome = await moveToQa(body.moveToQa);
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.moveToQa } });
+    return NextResponse.json(
+      { outcome, plan: item ? await planById(item.planId) : null },
+      outcome.ok ? undefined : { status: 400 }
+    );
+  }
+  if (body.addToRelease && typeof body.addToRelease === "object" && typeof body.addToRelease.ticketId === "string") {
+    const t = body.addToRelease;
+    const setting = await getOrCreateSetting();
+    const provider = normalizeProvider(setting.provider);
+    const cycle = await loadSprintCycle(provider, setting.sprintAnchorProject).catch(() => null);
+    const { key } = await keyFor(provider, cycle?.sprint ?? "");
+    const plan = await findPlan(key);
+    if (!plan) return NextResponse.json({ error: "There is no plan for this sprint yet — build one on My Sprint first." }, { status: 400 });
+    const number = (v: unknown) => (Number(v) > 0 ? Number(v) : 0);
+    const outcome = await addTicketToPlan(
+      plan,
+      {
+        ticketId: t.ticketId,
+        title: String(t.title ?? ""),
+        project: String(t.project ?? ""),
+        points: number(t.points),
+        estimateHours: number(t.estimateHours),
+      },
+      new Date().toISOString().slice(0, 10)
+    );
+    return NextResponse.json({ outcome, plan: await planById(plan.id) }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (typeof body.removeFromRelease === "string" && body.removeFromRelease) {
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.removeFromRelease } });
+    const outcome = await removeTicketFromPlan(body.removeFromRelease);
     return NextResponse.json(
       { outcome, plan: item ? await planById(item.planId) : null },
       outcome.ok ? undefined : { status: 400 }

@@ -314,7 +314,7 @@ function OpenTicketButton({ url, onOpenTicketLink }: { url: string; onOpenTicket
   );
 }
 
-const menuItemStyle: CSSProperties = {
+export const menuItemStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: "9px",
