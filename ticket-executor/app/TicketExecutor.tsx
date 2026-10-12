@@ -1122,14 +1122,14 @@ export default function TicketExecutor() {
     }
   }, [openAskStream]);
 
-  const sendAsk = useCallback(async (ticketId: string, rootRepo: string) => {
+  const sendAsk = useCallback(async (ticketId: string, rootRepo: string, model: string, effort: string) => {
     const prompt = (askPrompts[ticketId] ?? "").trim();
     if (!prompt) return;
     try {
       const res = await fetch(`/api/tickets/${ticketId}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rootRepo, prompt }),
+        body: JSON.stringify({ rootRepo, prompt, model, effort }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1142,6 +1142,27 @@ export default function TicketExecutor() {
       showToast(e instanceof Error ? e.message : "Claude could not be started", 9000, "error");
     }
   }, [askPrompts, openAskStream, showToast]);
+
+  const [addingToPlan, setAddingToPlan] = useState(false);
+  const addToReleasePlan = async (t: Ticket) => {
+    setAddingToPlan(true);
+    try {
+      const res = await fetch("/api/my-sprint/plan", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          addToRelease: { ticketId: t.id, title: t.title, project: getArea(t), points: t.storyPoints, estimateHours: t.estimateHours },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) showToast(data.outcome?.error || data.error || "Could not add the ticket to the release plan", 9000, "error");
+      else showToast(`#${t.id} added to the release plan`, 4000);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not add the ticket to the release plan", 9000, "error");
+    } finally {
+      setAddingToPlan(false);
+    }
+  };
 
   const stopAsk = useCallback(async (ticketId: string) => {
     try {
@@ -2029,7 +2050,7 @@ export default function TicketExecutor() {
 
   const selProject = t ? getArea(t) : "";
   const selBranch = t ? branchOf(t.id, t.title) : "";
-  const selCommand = t ? `/${getSkill(t)} ID: ${t.id} - Project name: ${getArea(t)}` : "";
+  const selCommand = t ? `/${getSkill(t)} Ticket: ${t.url || t.id} - Project name: ${getArea(t)}` : "";
   const selCdCommand = t ? `cd ${getRootRepo(t) || "<set ROOT REPO>"} && claude --model ${getModel(t)} --effort ${getEffort(t)}` : "";
   const selExecPillStyle: CSSProperties = pill({ color: RUN_COLOR[st], background: "rgba(255,255,255,.03)", border: RUN_COLOR[st] + "44", size: "md", weight: 600 });
 
@@ -2222,6 +2243,8 @@ export default function TicketExecutor() {
                     gated={gated}
                     bannerCtaStyle={bannerCtaStyle}
                     secondaryAction={secondaryAction}
+                    addingToPlan={addingToPlan}
+                    onAddToReleasePlan={() => addToReleasePlan(t)}
                     secondaryCtaButtonStyle={secondaryCtaButtonStyle}
                   />
                 )}
@@ -2272,7 +2295,12 @@ export default function TicketExecutor() {
                     prompt={askPrompts[t.id] ?? ""}
                     skillOptions={mergedSkillOptions}
                     onPromptChange={(v) => setAskPrompts((s) => ({ ...s, [t.id]: v }))}
-                    onSend={() => sendAsk(t.id, getRootRepo(t))}
+                    model={getModel(t)}
+                    modelOptions={modelOptions}
+                    effort={getEffort(t)}
+                    onModelChange={(v) => setOverrideValue(t.id, "model", v)}
+                    onEffortChange={(v) => setOverrideValue(t.id, "effort", v)}
+                    onSend={() => sendAsk(t.id, getRootRepo(t), getModel(t), getEffort(t))}
                     onCancel={() => stopAsk(t.id)}
                     onReset={() => clearAsk(t.id)}
                     logRef={askLogRef}

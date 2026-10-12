@@ -3,7 +3,7 @@ import {
   adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, searchIdentities, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
-  getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds,
+  getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds, searchWorkItems,
   type CommentMark, type LinkedPullRequest, type ProjectInfo,
 } from "./ado";
 import {
@@ -265,6 +265,12 @@ export async function loadLinkedPullRequest(
 ): Promise<LinkedPullRequest | null> {
   if (provider !== "azure-devops") return null;
   return getLinkedPullRequest(ticketId, knownPrUrl);
+}
+
+export async function searchTickets(provider: ProviderId, query: string): Promise<Ticket[]> {
+  if (provider !== "azure-devops") return [];
+  if (!(await adoCreds())) return [];
+  return searchWorkItems(query);
 }
 
 export type ProjectLoadResult = {

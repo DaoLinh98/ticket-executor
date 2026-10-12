@@ -728,6 +728,41 @@ export async function getWorkItemTicket(id: string): Promise<Ticket | null> {
   });
 }
 
+const SEARCH_LIMIT = 8;
+const MAX_ID_DIGITS = 7;
+
+export async function searchWorkItems(query: string): Promise<Ticket[]> {
+  const q = query.trim().replace(/^#/, "");
+  if (!q) return [];
+  const creds = await loadCreds();
+  const { org, pat } = creds;
+  return cached(`${ADO_CACHE_PREFIX}search:${org}:${q.toLowerCase()}`, TTL.tickets, async () => {
+    const clauses: string[] = [];
+    const numeric = /^\d+$/.test(q);
+    if (numeric && q.length <= MAX_ID_DIGITS) {
+      const base = Number(q);
+      for (let k = 0; k <= MAX_ID_DIGITS - q.length; k++) {
+        const span = 10 ** k;
+        clauses.push(`([System.Id] >= ${base * span} AND [System.Id] < ${(base + 1) * span})`);
+      }
+    }
+    if (!numeric) clauses.push(`[System.Title] CONTAINS '${wiqlQuoted(q)}'`);
+    if (!clauses.length) return [];
+    const wiql =
+      `SELECT [System.Id] FROM WorkItems WHERE (${clauses.join(" OR ")}) ` +
+      `AND [System.State] <> 'Removed' ORDER BY [System.Id] ${numeric ? "ASC" : "DESC"}`;
+    const res = await adoSend<{ workItems?: { id: number }[] }>(
+      `https://dev.azure.com/${org}/_apis/wit/wiql?${API}&$top=${SEARCH_LIMIT}`,
+      "POST",
+      { query: wiql },
+      "application/json",
+      pat
+    );
+    const ids = (res.workItems ?? []).map((w) => w.id);
+    return ids.length ? fetchWorkItems(creds, ids) : [];
+  });
+}
+
 export async function getWorkItemsByIds(ids: string[]): Promise<Ticket[]> {
   const numeric = [...new Set(ids.map(Number).filter((n) => Number.isFinite(n) && n > 0))].sort((a, b) => a - b);
   if (!numeric.length) return [];

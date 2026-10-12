@@ -10,6 +10,8 @@ import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
 import type { Action, OverrideField, RunSummary } from "../types";
 import LoadingRing from "../LoadingRing";
+import { useBoltsContext } from "../../BoltsContext";
+import { menuItemStyle } from "../TicketDetailHeader";
 
 // The two reactions this app offers, and how they read on the page.
 const REACTION_GLYPH: Record<ReactionKind, string> = { like: "👍", heart: "❤️" };
@@ -61,6 +63,8 @@ type Props = {
   bannerCtaStyle: CSSProperties;
   secondaryAction: { label: string; onClick: (e?: MouseEvent) => void; style: CSSProperties } | null;
   secondaryCtaButtonStyle: CSSProperties;
+  addingToPlan: boolean;
+  onAddToReleasePlan: () => void;
 };
 
 // Detail copy was sized/toned for glanceability and ended up hard to actually
@@ -80,12 +84,23 @@ export default function OverviewTab({
   history, onOpenRun,
   rootRepo, rootRepoSaved, savingRootRepo, onSaveRootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
   rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
-  ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle,
+  ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle, addingToPlan, onAddToReleasePlan,
 }: Props) {
   const fieldLabel: CSSProperties = { fontSize: FONT.xs, letterSpacing: ".12em", color: COLORS.textDim, fontWeight: 600, marginBottom: "5px" };
   const fieldCard = card({ padding: "9px 11px" });
   // Root Repo has no default — a run can't start without it, so say so on the field.
   const rootRepoMissing = !rootRepo.trim();
+  const { fireBoltFromEvent } = useBoltsContext();
+  const [ctaMenuOpen, setCtaMenuOpen] = useState(false);
+  const ctaRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!ctaMenuOpen) return;
+    const onDoc = (e: globalThis.MouseEvent) => {
+      if (ctaRef.current && !ctaRef.current.contains(e.target as Node)) setCtaMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [ctaMenuOpen]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [people, setPeople] = useState<MentionCandidate[]>([]);
@@ -399,12 +414,51 @@ export default function OverviewTab({
           <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)", marginBottom: "3px" }}>{ctaTitle}</div>
           <div style={{ fontSize: FONT.base, color: "#9A9FAD" }}>{ctaSub}</div>
         </div>
-        <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={bannerCtaStyle}>
-          {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
-          {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={15} /></span>}
-          {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
-          <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
-        </button>
+        <div ref={ctaRef} style={{ position: "relative", flex: "0 0 auto", display: "inline-flex" }}>
+          <div style={{ ...bannerCtaStyle, padding: 0, gap: 0 }}>
+            <button
+              onClick={action.onClick}
+              title={action.title}
+              aria-disabled={gated}
+              style={{ position: "relative", overflow: "hidden", display: "inline-flex", alignItems: "center", gap: "7px", alignSelf: "stretch", padding: "0 14px 0 20px", border: "none", background: "transparent", color: "inherit", font: "inherit", cursor: "inherit" }}
+            >
+              {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
+              {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={15} /></span>}
+              {action.playIcon && <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
+              <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
+            </button>
+            <span style={{ alignSelf: "stretch", width: "1px", margin: "7px 0", background: "currentColor", opacity: 0.3 }} />
+            <button
+              type="button"
+              aria-label="More actions"
+              aria-expanded={ctaMenuOpen}
+              onClick={(e) => { fireBoltFromEvent(e); setCtaMenuOpen((o) => !o); }}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", alignSelf: "stretch", width: "36px", padding: 0, border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: ctaMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+          </div>
+          {ctaMenuOpen && (
+            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", right: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "200px" }) }}>
+              <button
+                onClick={(e) => { setCtaMenuOpen(false); action.onClick(e); }}
+                aria-disabled={gated}
+                style={{ ...menuItemStyle, minHeight: "40px", opacity: gated ? 0.45 : 1 }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z" /></svg>
+                {action.label}
+              </button>
+              <button
+                onClick={(e) => { fireBoltFromEvent(e); setCtaMenuOpen(false); onAddToReleasePlan(); }}
+                disabled={addingToPlan}
+                style={{ ...menuItemStyle, minHeight: "40px", opacity: addingToPlan ? 0.6 : 1 }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" /></svg>
+                Add to Release plan
+              </button>
+            </div>
+          )}
+        </div>
         {secondaryAction && (
           <button onClick={secondaryAction.onClick} style={secondaryCtaButtonStyle}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>

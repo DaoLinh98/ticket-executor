@@ -12,6 +12,7 @@ import {
   FONT,
   card,
   ctaButtonStyle,
+  dropdownPanelStyle,
   fieldInput,
   fieldLabel,
   pill,
@@ -307,6 +308,10 @@ export default function MySprintPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [found, setFound] = useState<Ticket[]>([]);
+  const [searching, setSearching] = useState(false);
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadProjects = useCallback(async () => {
@@ -383,6 +388,23 @@ export default function MySprintPage() {
     }, 5000);
     return () => clearInterval(id);
   }, [anyRunning]);
+
+  useEffect(() => {
+    const q = query.trim().replace(/^#/, "");
+    if (!q) { setFound([]); setSearching(false); return; }
+    setSearching(true);
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const d = await fetch("/api/tickets/search?q=" + encodeURIComponent(q), { signal: ctrl.signal }).then((r) => r.json());
+        setFound(Array.isArray(d.tickets) ? d.tickets : []);
+        setSearching(false);
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") { setFound([]); setSearching(false); }
+      }
+    }, 250);
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [query]);
 
   const reloadPlan = async () => {
     const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
@@ -465,6 +487,24 @@ export default function MySprintPage() {
           ? "Marked ready to run — the scheduler will pick it up despite the clarification flag."
           : "Back to waiting on clarification."
       );
+    });
+
+  const addToPlan = (t: Ticket) =>
+    act("add-" + t.id, async () => {
+      const d = await post(
+        "/api/my-sprint/plan",
+        { addToRelease: { ticketId: t.id, title: t.title, project: t.project, points: t.storyPoints, estimateHours: t.estimateHours } },
+        "PUT"
+      );
+      if (d.plan) setStored(d.plan);
+      setMessage(`#${t.id} added to the release plan.`);
+    });
+
+  const removeNow = (plannedId: string, ticketId: string) =>
+    act("remove-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { removeFromRelease: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      setMessage(`#${ticketId} removed from the release plan.`);
     });
 
   const releaseNow = (plannedId: string) =>
@@ -580,6 +620,10 @@ export default function MySprintPage() {
           stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
         }));
 
+  const needle = query.trim().toLowerCase().replace(/^#/, "");
+  const planned = new Set(rows.map((t) => t.ticketId));
+  const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
+
   const runningRows = rows.filter((t) => t.implementState === "running");
   // The second lane. Kept apart from `runningRows` because the two are different
   // work on different tickets and the banner has to name which is which.
@@ -640,6 +684,50 @@ export default function MySprintPage() {
           />
         </div>
         {busy === "anchor" && <LoadingRing size={14} />}
+        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: "340px", minWidth: "150px" }}>
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+            placeholder="Search ticket by ID or title"
+            aria-label="Search tickets by ID or title"
+            autoComplete="off"
+            spellCheck={false}
+            style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
+          />
+          {searchOpen && needle && stored && addable.length === 0 && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 10px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                {searching ? <><LoadingRing size={14} /> Searching all projects…</> : "No other ticket matches."}
+              </div>
+            </div>
+          )}
+          {searchOpen && addable.length > 0 && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              {addable.map((t) => (
+                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 6px 0 10px" }}>
+                  <span title={`#${t.id} · ${t.title}`} style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    #{t.id} · {t.title}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Add #${t.id} to the release plan`}
+                    title="Add to Release plan"
+                    disabled={busy === "add-" + t.id}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { fireBoltFromEvent(e); addToPlan(t); }}
+                    style={{ flex: "0 0 auto", width: "40px", height: "40px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.accent, cursor: "pointer" }}
+                  >
+                    {busy === "add-" + t.id ? <LoadingRing size={14} /> : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M12 5v14M5 12h14" /></svg>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
@@ -982,9 +1070,10 @@ export default function MySprintPage() {
                           </span>
                           <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" }}>
                             <a
-                              href={t.prUrl || ticket?.url}
+                              href={ticket?.url}
                               target="_blank"
                               rel="noreferrer"
+                              title={`#${t.ticketId} · ${t.title}`}
                               style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                             >
                               #{t.ticketId} · {t.title}
@@ -1141,6 +1230,8 @@ export default function MySprintPage() {
                               button("Start QA fix", "warning", () => startQaFixNow(t.id, t.ticketId), "qafix-" + t.id)}
                             {t.id && t.pendingAction === "move-to-qa" &&
                               button("Move to In QA", "primary", () => moveToQaNow(t.id), "qa-" + t.id)}
+                            {t.id && t.implementState === "pending" && !t.runId && !t.prUrl && !t.releasedAt &&
+                              button("Remove", "ghost", () => removeNow(t.id, t.ticketId), "remove-" + t.id)}
                           </span>
                         </div>
                       );
