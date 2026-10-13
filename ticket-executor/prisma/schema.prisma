@@ -503,6 +503,7 @@ model PlannedTicket {
   // question is often one the codebase already answers, and waiting for a BA to
   // confirm what the repo makes obvious is a day lost for nothing.
   unblockedByUser Boolean   @default(false)
+  addedByUser     Boolean   @default(false)
   // Where the developer's claim on this ticket stands — see `lib/sprintClaim.ts`.
   // mine | handed-off | dropped. The row outlives the assignment that created
   // it: a ticket moved to QA under somebody else's name is still part of the

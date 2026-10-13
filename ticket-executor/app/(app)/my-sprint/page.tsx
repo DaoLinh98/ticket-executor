@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
@@ -12,13 +12,11 @@ import {
   COLORS,
   FONT,
   card,
-  ctaButtonStyle,
   dropdownPanelStyle,
   fieldInput,
   fieldLabel,
   pill,
   sectionCaption,
-  statusPill,
   tintedCard,
   displayText,
 } from "@/lib/ui";
@@ -29,11 +27,37 @@ import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import { useToast } from "../ToastProvider";
-import type { Claim } from "@/lib/sprintClaim";
-import type { Lane, PlanConfig, SprintPlanResult } from "@/lib/sprintPlan";
-import { isFixingQa, isQueueable, QA_STAGES, STAGE_LABEL, stageOf } from "@/lib/ticketLifecycle";
+import { forecastFinish, releaseDays, type Lane, type QueueMove } from "@/lib/sprintPlan";
+import { isFixingQa, MAX_QA_ROUNDS } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
+import ActionButton from "./ActionButton";
+import AutomationPanel, { type PlanSettings } from "./AutomationPanel";
+import ConfirmDialog from "./ConfirmDialog";
+import NeedsYou, { type AttentionItem } from "./NeedsYou";
+import PlanFilters from "./PlanFilters";
+import PlanTable from "./PlanTable";
+import QcReplies from "./QcReplies";
+import RebuildPreviewDialog from "./RebuildPreviewDialog";
+import SchedulerLog from "./SchedulerLog";
+import TicketTimeline from "./TicketTimeline";
+import {
+  LANE_COLOR,
+  LANE_LABEL,
+  VERDICT,
+  dayLabel,
+  hours,
+  matchesFilter,
+  usd,
+  type MySprint,
+  type PlanFilter,
+  type PlanSort,
+  type PlanResponse,
+  type PlannedRow,
+  type QaDraft,
+  type RebuildPreview,
+  type StoredPlan,
+} from "./model";
 
 // The developer's own view of one iteration: what they are carrying, whether it
 // fits, what an agent thinks of it, and which day each finished ticket is handed
@@ -44,260 +68,15 @@ import type { TriagedTicket } from "@/lib/execution/triage";
 // anything on its own — that is what keeps the plan on the screen and the plan
 // the machine acts on the same plan.
 
-type MySprint = {
-  configured: boolean;
-  notice?: string;
-  error?: string;
-  identity?: { email: string; name: string };
-  anchorProject?: string;
-  sprint?: string;
-  window?: { startDate: string; finishDate: string };
-  today?: string;
-  truncated?: boolean;
-  tickets?: Ticket[];
-  claimed?: { ticket: Ticket; claim: Claim; assigneeNow: string; fromPlan: boolean }[];
-  plan: SprintPlanResult | null;
-  config: PlanConfig;
-};
-
-type TriageRow = {
-  id: string;
-  status: "running" | "succeeded" | "failed";
-  result: { summary?: string; finalNotes?: string[]; tickets?: TriagedTicket[] };
-  errorMessage: string;
-  costUsd: number;
-};
-
-type PlannedRow = {
-  id: string;
-  ticketId: string;
-  title: string;
-  project: string;
-  implementOrder: number;
-  points: number;
-  estimateHours: number;
-  releaseDay: string;
-  blocked: boolean;
-  unblockedByUser: boolean;
-  implementState: string;
-  runId: string;
-  prUrl: string;
-  prPublished: boolean;
-  reviewersSet: boolean;
-  statusMoved: boolean;
-  releasedAt: string | null;
-  releaseError: string;
-  reviewState: string;
-  reviewRunId: string;
-  openComments: number;
-  threadsReplied: number;
-  threadsResolved: number;
-  reviewRounds: number;
-  reviewError: string;
-  claim: Claim;
-  assigneeNow: string;
-  stage: string;
-  prMerged: boolean;
-  pendingAction: string;
-  qaRounds: number;
-};
-
-type StoredPlan = {
-  id: string;
-  status: "draft" | "active" | "archived";
-  autoImplement: boolean;
-  autoRelease: boolean;
-  autoResolveReview: boolean;
-  autoDraftQaReply: boolean;
-  includeWider: boolean;
-  reviewers: string[];
-  pointsPerDay: number;
-  items: PlannedRow[];
-};
-
-type QaDraft = {
-  id: string;
-  plannedTicketId: string;
-  ticketId: string;
-  status: "running" | "ready" | "failed";
-  body: string;
-  summary: string;
-  needsHuman: boolean;
-  fixNeeded: boolean;
-  errorMessage: string;
-};
-
-type AutomationRow = {
-  id: string;
-  ticketId: string;
-  action: string;
-  outcome: string;
-  reason: string;
-  detail: string;
-  createdAt: string;
-};
-
-const LANE_LABEL: Record<Lane, string> = {
-  todo: "To do",
-  doing: "In progress",
-  review: "In review",
-  done: "Done",
-};
-
-const LANE_COLOR: Record<Lane, string> = {
-  todo: COLORS.textDim,
-  doing: COLORS.accent,
-  review: COLORS.indigo,
-  done: COLORS.success,
-};
-
-const VERDICT: Record<string, { color: string; label: string }> = {
-  "on-track": { color: COLORS.success, label: "On track" },
-  tight: { color: COLORS.warning, label: "Tight" },
-  "over-committed": { color: COLORS.danger, label: "Over-committed" },
-  "no-calendar": { color: COLORS.accent, label: "No sprint dates" },
-};
-
-// `means` is the answer to "what does this ticket still need?", which the label
-// alone never gives — "Ready · notes" in particular reads like a half-verdict
-// until you know it is startable today. It is the pill's tooltip here and a
-// legend in the full report.
-const READINESS: Record<string, { color: string; label: string; means: string }> = {
-  ready: { color: COLORS.success, label: "Ready", means: "Nothing is missing — start it as it stands." },
-  "ready-with-notes": {
-    color: COLORS.info,
-    label: "Ready · notes",
-    means: "Startable today, nobody has to answer anything. The notes are context to carry into the work — open the full report.",
-  },
-  "needs-clarification": {
-    color: COLORS.warning,
-    label: "Needs clarification",
-    means: "A person has to answer something first. The scheduler will not run it until it is cleared.",
-  },
-  blocked: {
-    color: COLORS.danger,
-    label: "Blocked",
-    means: "Work cannot start at all — a missing dependency, or a contradiction only the client can resolve.",
-  },
-};
-
-// Where the developer's claim on a ticket stands. `mine` has no pill: the row's
-// own status and state columns say everything, and a badge on every ordinary
-// ticket would only make the two exceptions harder to spot.
-const CLAIM: Record<Claim, { color: string; label: string }> = {
-  mine: { color: COLORS.textDim, label: "Mine" },
-  "handed-off": { color: COLORS.info, label: "Handed off" },
-  dropped: { color: COLORS.textDim, label: "Left sprint" },
-};
-
-const IMPLEMENT_STATE: Record<string, { color: string; label: string }> = {
-  pending: { color: COLORS.textDim, label: "Queued" },
-  running: { color: COLORS.accent, label: "Running" },
-  implemented: { color: COLORS.indigo, label: "Draft PR" },
-  failed: { color: COLORS.danger, label: "Failed" },
-  skipped: { color: COLORS.faint, label: "Skipped" },
-  "no-fix-needed": { color: COLORS.info, label: "No fix needed" },
-};
-
-/**
- * What the State column says about one row.
- *
- * Release is not a value of `implementState` — the engine stops at
- * "implemented" and `releasePlannedTicket()` records what it did in its own
- * three columns — so reading `implementState` alone leaves a released ticket
- * labelled "Draft PR" forever, next to a pull request that is no longer a draft.
- *
- * The release columns therefore come first, and the partial case gets its own
- * label rather than being rounded to one of the two ends: a pull request that
- * was published but whose work item never moved is a real state somebody has to
- * finish by hand, and calling it either "Draft PR" or "Released" hides that.
- */
-function stateOf(t: PlannedRow, status: string): { color: string; label: string } {
-  if (t.releasedAt) return { color: COLORS.success, label: "Released" };
-  if (t.implementState === "pending" && !t.implementOrder) {
-    const stage = stageOf(t.stage || status);
-    if (!isQueueable(stage)) return { color: stage === "qa-failed" ? COLORS.danger : COLORS.indigo, label: STAGE_LABEL[stage] };
-  }
-  if (t.prPublished) return { color: COLORS.warning, label: "In review" };
-  return IMPLEMENT_STATE[t.implementState] ?? IMPLEMENT_STATE.pending;
-}
-
-/**
- * What the Review column says about one row.
- *
- * A column of its own rather than another branch inside `stateOf()`. The two
- * answer questions about different moments and both stay true at once: a
- * released ticket whose review is being resolved is still released, and folding
- * the second fact into the first is exactly the mistake that left a released
- * ticket reading "Draft PR" until State was split from the release columns.
- *
- * `spin` is the live half. A pill alone cannot say whether "Fixing" is this
- * second or a stale row, which is the same reason the State column carries one.
- */
-function reviewOf(t: PlannedRow): { color: string; label: string; spin: boolean } | null {
-  // Nothing is under review until a reviewer has been told there is something to
-  // review. Before release the pull request is a draft nobody has been sent.
-  if (!t.prPublished) return null;
-  switch (t.reviewState) {
-    case "running":
-      return { color: COLORS.accent, label: "Fixing", spin: true };
-    case "failed":
-      return { color: COLORS.danger, label: "Fix failed", spin: false };
-    case "needs-human":
-      return { color: COLORS.warning, label: "Needs you", spin: false };
-    case "resolved":
-      return {
-        color: t.openComments > 0 ? COLORS.warning : COLORS.success,
-        // Replied and resolved are different numbers on purpose: the skill
-        // deliberately answers threads it will not act on, and a row claiming to
-        // have resolved everything would hide the ones left for a person.
-        label: `Fixed ${t.threadsResolved}/${t.threadsReplied}`,
-        spin: false,
-      };
-    default:
-      return t.openComments > 0
-        ? { color: COLORS.warning, label: `${t.openComments} open`, spin: false }
-        : { color: COLORS.textDim, label: "Clean", spin: false };
-  }
-}
-
-const hours = (h: number) => (Math.round(h * 10) / 10).toString() + "h";
-
-/** "Mon 07 Sep" — the weekday is the part a release calendar is read for. */
-function dayLabel(iso: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso + "T00:00:00.000Z");
-  return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" });
-}
-
-// The triage column carries the override control next to its verdict, so it is
-// the one that has to fit two things rather than one.
-const GRID = "44px 1fr 60px 68px 132px 106px 104px 104px 176px";
-
-/**
- * Where a ticket actually lives, when that is not the iteration on screen.
- *
- * Read off the provider's iteration path rather than off which query returned
- * the row: the path is what the developer sees in the tracker, and it is the
- * only thing that separates "not scheduled at all" (the path is still the
- * project root) from "parked in another sprint".
- *
- * Empty for a ticket that is in this iteration — the common case earns no badge.
- */
-function originLabel(iterationPath: string | undefined, sprint: string): string {
-  const segments = (iterationPath ?? "").split("\\").filter(Boolean);
-  if (segments.length === 0) return "";
-  if (segments.length === 1) return "Backlog";
-  const leaf = segments[segments.length - 1];
-  return leaf === sprint ? "" : leaf;
-}
-
-type PlanResponse = { plan: StoredPlan | null; events: AutomationRow[]; drafts: QaDraft[] };
+type Confirm = { title: string; confirmLabel: string; busyKey: string; body: ReactNode; run: () => Promise<void> };
 
 const PROJECTS_KEY = ["projects"] as const;
 const SPRINT_KEY = ["my-sprint"] as const;
 const PLAN_KEY = ["my-sprint", "plan"] as const;
 const PLAN_POLL_MS = 5000;
+const PLAN_IDLE_POLL_MS = 30000;
+const SPRINT_POLL_MS = 60000;
+const TONE_RANK = { danger: 0, warning: 1, accent: 2 } as const;
 
 const planRunning = (p?: PlanResponse) =>
   (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
@@ -317,6 +96,7 @@ const fetchPlan = async (): Promise<PlanResponse> => {
     plan: d.plan ?? null,
     events: Array.isArray(d.events) ? d.events : [],
     drafts: Array.isArray(d.drafts) ? d.drafts : [],
+    costs: d.costs && typeof d.costs === "object" ? d.costs : {},
   };
 };
 
@@ -328,27 +108,35 @@ export default function MySprintPage() {
   // Triage is switched off on this page for now.
   // const [triage, setTriage] = useState<TriageRow | null>(null);
   // const [reportOpen, setReportOpen] = useState(false);
+  // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [settledNeedle, setSettledNeedle] = useState("");
-  // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<Partial<PlanSettings>>({});
+  const [preview, setPreview] = useState<RebuildPreview | null>(null);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [filter, setFilter] = useState<PlanFilter>("all");
+  const [sort, setSort] = useState<PlanSort>("queue");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [historyFor, setHistoryFor] = useState("");
+
+  const setError = (m: string) => { if (m) showToast(m, "error"); };
+  const setMessage = (m: string) => { if (m) showToast(m); };
 
   const projectsQuery = useQuery({ queryKey: PROJECTS_KEY, queryFn: fetchProjects });
-  const sprintQuery = useQuery({
-    queryKey: SPRINT_KEY,
-    queryFn: (): Promise<MySprint> => fetch("/api/my-sprint").then((r) => r.json()),
-  });
-  // A run outlives the request that started it, so a plan holding a running
-  // ticket is re-read until it stops — that is what keeps the "implementing
-  // now" label and the State column live.
   const planQuery = useQuery({
     queryKey: PLAN_KEY,
     queryFn: fetchPlan,
-    refetchInterval: (q) => (planRunning(q.state.data) ? PLAN_POLL_MS : false),
+    refetchOnWindowFocus: true,
+    refetchInterval: (q) => (planRunning(q.state.data) ? PLAN_POLL_MS : q.state.data?.plan?.status === "active" ? PLAN_IDLE_POLL_MS : false),
+  });
+  const sprintQuery = useQuery({
+    queryKey: SPRINT_KEY,
+    queryFn: (): Promise<MySprint> => fetch("/api/my-sprint").then((r) => r.json()),
+    refetchOnWindowFocus: true,
+    refetchInterval: () => (planQuery.data?.plan?.status === "active" ? SPRINT_POLL_MS : false),
   });
 
   const projects = projectsQuery.data ?? [];
@@ -356,13 +144,21 @@ export default function MySprintPage() {
   const stored = planQuery.data?.plan ?? null;
   const events = planQuery.data?.events ?? [];
   const drafts = planQuery.data?.drafts ?? [];
-  const loading = sprintQuery.isFetching || planQuery.isPending;
+  const costs = planQuery.data?.costs ?? {};
+  const initialLoading = sprintQuery.isPending || planQuery.isPending;
+  const refreshing = !initialLoading && (sprintQuery.isFetching || planQuery.isFetching);
   const loadError = data?.error || (sprintQuery.error as Error | null)?.message || (planQuery.error as Error | null)?.message || "";
+
+  const settings: PlanSettings = {
+    pointsPerDay: settingsDraft.pointsPerDay ?? String(stored?.pointsPerDay ?? data?.config.pointsPerDay ?? ""),
+    hoursPerDay: settingsDraft.hoursPerDay ?? String(stored?.hoursPerDay ?? data?.config.hoursPerDay ?? ""),
+    maxTicketsPerDay: settingsDraft.maxTicketsPerDay ?? String(stored?.maxTicketsPerDay ?? data?.config.maxTicketsPerDay ?? 0),
+  };
 
   const load = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY });
   const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY });
   const setStored = (plan: StoredPlan | null) =>
-    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], ...old, plan }));
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], costs: {}, ...old, plan }));
 
   useEffect(() => {
     const onChanged = () => {
@@ -430,8 +226,6 @@ export default function MySprintPage() {
 
   const act = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
-    setError("");
-    setMessage("");
     try {
       await fn();
     } catch (e) {
@@ -453,15 +247,38 @@ export default function MySprintPage() {
   //     setTriage({ id: d.id, status: "running", result: {}, errorMessage: "", costUsd: 0 });
   //   });
 
+  const planConfig = () => ({
+    pointsPerDay: Number(settings.pointsPerDay) || undefined,
+    hoursPerDay: Number(settings.hoursPerDay) || undefined,
+    maxTicketsPerDay: Number(settings.maxTicketsPerDay) || 0,
+  });
+
+  const applyRebuild = async () => {
+    const d = await post("/api/my-sprint/plan", planConfig());
+    setStored(d.plan);
+    setSettingsDraft({});
+    setMessage("Plan rebuilt.");
+    if (d.warning) showToast(d.warning, "warning");
+    await load();
+  };
+
   const buildPlan = () =>
     act("plan", async () => {
-      const d = await post("/api/my-sprint/plan", {
-        pointsPerDay: data?.config.pointsPerDay,
-        hoursPerDay: data?.config.hoursPerDay,
-      });
-      setStored(d.plan);
-      setMessage("Plan rebuilt.");
-      if (d.warning) showToast(d.warning, "warning");
+      if (stored) {
+        const d = await post("/api/my-sprint/plan", { ...planConfig(), dryRun: true });
+        const p: RebuildPreview = d.preview;
+        if (p.added.length || p.moved.length || p.redated.length || p.claimChanged.length || p.overflowPoints > 0) {
+          setPreview(p);
+          return;
+        }
+      }
+      await applyRebuild();
+    });
+
+  const confirmRebuild = () =>
+    act("plan", async () => {
+      await applyRebuild();
+      setPreview(null);
     });
 
   const patchPlan = (body: Record<string, unknown>, label: string) =>
@@ -470,8 +287,6 @@ export default function MySprintPage() {
       setStored(d.plan);
     });
 
-  // Override triage on one ticket. Addressed by planned-ticket id, so it does
-  // not go through `patchPlan` — that one always sends the plan id.
   const setUnblocked = (plannedId: string, unblocked: boolean) =>
     act("unblock-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { item: plannedId, unblocked }, "PATCH");
@@ -499,6 +314,26 @@ export default function MySprintPage() {
       const d = await post("/api/my-sprint/plan", { removeFromRelease: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
       setMessage(`#${ticketId} removed from the release plan.`);
+    });
+
+  const moveNow = (plannedId: string, move: QueueMove) =>
+    act("move-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { moveInQueue: { id: plannedId, move } }, "PUT");
+      if (d.plan) setStored(d.plan);
+    });
+
+  const holdNow = (plannedId: string) =>
+    act("hold-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { hold: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      setMessage("On hold — the scheduler leaves it alone until you resume it.");
+    });
+
+  const setReleaseDayNow = (plannedId: string, day: string) =>
+    act("redate-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { setReleaseDay: { id: plannedId, day } }, "PUT");
+      if (d.plan) setStored(d.plan);
+      setMessage(`Release day set to ${dayLabel(day)}.`);
     });
 
   const releaseNow = (plannedId: string) =>
@@ -582,14 +417,43 @@ export default function MySprintPage() {
       await load();
     });
 
-  // The one destination for "what is this ticket doing?" — the same screen and
-  // the same two parameters the bell pushes, so a row and a notification land
-  // in the same place.
   const openExecution = (ticketId: string, tab: "execution" | "result") =>
     router.push(
       `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` +
         `&at=${Date.now()}`
     );
+
+  const askRelease = (row: PlannedRow) =>
+    setConfirm({
+      title: `Release #${row.ticketId}?`,
+      confirmLabel: "Release",
+      busyKey: "release-" + row.id,
+      body: (
+        <>
+          <span>#{row.ticketId} · {row.title}</span>
+          <span>
+            This takes the pull request out of draft, assigns{" "}
+            {stored?.reviewers?.length ? stored.reviewers.join(", ") : "nobody (no reviewers are set)"}, and moves the work item to Code Review.
+          </span>
+        </>
+      ),
+      run: () => releaseNow(row.id),
+    });
+
+  const askPostReply = (draft: QaDraft) =>
+    setConfirm({
+      title: `Post the reply on #${draft.ticketId}?`,
+      confirmLabel: "Post reply",
+      busyKey: "post-" + draft.id,
+      body: <span>The reply is posted as a comment on the work item under your name.</span>,
+      run: () => postReplyNow(draft),
+    });
+
+  const runConfirm = async () => {
+    if (!confirm) return;
+    await confirm.run();
+    setConfirm(null);
+  };
 
   const summary = data?.plan?.summary ?? null;
   const verdict = summary ? VERDICT[summary.verdict] : null;
@@ -598,8 +462,6 @@ export default function MySprintPage() {
   //   (triage?.result?.tickets ?? []).map((t) => [String(t.id), t])
   // );
   const projectCount = new Set((data?.tickets ?? []).map((t) => t.project).filter(Boolean)).size;
-  // The stored plan wins once it exists: it is what the scheduler acts on. The
-  // computed preview only fills the gap before a plan has ever been built.
   const rows: PlannedRow[] =
     stored?.items?.length
       ? stored.items
@@ -618,9 +480,90 @@ export default function MySprintPage() {
   const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
 
   const runningRows = rows.filter((t) => t.implementState === "running");
-  // The second lane. Kept apart from `runningRows` because the two are different
-  // work on different tickets and the banner has to name which is which.
   const reviewingRows = rows.filter((t) => t.reviewState === "running");
+
+  const releaseDayOptions = data?.window?.startDate && data.today ? releaseDays(data.window, data.today) : [];
+
+  const attention: AttentionItem[] = [];
+  for (const t of rows) {
+    if (!t.id || t.claim !== "mine") continue;
+    const base = { ticketId: t.ticketId, title: t.title };
+    const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
+    const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
+    const result = <ActionButton label="Result" variant="ghost" onClick={() => openExecution(t.ticketId, "result")} />;
+    if (t.reviewState === "needs-human") {
+      attention.push({ ...base, key: "nh-" + t.id, tone: "warning", text: `${t.reviewRounds} rounds of automatic review fixes did not close it — the rest needs a decision.`, action: result });
+    }
+    if (t.reviewState === "failed") {
+      attention.push({
+        ...base, key: "rf-" + t.id, tone: "danger", text: "The review fix run failed.",
+        action: t.prPublished && !t.prMerged && t.openComments > 0
+          ? <ActionButton label="Fix review" variant="outline" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy === "fixreview-" + t.id} />
+          : result,
+      });
+    }
+    if (t.releaseError) {
+      attention.push({
+        ...base, key: "re-" + t.id, tone: "danger", text: t.releaseError,
+        action: due ? <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy === "release-" + t.id} /> : undefined,
+      });
+    }
+    if (t.implementState === "failed") {
+      attention.push({
+        ...base, key: "if-" + t.id, tone: "danger",
+        text: t.prUrl ? "The run failed after opening a pull request — look at the result." : "The implement run failed.",
+        action: !t.prUrl && t.implementOrder > 0
+          ? <ActionButton label="Retry" variant="warning" onClick={() => retryNow(t.id)} busy={busy === "retry-" + t.id} />
+          : result,
+      });
+    }
+    if (t.pendingAction === "move-to-qa") {
+      attention.push({
+        ...base, key: "mq-" + t.id, tone: "accent", text: "Pull request merged — confirm to move it to In QA.",
+        action: <ActionButton label="Move to In QA" variant="primary" onClick={() => moveToQaNow(t.id)} busy={busy === "qa-" + t.id} />,
+      });
+    }
+    if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.implementState !== "running" && t.reviewState !== "running") {
+      if (t.qaRounds >= MAX_QA_ROUNDS) {
+        attention.push({ ...base, key: "qx-" + t.id, tone: "danger", text: `${t.qaRounds} QA fixes did not close this ticket — it needs you.`, action: result });
+      } else if (!replyWaiting) {
+        attention.push({
+          ...base, key: "qf-" + t.id, tone: "warning", text: "Came back from QA — start the QA fix.",
+          action: <ActionButton label="Start QA fix" variant="warning" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy === "qafix-" + t.id} />,
+        });
+      }
+    }
+    if (due && !stored?.autoRelease && data?.today && t.releaseDay && t.releaseDay <= data.today && !t.releaseError) {
+      attention.push({
+        ...base, key: "rd-" + t.id, tone: "accent", text: "Its release day has come and auto-release is off.",
+        action: <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy === "release-" + t.id} />,
+      });
+    }
+  }
+  for (const d of drafts) {
+    if (d.status !== "ready") continue;
+    const row = rows.find((r) => r.id === d.plannedTicketId);
+    attention.push({
+      key: "dr-" + d.id, ticketId: d.ticketId, title: row?.title ?? "", tone: "warning",
+      text: d.needsHuman ? "A reply to QC is drafted and needs your decision." : "A reply to QC is drafted — post or dismiss it.",
+      action: <ActionButton label="Read draft" variant="outline" onClick={() => document.getElementById("qc-replies")?.scrollIntoView({ behavior: "smooth" })} />,
+    });
+  }
+  attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+
+  const attentionIds = new Set(attention.map((a) => a.ticketId));
+  const filterCounts = Object.fromEntries(
+    (["all", "attention", "queued", "running", "review", "done"] as PlanFilter[]).map((f) => [f, rows.filter((t) => matchesFilter(t, f, attentionIds)).length])
+  ) as Record<PlanFilter, number>;
+  const rowProjects = [...new Set(rows.map((t) => t.project).filter(Boolean))].sort();
+  const shownRows = rows
+    .filter((t) => matchesFilter(t, filter, attentionIds) && (!projectFilter || t.project === projectFilter))
+    .sort((a, b) => (sort === "release" ? (a.releaseDay || "9999").localeCompare(b.releaseDay || "9999") : 0));
+  const reorderable = filter === "all" && sort === "queue" && !projectFilter;
+  const totalCost = Object.values(costs).reduce((sum, c) => sum + c, 0);
+  const forecast = summary && data?.window && data.today
+    ? forecastFinish({ donePoints: summary.donePoints, remainingPoints: summary.remainingPoints, window: data.window, today: data.today })
+    : null;
 
   let tileIndex = 0;
   const tile = (label: string, value: string, sub?: string) => {
@@ -633,29 +576,6 @@ export default function MySprintPage() {
     </motion.div>
     );
   };
-
-  const button = (
-    label: string,
-    variant: "primary" | "outline" | "ghost" | "warning" | "success",
-    onClick: () => void,
-    key: string,
-    disabled = false
-  ) => (
-    <button
-      onClick={(e) => { fireBoltFromEvent(e); onClick(); }}
-      disabled={disabled || busy === key}
-      style={{
-        ...ctaButtonStyle(variant, { height: "30px", cornerPx: 7 }),
-        flex: "0 0 auto",
-        whiteSpace: "nowrap",
-        padding: "0 11px",
-        cursor: disabled || busy === key ? "default" : "pointer",
-      }}
-    >
-      {busy === key && <LoadingRing size={13} />}
-      {label}
-    </button>
-  );
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
@@ -725,7 +645,7 @@ export default function MySprintPage() {
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
         <div style={{ maxWidth: "1160px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
-          {loading ? (
+          {initialLoading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
           ) : data && !data.configured ? (
             <div style={tintedCard("warning")}>
@@ -736,19 +656,14 @@ export default function MySprintPage() {
           ) : !summary ? (
             <div style={tintedCard("warning")}>
               <span style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>
-                {error || loadError || "Nothing to plan yet."}
+                {loadError || "Nothing to plan yet."}
               </span>
             </div>
           ) : (
             <>
-              {(error || loadError) && (
+              {loadError && (
                 <div style={tintedCard("danger")}>
-                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error || loadError}</span>
-                </div>
-              )}
-              {message && (
-                <div style={tintedCard("accent")}>
-                  <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600 }}>{message}</span>
+                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{loadError}</span>
                 </div>
               )}
               {data?.notice && (
@@ -759,6 +674,7 @@ export default function MySprintPage() {
 
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <motion.span initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} style={displayText("heading")}>{data?.sprint || "Last 14 days"}</motion.span>
+                {refreshing && <LoadingRing size={16} />}
                 {data?.window?.startDate && (
                   <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>
                     {dayLabel(data.window.startDate)} → {dayLabel(data.window.finishDate)}
@@ -779,10 +695,8 @@ export default function MySprintPage() {
                 </span>
               </div>
 
-              {/* Which ticket the agent has its hands on right now. The State
-                  column says it per row, but the row is one of many and the
-                  answer to "what is running?" should not have to be scanned
-                  for. */}
+              <NeedsYou items={attention} />
+
               {(runningRows.length > 0 || reviewingRows.length > 0) && (
                 <div style={{ ...tintedCard("accent"), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                   <LoadingRing size={18} />
@@ -798,22 +712,16 @@ export default function MySprintPage() {
                       <span style={{ fontSize: FONT.base, color: COLORS.textMuted, fontWeight: 600 }}>
                         #{t.ticketId} · {t.title}
                       </span>
-                      {/* Named only when both lanes are live: with one lane the
-                          heading above already says which, and repeating it per
-                          row is noise. */}
                       {runningRows.length > 0 && reviewingRows.length > 0 && (
                         <span style={pill({ color: COLORS.textDim, size: "xs", weight: 700 })}>{lane}</span>
                       )}
-                      {button("Watch run", "outline", () => openExecution(t.ticketId, "execution"), "watch-" + lane + t.ticketId)}
+                      <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId, "execution")} />
                     </span>
                   ))}
                 </div>
               )}
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "14px" }}>
-                {/* Scope first, and it is the sprint's headline for a reason: it is
-                    the one number that must not fall when the developer succeeds.
-                    "Still mine" is the number that shrinks, and it is supposed to. */}
                 {tile(
                   "SPRINT SCOPE",
                   summary.ticketCount + " · " + summary.totalPoints + "pt",
@@ -840,6 +748,15 @@ export default function MySprintPage() {
                   hours(Math.abs(summary.slackHours)),
                   summary.slackHours < 0 ? "does not fit the sprint" : "spare capacity"
                 )}
+                {tile(
+                  "FORECAST",
+                  forecast ? dayLabel(forecast.projectedDay) : "—",
+                  forecast
+                    ? (forecast.slipDays > 0 ? forecast.slipDays + " working day(s) past the end" : "lands inside the sprint") +
+                      " · " + (Math.round(forecast.velocity * 10) / 10) + "pt/day so far"
+                    : "needs a point delivered first"
+                )}
+                {tile("RUN COST", usd(totalCost), Object.values(costs).filter((c) => c > 0).length + " tickets run")}
               </div>
 
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -918,51 +835,18 @@ export default function MySprintPage() {
               </div>
               */}
 
-              {/* ---- automation ---- */}
-              <div style={{ ...card({ padding: "16px" }), display: "flex", flexDirection: "column", gap: "14px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <span style={sectionCaption()}>PLAN &amp; AUTOMATION</span>
-                  <div style={{ flex: 1 }} />
-                  {button(stored ? "Rebuild plan" : "Build plan", "primary", buildPlan, "plan")}
-                  {stored && stored.status !== "active"
-                    ? button("Activate", "success", () => patchPlan({ status: "active" }, "activate"), "activate")
-                    : stored
-                      ? button("Pause", "warning", () => patchPlan({ status: "draft" }, "activate"), "activate")
-                      : null}
-                  {stored?.status === "active" && button("Run now", "outline", tickNow, "tick")}
-                </div>
-
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  {([
-                    ["autoImplement", "Auto-implement", "Work down the queue without waiting to be asked."],
-                    ["autoRelease", "Auto-release", "Hand finished work over on its release day."],
-                    ["autoResolveReview", "Auto-resolve review", "Answer new review comments on released work without waiting to be asked."],
-                    ["autoDraftQaReply", "Auto-draft QC reply", "Draft a reply when QC comments on a ticket in QA. Nothing is posted until you confirm."],
-                  ] as const).map(([field, label, hint]) => {
-                    const on = !!stored?.[field];
-                    return (
-                      <button
-                        key={field}
-                        onClick={(e) => { fireBoltFromEvent(e); if (stored) patchPlan({ [field]: !on }, field); }}
-                        disabled={!stored}
-                        title={hint}
-                        style={{
-                          ...ctaButtonStyle(on ? "success" : "ghost", { height: "30px", cornerPx: 7 }),
-                          cursor: stored ? "pointer" : "default",
-                        }}
-                      >
-                        {label} {on ? "ON" : "OFF"}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-                  The three are separate on purpose: working ahead is private and cheap to undo, releasing notifies a
-                  reviewer and moves the work item, and resolving a review writes replies under your name on a pull
-                  request somebody is already reading. Nothing is scheduled from a draft plan.
-                </span>
-              </div>
+              <AutomationPanel
+                stored={stored}
+                busy={busy}
+                settings={settings}
+                onSettings={(next) => setSettingsDraft(next)}
+                onBuild={buildPlan}
+                onApplySettings={buildPlan}
+                onSetStatus={(status) => patchPlan({ status }, "activate")}
+                onToggle={(field, on) => patchPlan({ [field]: on }, field)}
+                onTick={tickNow}
+                onSaveReviewers={(reviewers) => patchPlan({ reviewers }, "reviewers")}
+              />
 
               {(data?.plan?.overflowPoints ?? 0) > 0 && (
                 <div style={tintedCard("danger")}>
@@ -973,287 +857,57 @@ export default function MySprintPage() {
                 </div>
               )}
 
-              {drafts.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <span style={sectionCaption()}>QC REPLIES</span>
-                  {drafts.map((d) => (
-                    <div key={d.id} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                        <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 700 }}>#{d.ticketId}</span>
-                        {d.status === "running" && <LoadingRing size={14} />}
-                        {d.status === "running" && <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Drafting…</span>}
-                        {d.fixNeeded && <span style={pill({ color: COLORS.danger, size: "xs", weight: 700 })}>Reports a bug</span>}
-                        {d.needsHuman && <span style={pill({ color: COLORS.warning, size: "xs", weight: 700 })}>Needs your decision</span>}
-                      </div>
-                      {d.summary && <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.6 }}>{d.summary}</span>}
-                      {d.status === "failed" && (
-                        <span style={{ fontSize: FONT.sm, color: COLORS.danger }}>{d.errorMessage || "The draft could not be written."}</span>
-                      )}
-                      {d.status === "ready" && (
-                        <textarea
-                          value={draftEdits[d.id] ?? d.body}
-                          onChange={(e) => setDraftEdits((m) => ({ ...m, [d.id]: e.target.value }))}
-                          rows={4}
-                          style={{ ...fieldInput(), minHeight: "96px", resize: "vertical", lineHeight: 1.5 }}
-                        />
-                      )}
-                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                        {d.status === "ready" &&
-                          button("Post reply", "primary", () => postReplyNow(d), "post-" + d.id, !(draftEdits[d.id] ?? d.body).trim())}
-                        {d.status !== "running" && button("Dismiss", "ghost", () => dismissReplyNow(d), "dismiss-" + d.id)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <QcReplies
+                drafts={drafts}
+                edits={draftEdits}
+                busy={busy}
+                onEdit={(id, body) => setDraftEdits((m) => ({ ...m, [id]: body }))}
+                onPost={askPostReply}
+                onDismiss={dismissReplyNow}
+              />
 
-              {/* ---- the plan ---- */}
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 <span style={sectionCaption()}>
                   RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
                 </span>
-                {/* The nine columns are a comparison — queue position against
-                    release day against state — so below the breakpoint the card
-                    scrolls sideways rather than reflowing into nine stacked
-                    labels that no longer line up with each other. */}
-                <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
-                  <div className="te-table-body">
-                  <div style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
-                    {["#", "TICKET", "PTS", "EST.", "STATUS", "RELEASE", "STATE", "REVIEW", "ACTIONS"].map((h) => (
-                      <span key={h} style={{ ...sectionCaption(), ...(h === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{h}</span>
-                    ))}
-                  </div>
-                  {rows.length === 0 ? (
-                    <div style={{ padding: "18px 14px", fontSize: FONT.base, color: COLORS.textMuted }}>
-                      Nothing is assigned to you in any project for this sprint window.
-                    </div>
-                  ) : (
-                    rows.map((t, i) => {
-                      // Looked up in `claimed`, not in `tickets`: `tickets` is
-                      // only what is still the developer's, and a handed-off row
-                      // would lose its link and its status.
-                      const claimed = data?.claimed?.find((c) => c.ticket.id === t.ticketId);
-                      const ticket = claimed?.ticket;
-                      const claim = t.claim ?? claimed?.claim ?? "mine";
-                      const assigneeNow = t.assigneeNow || claimed?.assigneeNow || "";
-                      const tri = triaged.get(t.ticketId);
-                      const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
-                      const state = stateOf(t, ticket?.status ?? "");
-                      const review = reviewOf(t);
-                      const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
-                      // Only a ticket triage stopped, still the developer's, and
-                      // still waiting to start, has an override worth offering.
-                      const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
-                      const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
-                      return (
-                        <div
-                          key={t.ticketId}
-                          style={{
-                            display: "grid", gridTemplateColumns: GRID, gap: "10px",
-                            padding: "11px 14px", alignItems: "center",
-                            borderTop: i === 0 ? "none" : "1px solid " + COLORS.borderSubtle,
-                            // A dropped ticket is kept so the change is visible,
-                            // not so it competes for attention.
-                            opacity: claim === "dropped" ? 0.55 : 1,
-                            animation: "fadeUp .4s both", animationDelay: i * 30 + "ms",
-                          }}
-                        >
-                          <span style={{ fontSize: FONT.sm, fontWeight: 700, color: t.implementOrder ? COLORS.accent : COLORS.faint }}>
-                            {t.implementOrder || "—"}
-                          </span>
-                          <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" }}>
-                            <a
-                              href={ticket?.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={`#${t.ticketId} · ${t.title}`}
-                              style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                            >
-                              #{t.ticketId} · {t.title}
-                            </a>
-                            {(t.project || ticket?.project || origin) && (
-                              <span style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                                {(t.project || ticket?.project) && (
-                                  <span style={pill({ color: COLORS.info, size: "xs", weight: 700 })}>{t.project || ticket?.project}</span>
-                                )}
-                                {origin && (
-                                  // Named rather than flagged: "Backlog" and "Sprint
-                                  // 66" are different problems, and a developer
-                                  // deciding what to work on needs to know which.
-                                  <span style={pill({ color: COLORS.indigo, size: "xs", weight: 700 })}>{origin}</span>
-                                )}
-                              </span>
-                            )}
-                            {tri?.reason && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {tri.reason}
-                              </span>
-                            )}
-                            {claim !== "mine" && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
-                                {claim === "handed-off"
-                                  ? assigneeNow
-                                    ? "handed off — now with " + assigneeNow
-                                    : "handed off — no longer in your sprint"
-                                  : assigneeNow
-                                    ? "reassigned to " + assigneeNow + " before you started it"
-                                    : "left your sprint before you started it"}
-                              </span>
-                            )}
-                            {t.releaseError && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.danger }}>{t.releaseError}</span>
-                            )}
-                            {t.reviewError && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.danger }}>Review fix: {t.reviewError}</span>
-                            )}
-                            {t.pendingAction === "move-to-qa" && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.accent }}>
-                                Pull request merged — confirm to move this ticket to In QA.
-                              </span>
-                            )}
-                            {t.pendingAction === "fix-qa" && (
-                              <span style={{ fontSize: FONT.sm, color: isFixingQa(t) ? COLORS.accent : COLORS.danger }}>
-                                {isFixingQa(t)
-                                  ? t.implementState === "running"
-                                    ? `QA fix round ${t.qaRounds} in progress.`
-                                    : "QA fix is in a draft pull request — release it when you have looked at it."
-                                  : t.qaRounds >= 3
-                                    ? `${t.qaRounds} QA fixes did not close this ticket — it needs you.`
-                                    : t.implementState === "no-fix-needed" && replyWaiting
-                                      ? "QC's findings were reviewed and none is a defect — post the drafted reply, or dismiss it to fix anyway."
-                                      : "Came back from QA — start the QA fix to review QC's findings and fix the real defects."}
-                              </span>
-                            )}
-                            {t.reviewState === "needs-human" && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.warning }}>
-                                {t.reviewRounds} rounds of automatic fixes did not close this review — the rest needs a decision.
-                              </span>
-                            )}
-                          </span>
-                          <span style={{ fontSize: FONT.base, fontWeight: 700, color: t.points ? COLORS.text : COLORS.faint }}>
-                            {t.points || "—"}
-                            {tri && tri.suggestedPoints > tri.currentPoints && (
-                              <span style={{ fontSize: FONT.sm, color: COLORS.warning }}> ↑</span>
-                            )}
-                          </span>
-                          <span style={{ fontSize: FONT.base, color: COLORS.textMuted }}>{t.estimateHours ? hours(t.estimateHours) : "—"}</span>
-                          <span style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                            {claim !== "mine" ? (
-                              // The live status belongs to whoever holds the
-                              // ticket now, and a row rebuilt from the plan has
-                              // no status at all — so neither is shown as if it
-                              // were the developer's own progress.
-                              <span style={pill({ color: CLAIM[claim].color, size: "xs", weight: 700 })}>
-                                {CLAIM[claim].label}
-                              </span>
-                            ) : tri ? (
-                              <span
-                                title={READINESS[tri.readiness]?.means ?? ""}
-                                style={pill({ color: READINESS[tri.readiness]?.color ?? COLORS.textDim, size: "xs", weight: 700 })}
-                              >
-                                {READINESS[tri.readiness]?.label ?? tri.readiness}
-                              </span>
-                            ) : (
-                              <span style={statusPill(ticket?.status ?? "")}>{ticket?.status ?? "—"}</span>
-                            )}
-                          </span>
-                          <span style={{ fontSize: FONT.base, fontWeight: 600, color: t.releasedAt ? COLORS.success : t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted }}>
-                            {t.releasedAt ? "released" : dayLabel(t.releaseDay)}
-                          </span>
-                          <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
-                            {/* The spinner is the State column's live half: a
-                                pill alone cannot say whether "Running" is this
-                                second's truth or a stale row. */}
-                            {t.implementState === "running" && <LoadingRing size={13} />}
-                            <span style={pill({ color: state.color, size: "xs", weight: 700 })}>{state.label}</span>
-                          </span>
-                          <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
-                            {review ? (
-                              <>
-                                {review.spin && <LoadingRing size={13} />}
-                                <span style={pill({ color: review.color, size: "xs", weight: 700 })}>{review.label}</span>
-                              </>
-                            ) : (
-                              <span style={{ fontSize: FONT.base, color: COLORS.faint }}>—</span>
-                            )}
-                          </span>
-                          {/* Every action a row offers, in one column at the end
-                              of it. Kept out of the pill columns because a
-                              button beside a verdict reads as part of it, and
-                              because a wrapping button pushes the row it is in
-                              out of line with every other row. */}
-                          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "7px", flexWrap: "nowrap" }}>
-                            {canOverride &&
-                              (t.unblockedByUser
-                                ? button("Overridden", "success", () => setUnblocked(t.id, false), "unblock-" + t.id)
-                                : button("Force ready", "outline", () => setUnblocked(t.id, true), "unblock-" + t.id))}
-                            {t.implementState === "running" || t.reviewState === "running"
-                              ? button("Watch", "outline", () => openExecution(t.ticketId, "execution"), "watch-row-" + t.ticketId)
-                              : t.runId || t.reviewRunId
-                                ? button("Result", "ghost", () => openExecution(t.ticketId, "result"), "result-" + t.ticketId)
-                                : null}
-                            {/* The manual half of the same machinery, and the only
-                                way back for a row the scheduler has stopped asking
-                                about: a failed fix, or one that hit the round
-                                ceiling. Offered whenever there is something open to
-                                answer, so the automation being off is not the same
-                                as the work being unreachable. */}
-                            {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
-                              button("Fix review", "outline", () => resolveReviewNow(t.id, t.ticketId), "fixreview-" + t.id)}
-                            {/* The only way back for a ticket the queue has
-                                stopped asking about. A rebuild will not do it:
-                                `savePlan()` treats any row that is not `pending`
-                                as settled and refuses to re-date it, which is
-                                right for finished work and wrong for stopped
-                                work — so without this a single failed run took a
-                                ticket out of the sprint permanently. Not offered
-                                where there is a pull request already: that row
-                                belongs to the review lane, and a second run on it
-                                would open a second PR. */}
-                            {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
-                              (t.implementState === "failed" || t.implementState === "skipped") &&
-                              button("Retry", "warning", () => retryNow(t.id), "retry-" + t.id)}
-                            {due && t.id && button("Release", "primary", () => releaseNow(t.id), "release-" + t.id)}
-                            {t.id && QA_STAGES.has(stageOf(t.stage || ticket?.status || "")) && t.pendingAction !== "fix-qa" &&
-                              stageOf(t.stage || ticket?.status || "") !== "qa-failed" &&
-                              claim !== "dropped" && !replyWaiting &&
-                              button("Draft reply", "outline", () => draftReplyNow(t.id), "draft-" + t.id)}
-                            {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < 3 && !replyWaiting &&
-                              t.implementState !== "running" && t.reviewState !== "running" && claim === "mine" &&
-                              button("Start QA fix", "warning", () => startQaFixNow(t.id, t.ticketId), "qafix-" + t.id)}
-                            {t.id && t.pendingAction === "move-to-qa" &&
-                              button("Move to In QA", "primary", () => moveToQaNow(t.id), "qa-" + t.id)}
-                            {t.id && t.implementState === "pending" && !t.runId && !t.prUrl && !t.releasedAt &&
-                              button("Remove", "ghost", () => removeNow(t.id, t.ticketId), "remove-" + t.id)}
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
-                  </div>
-                </div>
+                <PlanFilters
+                  filter={filter}
+                  counts={filterCounts}
+                  sort={sort}
+                  project={projectFilter}
+                  projects={rowProjects}
+                  onFilter={setFilter}
+                  onSort={setSort}
+                  onProject={setProjectFilter}
+                />
+                <PlanTable
+                  rows={shownRows}
+                  data={data}
+                  drafts={drafts}
+                  triaged={triaged}
+                  busy={busy}
+                  releaseDayOptions={releaseDayOptions}
+                  costs={costs}
+                  reorderable={reorderable}
+                  handlers={{
+                    openExecution,
+                    setUnblocked,
+                    resolveReview: resolveReviewNow,
+                    retry: retryNow,
+                    release: askRelease,
+                    draftReply: draftReplyNow,
+                    startQaFix: startQaFixNow,
+                    moveToQa: moveToQaNow,
+                    remove: removeNow,
+                    move: moveNow,
+                    setReleaseDay: setReleaseDayNow,
+                    hold: holdNow,
+                    history: setHistoryFor,
+                  }}
+                />
               </div>
 
-              {/* ---- what the scheduler did ---- */}
-              {events.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <span style={sectionCaption()}>SCHEDULER LOG</span>
-                  <div style={{ ...card({ padding: "12px 14px" }), display: "flex", flexDirection: "column", gap: "7px" }}>
-                    {events.slice(0, 12).map((e) => (
-                      <span key={e.id} style={{ fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.5 }}>
-                        <span style={{ color: COLORS.textDim }}>{new Date(e.createdAt).toLocaleString()}</span>
-                        {" · "}
-                        <span style={{ color: e.outcome === "failed" ? COLORS.danger : e.outcome === "skipped" ? COLORS.warning : COLORS.success, fontWeight: 700 }}>
-                          {e.action} {e.outcome}
-                        </span>
-                        {e.ticketId ? ` · #${e.ticketId}` : ""}
-                        {e.reason ? ` · ${e.reason}` : ""}
-                        {e.detail ? ` — ${e.detail}` : ""}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <SchedulerLog events={events} />
 
               <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
                 The queue order is what the agent works through, back to back. The release day is when the finished
@@ -1266,6 +920,15 @@ export default function MySprintPage() {
           )}
         </div>
       </main>
+      {preview && <RebuildPreviewDialog preview={preview} busy={busy === "plan"} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
+      {historyFor && (
+        <TicketTimeline ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
+      )}
+      {confirm && (
+        <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy === confirm.busyKey} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
+          {confirm.body}
+        </ConfirmDialog>
+      )}
       {/* {reportOpen && triage?.status === "succeeded" && (
         <TriageReport
           data={triage.result}

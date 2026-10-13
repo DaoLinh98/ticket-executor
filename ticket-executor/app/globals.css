@@ -435,6 +435,34 @@ button:disabled{cursor:not-allowed;}
   .te-table-scroll { overflow-x: auto !important; }
   .te-table-body { min-width: 860px; }
 
+  .te-table-body.te-plan-table { min-width: 0 !important; }
+  .te-plan-head { display: none !important; }
+  .te-plan-row {
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: center !important;
+    gap: 8px 14px !important;
+  }
+  .te-plan-row > .te-plan-ticket { flex: 1 1 100%; order: 0; }
+  .te-plan-row > .te-plan-cell { flex: 0 0 auto; order: 1; min-height: 40px; }
+  .te-plan-row > .te-plan-cell[data-label]:not([data-label=""])::before {
+    content: attr(data-label);
+    margin-right: 6px;
+    font-size: 11.5px;
+    color: var(--te-faint);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
+  .te-plan-row > .te-plan-cell select { min-height: 40px; min-width: 130px; }
+  .te-plan-row > .te-plan-actions {
+    flex: 1 1 100%;
+    order: 2;
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+  }
+  .te-action-btn { min-height: 40px !important; }
+  .te-icon-btn { min-width: 40px !important; min-height: 40px !important; }
+
   /* ---- two panes become one ------------------------------------------- */
   /* Used by Ticket Execution (ticket rail + detail) and by the commit popup
      (file list + diff). Which pane is showing is a `data-pane` attribute the

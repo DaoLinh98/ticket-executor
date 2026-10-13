@@ -44,6 +44,8 @@ export type Remembered = {
    *  a release performed. Gathered by the caller from the plan row *and* the Run
    *  table — a ticket run by hand has no plan progress but is still worked. */
   worked: boolean;
+  /** The developer put this ticket on the plan by hand. */
+  manual?: boolean;
 };
 
 export type ClaimedTicket = {
@@ -58,8 +60,9 @@ export type ClaimedTicket = {
   fromPlan: boolean;
 };
 
-export function claimOf(live: Ticket | undefined, identity: DevIdentity, worked: boolean): Claim {
+export function claimOf(live: Ticket | undefined, identity: DevIdentity, worked: boolean, manual = false): Claim {
   if (live && isMine(live, identity)) return "mine";
+  if (manual && !worked) return "mine";
   return worked ? "handed-off" : "dropped";
 }
 
@@ -109,7 +112,7 @@ export function claimSprint(
     const id = String(r.ticketId);
     seen.add(id);
     const ticket = liveById.get(id);
-    const claim = claimOf(ticket, identity, r.worked);
+    const claim = claimOf(ticket, identity, r.worked, r.manual);
     out.push({
       ticket: ticket ?? stubFromPlan(r),
       claim,

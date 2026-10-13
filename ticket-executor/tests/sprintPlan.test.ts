@@ -10,9 +10,12 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_PLAN_CONFIG,
   buildPlan,
+  forecastFinish,
   deliverablesOnly,
   isDeliverable,
   laneOf,
+  planDiff,
+  reorderQueue,
   releasesOn,
   retryDenial,
   summarize,
@@ -404,4 +407,55 @@ test("retry: a ticket that changed hands is not yours to requeue", () => {
   for (const claim of ["handed-off", "dropped"]) {
     assert.match(retryDenial({ ...STOPPED, claim }), /no longer assigned/);
   }
+});
+
+test("reorderQueue moves one row and keeps the set of positions dense", () => {
+  const rows = [
+    { id: "a", implementOrder: 1 },
+    { id: "b", implementOrder: 3 },
+    { id: "c", implementOrder: 4 },
+  ];
+  assert.deepEqual([...reorderQueue(rows, "c", "top")!], [["c", 1], ["a", 3], ["b", 4]]);
+  assert.deepEqual([...reorderQueue(rows, "b", "up")!], [["b", 1], ["a", 3], ["c", 4]]);
+  assert.deepEqual([...reorderQueue(rows, "a", "down")!], [["b", 1], ["a", 3], ["c", 4]]);
+});
+
+test("reorderQueue refuses a move that changes nothing", () => {
+  const rows = [{ id: "a", implementOrder: 1 }, { id: "b", implementOrder: 2 }];
+  assert.equal(reorderQueue(rows, "a", "up"), null);
+  assert.equal(reorderQueue(rows, "a", "top"), null);
+  assert.equal(reorderQueue(rows, "b", "down"), null);
+  assert.equal(reorderQueue(rows, "missing", "down"), null);
+});
+
+test("planDiff reports only what a rebuild would change on unsettled rows", () => {
+  const plan = buildPlan([input("1", 2), input("2", 2), input("3", 2)], SPRINT, "2026-09-07", CFG);
+  const stored = [
+    { ticketId: "1", implementState: "pending", releasedAt: null, implementOrder: 2, releaseDay: "2026-09-07", claim: "mine" },
+    { ticketId: "2", implementState: "implemented", releasedAt: null, implementOrder: 9, releaseDay: "2026-01-01", claim: "mine" },
+  ];
+  const diff = planDiff(stored, plan.tickets);
+  assert.deepEqual(diff.added, ["3"]);
+  assert.deepEqual(diff.moved, [{ ticketId: "1", from: 2, to: 1 }]);
+  assert.deepEqual(diff.redated, []);
+  assert.deepEqual(diff.claimChanged, []);
+});
+
+test("forecastFinish projects the finish from the pace so far", () => {
+  const f = forecastFinish({ donePoints: 4, remainingPoints: 8, window: SPRINT, today: "2026-09-10" })!;
+  assert.equal(f.velocity, 4 / 4);
+  assert.equal(f.projectedDay, "2026-09-21");
+  assert.equal(f.slipDays, 1);
+});
+
+test("forecastFinish lands on time when the pace covers what is left", () => {
+  const f = forecastFinish({ donePoints: 6, remainingPoints: 4, window: SPRINT, today: "2026-09-10" })!;
+  assert.ok(f.projectedDay <= SPRINT.finishDate);
+  assert.equal(f.slipDays, 0);
+});
+
+test("forecastFinish has nothing to say before any point is done or without a calendar", () => {
+  assert.equal(forecastFinish({ donePoints: 0, remainingPoints: 8, window: SPRINT, today: "2026-09-10" }), null);
+  assert.equal(forecastFinish({ donePoints: 4, remainingPoints: 8, window: { startDate: "", finishDate: "" }, today: "2026-09-10" }), null);
+  assert.equal(forecastFinish({ donePoints: 4, remainingPoints: 8, window: SPRINT, today: "2026-09-01" }), null);
 });

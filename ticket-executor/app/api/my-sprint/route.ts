@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { claimedSprint, planInputs, type PlanKey } from "@/lib/executionStore";
+import { claimedSprint, findPlan, planInputs, type PlanKey } from "@/lib/executionStore";
 // import { latestTriage, type TriageResult } from "@/lib/executionStore";
 import { hasIdentity } from "@/lib/identity";
 import { resolveCredential } from "@/lib/providerCredentials";
@@ -66,13 +66,22 @@ export async function GET(req: Request) {
     // the numbers only ever grow through a sprint.
     const key: PlanKey = { provider, org, project: "", sprint: cycle.sprint, identityEmail: identity.email };
     const claimed = await claimedSprint(key, deliverables, identity);
+    const storedPlan = await findPlan(key);
+    const planCfg: PlanConfig = storedPlan
+      ? {
+          ...cfg,
+          pointsPerDay: storedPlan.pointsPerDay,
+          hoursPerDay: storedPlan.hoursPerDay,
+          maxTicketsPerDay: storedPlan.maxTicketsPerDay,
+        }
+      : cfg;
 
     // Triage is switched off on this page for now.
     // const triageRow = await latestTriage(key);
     // const triage =
     //   triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
 
-    const plan = buildPlan(planInputs(claimed, null), window, today, cfg);
+    const plan = buildPlan(planInputs(claimed, null), window, today, planCfg);
     const mine = claimed.filter((c) => c.claim === "mine").map((c) => c.ticket);
 
     return NextResponse.json({
@@ -93,7 +102,7 @@ export async function GET(req: Request) {
       // scope change that explains the difference.
       claimed,
       plan,
-      config: cfg,
+      config: planCfg,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

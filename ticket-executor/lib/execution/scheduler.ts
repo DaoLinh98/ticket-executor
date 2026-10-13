@@ -30,7 +30,7 @@ import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadReviewsSummary,
 import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
 import { IMPLEMENT_SKILL, QA_FIX_SKILL, REVIEW_FIX_SKILL } from "./graph/graphs";
-import { isFixingQa } from "../ticketLifecycle";
+import { isFixingQa, MAX_QA_ROUNDS } from "../ticketLifecycle";
 import { openQaDraft } from "./qaReply";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
@@ -623,8 +623,6 @@ export async function startReviewRun(
   });
   return { ok: true, error: "" };
 }
-
-const MAX_QA_ROUNDS = 3;
 
 export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string; blocked?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });

@@ -45,6 +45,8 @@ export function isQueueable(stage: Stage): boolean {
   return stage === "ready" || stage === "doing" || stage === "blocked";
 }
 
+export const MAX_QA_ROUNDS = 3;
+
 export type PendingAction = "" | "move-to-qa" | "fix-qa";
 
 const WITH_QA: ReadonlySet<Stage> = new Set<Stage>(["qa", "qa-passed", "qa-failed"]);
