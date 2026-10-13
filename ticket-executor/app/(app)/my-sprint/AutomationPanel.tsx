@@ -53,6 +53,11 @@ export default function AutomationPanel({
   useEffect(() => setReviewers(savedReviewers), [savedReviewers]);
   const parsedReviewers = reviewers.split(/[,;\n]/).map((r) => r.trim()).filter(Boolean);
   const valid = Number(settings.pointsPerDay) > 0 && Number(settings.hoursPerDay) > 0 && Number(settings.maxTicketsPerDay) >= 0;
+  const settingsChanged =
+    !!stored &&
+    (Number(settings.pointsPerDay) !== stored.pointsPerDay ||
+      Number(settings.hoursPerDay) !== stored.hoursPerDay ||
+      Number(settings.maxTicketsPerDay) !== stored.maxTicketsPerDay);
 
   return (
     <div style={{ ...card({ padding: "16px" }), display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -118,7 +123,7 @@ export default function AutomationPanel({
                 />
               </label>
             ))}
-            <ActionButton label="Apply & rebuild" variant="outline" onClick={onApplySettings} busy={busy.has("plan")} disabled={!stored || !valid} />
+            <ActionButton label="Apply & rebuild" variant="outline" onClick={onApplySettings} busy={busy.has("plan")} disabled={!settingsChanged || !valid} />
           </div>
 
           <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-end" }}>
