@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
@@ -17,6 +18,7 @@ import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import PushNotifications from "./PushNotifications";
+import { SETTINGS_KEY, connectionsKey, fetchSettings, useConnections, type ConnectionsPayload } from "../../queries";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
@@ -87,53 +89,28 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsView>(DEFAULTS);
   const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  // Every organization saved for the selected provider. The active one is what
-  // the whole app runs as; the header picker switches it.
-  const [connections, setConnections] = useState<Connection[]>([]);
+  const [ready, setReady] = useState(false);
+  const loading = !ready;
   const [editor, setEditor] = useState<ConnectionEditor | null>(null);
   const [connBusy, setConnBusy] = useState(false);
   const pm = providerMeta(settings.provider);
   const showToast = useToast();
 
-  const loadConnections = async (provider: ProviderId) => {
-    try {
-      const r = await fetch(`/api/connections?provider=${provider}`);
-      const data = await r.json();
-      const list: Connection[] = Array.isArray(data.connections) ? data.connections : [];
-      setConnections(list);
-      return list;
-    } catch {
-      setConnections([]);
-      return [];
-    }
-  };
-
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({ queryKey: SETTINGS_KEY, queryFn: fetchSettings, refetchOnMount: "always" });
   useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/settings", { cache: "no-store" });
-        const data = await r.json();
-        if (data.settings) {
-          setSettings(data.settings);
-          await loadConnections(data.settings.provider);
-        }
-      } catch {
-        /* keep defaults */
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    if (ready || !settingsQuery.isFetchedAfterMount) return;
+    const s = settingsQuery.data?.settings;
+    if (s) setSettings(s as unknown as SettingsView);
+    setReady(true);
+  }, [ready, settingsQuery.isFetchedAfterMount, settingsQuery.data]);
 
-  // The header picker switches the very organizations listed here — without this
-  // the list keeps badging the one it last fetched as ACTIVE.
-  useEffect(() => {
-    const onChanged = () => { loadConnections(settings.provider); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadConnections is re-created every render; the provider is what it depends on
-  }, [settings.provider]);
+  // Every organization saved for the selected provider. The active one is what
+  // the whole app runs as; the header picker switches it.
+  const connectionsQuery = useConnections(settings.provider, { enabled: ready });
+  const connections = (connectionsQuery.data?.connections ?? []) as Connection[];
+  const setConnections = (list: Connection[]) =>
+    queryClient.setQueryData<ConnectionsPayload>(connectionsKey(settings.provider), { provider: settings.provider, connections: list });
 
   const setField = (k: keyof SettingsView) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [k]: e.target.value }));
@@ -143,7 +120,6 @@ export default function SettingsPage() {
     setConnTest({ status: "idle", message: "" });
     setEditor(null);
     setSettings((s) => ({ ...s, provider }));
-    await loadConnections(provider);
   };
 
   // ---- organizations ----
@@ -206,7 +182,7 @@ export default function SettingsPage() {
 
   const activateConnection = async (c: Connection) => {
     if (c.isActive) return;
-    setConnections((cs) => cs.map((x) => ({ ...x, isActive: x.id === c.id })));
+    setConnections(connections.map((x) => ({ ...x, isActive: x.id === c.id })));
     await fetch("/api/connections/active", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -260,6 +236,7 @@ export default function SettingsPage() {
       const data = await r.json();
       if (!r.ok || !data.settings) { setError(data.error || "Failed to save settings"); return; }
       setSettings(data.settings);
+      queryClient.setQueryData(SETTINGS_KEY, { settings: data.settings });
       // Broadcast so the app-wide reactor backdrop and the click-effect layer pick
       // the change up immediately — in this tab and in every other tab of this
       // browser. Another device converges on its next resume or poll instead.

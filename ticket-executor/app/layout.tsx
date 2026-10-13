@@ -4,6 +4,7 @@ import "./globals.css";
 import { BoltsProvider } from "./BoltsContext";
 import RingAnimation from "./RingAnimation";
 import SettingsProvider from "./SettingsProvider";
+import QueryProvider from "./QueryProvider";
 import { MotionProvider } from "./Motion";
 import { getOrCreateSetting } from "@/lib/settings";
 
@@ -71,12 +72,14 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body>
-        <SettingsProvider initial={settings}>
-          <RingAnimation />
-          <MotionProvider>
-            <BoltsProvider>{children}</BoltsProvider>
-          </MotionProvider>
-        </SettingsProvider>
+        <QueryProvider>
+          <SettingsProvider initial={settings}>
+            <RingAnimation />
+            <MotionProvider>
+              <BoltsProvider>{children}</BoltsProvider>
+            </MotionProvider>
+          </SettingsProvider>
+        </QueryProvider>
       </body>
     </html>
   );

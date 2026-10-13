@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import SelectMenu from "../../SelectMenu";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -10,8 +11,8 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
-import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import { usePagePrefs } from "../../pagePrefs";
+import { useLiveInvalidate } from "../../useLive";
 import DesktopOnly from "../DesktopOnly";
 
 // ---- formatting helpers (view-only) ----
@@ -251,10 +252,6 @@ function StatusBar({ r }: { r: DashboardMetrics["reliability"] }) {
 }
 
 function DashboardPageInner() {
-  const [data, setData] = useState<DashboardMetrics | null>(null);
-  const [funnel, setFunnel] = useState<FunnelData | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
   const { prefs, ready: prefsReady, save: savePrefs } = usePagePrefs<{
     provider: string;
     project: string;
@@ -263,18 +260,6 @@ function DashboardPageInner() {
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [rangeLabel, setRangeLabel] = useState("");
-  // Bumped when the header switches organization. The server scopes these
-  // metrics to the active connection, so the same query string is a different
-  // question after a switch — and the project filter is another organization's
-  // list, so it comes back from that organization's own remembered filters.
-  const [orgEpoch, setOrgEpoch] = useState(0);
-
-  useEffect(() => {
-    const onChanged = () => { setOrgEpoch((n) => n + 1); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, []);
-
   // The filters this organization was last looking at. Applied before the first
   // fetch so the dashboard is not queried twice for two different questions.
   useEffect(() => {
@@ -289,14 +274,6 @@ function DashboardPageInner() {
     savePrefs({ provider, project, rangeLabel });
   }, [prefsReady, provider, project, rangeLabel, savePrefs]);
 
-  // A remembered filter that this organization has no runs for would show an
-  // empty dashboard and look broken. Drop it back to All instead.
-  useEffect(() => {
-    if (!data) return;
-    if (project && !data.filters.projects.includes(project)) setProject("");
-    if (provider && !data.filters.providers.includes(provider)) setProvider("");
-  }, [data, project, provider]);
-
   const query = useCallback(() => {
     const qs = new URLSearchParams();
     if (provider) qs.set("provider", provider);
@@ -305,46 +282,50 @@ function DashboardPageInner() {
     return qs.toString();
   }, [provider, project, rangeLabel]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/dashboard?${query()}`, { cache: "no-store" });
+  const qs = query();
+
+  const metricsQuery = useQuery({
+    queryKey: ["dashboard", "metrics", qs],
+    queryFn: async (): Promise<DashboardMetrics> => {
+      const res = await fetch(`/api/dashboard?${qs}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load metrics");
-      setData(json as DashboardMetrics);
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [query]);
+      return json as DashboardMetrics;
+    },
+    enabled: prefsReady,
+    placeholderData: keepPreviousData,
+  });
+  const data = metricsQuery.data ?? null;
+  const error = (metricsQuery.error as Error | null)?.message ?? "";
+  const loading = metricsQuery.isPending;
 
-  useEffect(() => {
-    if (!prefsReady) return;
-    void load();
-  }, [prefsReady, load, orgEpoch]);
+  useLiveInvalidate(prefsReady ? "/api/live/runs" : null, ["dashboard", "metrics"], false);
 
   // The funnel talks to the provider (one or two round-trips per PR), so it is
   // fetched on its own and merged in when it lands — a slow or unreachable
   // provider must never hold up the rest of the dashboard.
-  useEffect(() => {
-    if (!prefsReady) return;
-    let cancelled = false;
-    setFunnel(null);
-    void (async () => {
+  const funnelQuery = useQuery({
+    queryKey: ["dashboard", "funnel", qs],
+    queryFn: async (): Promise<FunnelData> => {
       try {
-        const res = await fetch(`/api/dashboard/funnel?${query()}`, { cache: "no-store" });
+        const res = await fetch(`/api/dashboard/funnel?${qs}`, { cache: "no-store" });
         const json = await res.json();
-        if (!cancelled) setFunnel(res.ok ? (json as FunnelData) : { ...json, providerBacked: false, prCreated: 0, merged: 0, mergedClean: 0, sampled: 0 });
+        return res.ok ? (json as FunnelData) : { ...json, providerBacked: false, prCreated: 0, merged: 0, mergedClean: 0, sampled: 0 };
       } catch (e) {
-        if (!cancelled) {
-          setFunnel({ prCreated: 0, merged: 0, mergedClean: 0, sampled: 0, providerBacked: false, error: e instanceof Error ? e.message : String(e) });
-        }
+        return { prCreated: 0, merged: 0, mergedClean: 0, sampled: 0, providerBacked: false, error: e instanceof Error ? e.message : String(e) };
       }
-    })();
-    return () => { cancelled = true; };
-  }, [prefsReady, query, orgEpoch]);
+    },
+    enabled: prefsReady,
+  });
+  const funnel = funnelQuery.data ?? null;
+
+  // A remembered filter that this organization has no runs for would show an
+  // empty dashboard and look broken. Drop it back to All instead.
+  useEffect(() => {
+    if (!data) return;
+    if (project && !data.filters.projects.includes(project)) setProject("");
+    if (provider && !data.filters.providers.includes(provider)) setProvider("");
+  }, [data, project, provider]);
 
   // Same rounded-panel-with-spinning-ring treatment as the log panel in ExecutionTab —
   // shape:"none" keeps the ring's animated conic-gradient background while letting us

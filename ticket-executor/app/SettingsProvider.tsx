@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { SETTINGS_KEY, fetchSettings } from "./queries";
 import { onSettingsUpdated, type SettingsUpdatedDetail } from "./settingsEvents";
 
 /**
@@ -49,6 +51,7 @@ export default function SettingsProvider({
   children,
 }: { initial: AppSettings; children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(initial);
+  const queryClient = useQueryClient();
   const fetchedAt = useRef(0);
 
   const refresh = useCallback(async (opts?: { force?: boolean }) => {
@@ -58,9 +61,7 @@ export default function SettingsProvider({
       // `no-store` is load-bearing on iOS: the response carries no validator, so
       // Safari will heuristically serve a stale body to a plain fetch — which is
       // a re-read that cannot see the change it was made for.
-      const r = await fetch("/api/settings", { cache: "no-store" });
-      if (!r.ok) throw new Error(`GET /api/settings -> ${r.status}`);
-      const d = await r.json();
+      const d = await queryClient.fetchQuery({ queryKey: SETTINGS_KEY, queryFn: fetchSettings, staleTime: 0 });
       const s = d?.settings;
       if (!s || typeof s.clickEffects !== "boolean")
         throw new Error("GET /api/settings returned no settings");
@@ -75,7 +76,7 @@ export default function SettingsProvider({
       // elsewhere never arrives, so it is not swallowed.
       console.error("[settings] re-read failed", err);
     }
-  }, []);
+  }, [queryClient]);
 
   // Re-read whenever the app comes back into view, and on a slow timer while it
   // stays there. `pageshow` is the one that covers an iOS home-screen app coming

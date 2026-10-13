@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
@@ -25,9 +25,10 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
-import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import { useProjects } from "../../queries";
+import { useLiveInvalidate } from "../../useLive";
 import { useToast } from "../ToastProvider";
-import { forecastFinish, releaseDays, type Lane, type QueueMove } from "@/lib/sprintPlan";
+import { forecastFinish, releaseDays, reorderQueue, type Lane, type QueueMove } from "@/lib/sprintPlan";
 import { isFixingQa, MAX_QA_ROUNDS } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
@@ -70,25 +71,16 @@ import {
 
 type Confirm = { title: string; confirmLabel: string; busyKey: string; body: ReactNode; run: () => Promise<void> };
 
-const PROJECTS_KEY = ["projects"] as const;
 const SPRINT_KEY = ["my-sprint"] as const;
 const PLAN_KEY = ["my-sprint", "plan"] as const;
 const PLAN_POLL_MS = 5000;
 const PLAN_IDLE_POLL_MS = 30000;
 const SPRINT_POLL_MS = 60000;
+const SEARCH_STALE_MS = 30000;
 const TONE_RANK = { danger: 0, warning: 1, accent: 2 } as const;
 
 const planRunning = (p?: PlanResponse) =>
   (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
-
-const fetchProjects = async (): Promise<string[]> => {
-  try {
-    const d = await fetch("/api/projects").then((r) => r.json());
-    return Array.isArray(d.projects) ? d.projects.map((p: { name: string }) => p.name) : [];
-  } catch {
-    return [];
-  }
-};
 
 const fetchPlan = async (): Promise<PlanResponse> => {
   const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
@@ -110,7 +102,7 @@ export default function MySprintPage() {
   // const [reportOpen, setReportOpen] = useState(false);
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [settledNeedle, setSettledNeedle] = useState("");
@@ -125,7 +117,7 @@ export default function MySprintPage() {
   const setError = (m: string) => { if (m) showToast(m, "error"); };
   const setMessage = (m: string) => { if (m) showToast(m); };
 
-  const projectsQuery = useQuery({ queryKey: PROJECTS_KEY, queryFn: fetchProjects });
+  const projectsQuery = useProjects();
   const planQuery = useQuery({
     queryKey: PLAN_KEY,
     queryFn: fetchPlan,
@@ -139,7 +131,7 @@ export default function MySprintPage() {
     refetchInterval: () => (planQuery.data?.plan?.status === "active" ? SPRINT_POLL_MS : false),
   });
 
-  const projects = projectsQuery.data ?? [];
+  const projects = (projectsQuery.data?.projects ?? []).map((p) => p.name);
   const data = sprintQuery.data ?? null;
   const stored = planQuery.data?.plan ?? null;
   const events = planQuery.data?.events ?? [];
@@ -155,19 +147,11 @@ export default function MySprintPage() {
     maxTicketsPerDay: settingsDraft.maxTicketsPerDay ?? String(stored?.maxTicketsPerDay ?? data?.config.maxTicketsPerDay ?? 0),
   };
 
-  const load = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY });
-  const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY });
+  const reloadSprint = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY, exact: true });
+  const load = () => { void reloadSprint(); };
+  const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY, exact: true });
   const setStored = (plan: StoredPlan | null) =>
     queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], costs: {}, ...old, plan }));
-
-  useEffect(() => {
-    const onChanged = () => {
-      queryClient.invalidateQueries({ queryKey: PROJECTS_KEY });
-      load();
-    };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [queryClient]);
 
   // A triage turn outlives the request that started it, so the row is polled
   // rather than awaited.
@@ -186,6 +170,8 @@ export default function MySprintPage() {
   //   return () => { if (triagePoll.current) clearInterval(triagePoll.current); };
   // }, [triage?.status, triage?.id]);
 
+  useLiveInvalidate(stored?.id ? "/api/my-sprint/plan/stream?plan=" + encodeURIComponent(stored.id) : null, PLAN_KEY);
+
   const needle = query.trim().toLowerCase().replace(/^#/, "");
   const searchTerm = query.trim().replace(/^#/, "");
   useEffect(() => {
@@ -199,6 +185,8 @@ export default function MySprintPage() {
         .then((r) => r.json())
         .then((d) => (Array.isArray(d.tickets) ? d.tickets : [])),
     enabled: !!settledNeedle,
+    placeholderData: keepPreviousData,
+    staleTime: SEARCH_STALE_MS,
   });
   const found = searchTerm ? searchQuery.data ?? [] : [];
   const searching = !!searchTerm && (searchTerm !== settledNeedle || searchQuery.isFetching);
@@ -224,21 +212,61 @@ export default function MySprintPage() {
     router.push(`/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=overview&at=${Date.now()}`);
   };
 
-  const act = async (label: string, fn: () => Promise<void>) => {
-    setBusy(label);
-    try {
-      await fn();
-    } catch (e) {
+  type PlanEdit = (plan: StoredPlan) => StoredPlan;
+  const track = (label: string, on: boolean) =>
+    setBusy((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(label);
+      else next.delete(label);
+      return next;
+    });
+
+  const actMutation = useMutation({
+    mutationFn: ({ fn }: { label: string; fn: () => Promise<void>; optimistic?: PlanEdit }) => fn(),
+    onMutate: async ({ label, optimistic }) => {
+      track(label, true);
+      if (!optimistic) return undefined;
+      await queryClient.cancelQueries({ queryKey: PLAN_KEY, exact: true });
+      const previous = queryClient.getQueryData<PlanResponse>(PLAN_KEY);
+      if (previous?.plan) queryClient.setQueryData<PlanResponse>(PLAN_KEY, { ...previous, plan: optimistic(previous.plan) });
+      return { previous };
+    },
+    onError: (e, _vars, ctx) => {
+      if (ctx?.previous) {
+        queryClient.setQueryData(PLAN_KEY, ctx.previous);
+        reloadPlan();
+      }
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
-    }
+    },
+    onSettled: (_data, _err, vars) => track(vars.label, false),
+  });
+
+  const act = (label: string, fn: () => Promise<void>, optimistic?: PlanEdit) =>
+    actMutation.mutateAsync({ label, fn, optimistic }).catch(() => undefined);
+
+  const editItem = (plannedId: string, patch: Partial<PlannedRow>): PlanEdit => (plan) => ({
+    ...plan,
+    items: plan.items.map((i) => (i.id === plannedId ? { ...i, ...patch } : i)),
+  });
+
+  const queued = (i: PlannedRow) =>
+    i.implementState === "pending" && i.implementOrder > 0 && i.claim === "mine" && !i.runId && !i.prUrl && !i.releasedAt;
+
+  const reorderEdit = (plannedId: string, move: QueueMove): PlanEdit => (plan) => {
+    const next = reorderQueue(plan.items.filter(queued), plannedId, move);
+    if (!next) return plan;
+    return {
+      ...plan,
+      items: plan.items
+        .map((i) => (next.has(i.id) ? { ...i, implementOrder: next.get(i.id)! } : i))
+        .sort((a, b) => a.implementOrder - b.implementOrder),
+    };
   };
 
   const changeAnchor = (anchor: string) =>
     act("anchor", async () => {
       await post("/api/settings", { sprintAnchorProject: anchor });
-      await load();
+      await reloadSprint();
     });
 
   // const runTriage = () =>
@@ -314,20 +342,20 @@ export default function MySprintPage() {
       const d = await post("/api/my-sprint/plan", { removeFromRelease: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
       setMessage(`#${ticketId} removed from the release plan.`);
-    });
+    }, (plan) => ({ ...plan, items: plan.items.filter((i) => i.id !== plannedId) }));
 
   const moveNow = (plannedId: string, move: QueueMove) =>
     act("move-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { moveInQueue: { id: plannedId, move } }, "PUT");
       if (d.plan) setStored(d.plan);
-    });
+    }, reorderEdit(plannedId, move));
 
   const holdNow = (plannedId: string) =>
     act("hold-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { hold: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
       setMessage("On hold — the scheduler leaves it alone until you resume it.");
-    });
+    }, editItem(plannedId, { implementState: "skipped" }));
 
   const setReleaseDayNow = (plannedId: string, day: string) =>
     act("redate-" + plannedId, async () => {
@@ -498,14 +526,14 @@ export default function MySprintPage() {
       attention.push({
         ...base, key: "rf-" + t.id, tone: "danger", text: "The review fix run failed.",
         action: t.prPublished && !t.prMerged && t.openComments > 0
-          ? <ActionButton label="Fix review" variant="outline" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy === "fixreview-" + t.id} />
+          ? <ActionButton label="Fix review" variant="outline" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
           : result,
       });
     }
     if (t.releaseError) {
       attention.push({
         ...base, key: "re-" + t.id, tone: "danger", text: t.releaseError,
-        action: due ? <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy === "release-" + t.id} /> : undefined,
+        action: due ? <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} /> : undefined,
       });
     }
     if (t.implementState === "failed") {
@@ -513,14 +541,14 @@ export default function MySprintPage() {
         ...base, key: "if-" + t.id, tone: "danger",
         text: t.prUrl ? "The run failed after opening a pull request — look at the result." : "The implement run failed.",
         action: !t.prUrl && t.implementOrder > 0
-          ? <ActionButton label="Retry" variant="warning" onClick={() => retryNow(t.id)} busy={busy === "retry-" + t.id} />
+          ? <ActionButton label="Retry" variant="warning" onClick={() => retryNow(t.id)} busy={busy.has("retry-" + t.id)} />
           : result,
       });
     }
     if (t.pendingAction === "move-to-qa") {
       attention.push({
         ...base, key: "mq-" + t.id, tone: "accent", text: "Pull request merged — confirm to move it to In QA.",
-        action: <ActionButton label="Move to In QA" variant="primary" onClick={() => moveToQaNow(t.id)} busy={busy === "qa-" + t.id} />,
+        action: <ActionButton label="Move to In QA" variant="primary" onClick={() => moveToQaNow(t.id)} busy={busy.has("qa-" + t.id)} />,
       });
     }
     if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.implementState !== "running" && t.reviewState !== "running") {
@@ -529,14 +557,14 @@ export default function MySprintPage() {
       } else if (!replyWaiting) {
         attention.push({
           ...base, key: "qf-" + t.id, tone: "warning", text: "Came back from QA — start the QA fix.",
-          action: <ActionButton label="Start QA fix" variant="warning" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy === "qafix-" + t.id} />,
+          action: <ActionButton label="Start QA fix" variant="warning" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />,
         });
       }
     }
     if (due && !stored?.autoRelease && data?.today && t.releaseDay && t.releaseDay <= data.today && !t.releaseError) {
       attention.push({
         ...base, key: "rd-" + t.id, tone: "accent", text: "Its release day has come and auto-release is off.",
-        action: <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy === "release-" + t.id} />,
+        action: <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} />,
       });
     }
   }
@@ -596,7 +624,7 @@ export default function MySprintPage() {
             ariaLabel="Project whose current iteration sets the sprint window"
           />
         </div>
-        {busy === "anchor" && <LoadingRing size={14} />}
+        {busy.has("anchor") && <LoadingRing size={14} />}
         <div style={{ position: "relative", flex: "1 1 200px", maxWidth: "340px", minWidth: "150px" }}>
           <input
             value={query}
@@ -627,12 +655,12 @@ export default function MySprintPage() {
                     type="button"
                     aria-label={`Add #${t.id} to the release plan`}
                     title="Add to Release plan"
-                    disabled={busy === "add-" + t.id}
+                    disabled={busy.has("add-" + t.id)}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => { fireBoltFromEvent(e); addToPlan(t); }}
                     style={{ flex: "0 0 auto", width: "40px", height: "40px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.accent, cursor: "pointer" }}
                   >
-                    {busy === "add-" + t.id ? <LoadingRing size={14} /> : (
+                    {busy.has("add-" + t.id) ? <LoadingRing size={14} /> : (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M12 5v14M5 12h14" /></svg>
                     )}
                   </button>
@@ -920,12 +948,12 @@ export default function MySprintPage() {
           )}
         </div>
       </main>
-      {preview && <RebuildPreviewDialog preview={preview} busy={busy === "plan"} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
+      {preview && <RebuildPreviewDialog preview={preview} busy={busy.has("plan")} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
       {historyFor && (
         <TicketTimeline ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
       )}
       {confirm && (
-        <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy === confirm.busyKey} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
+        <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy.has(confirm.busyKey)} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
           {confirm.body}
         </ConfirmDialog>
       )}

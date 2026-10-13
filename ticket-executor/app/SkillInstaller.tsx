@@ -4,7 +4,8 @@
 // this repo, and the app runs on the developer's own machine, so installing
 // one is just a file copy into ~/.claude/skills/. No download, no unzip.
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import LoadingRing from "./ticket-executor/LoadingRing";
 import { useBoltsContext } from "./BoltsContext";
 import { COLORS, FONT, card, ctaButtonStyle, pill } from "@/lib/ui";
@@ -19,6 +20,8 @@ type SkillState = {
   status: "missing" | "outdated" | "modified" | "ok";
 };
 
+const SKILLS_KEY = ["skills-install"] as const;
+
 const TONE: Record<SkillState["status"], { color: string; label: string; action: string | null }> = {
   missing: { color: COLORS.danger, label: "NOT INSTALLED", action: "Install" },
   outdated: { color: COLORS.warning, label: "OUTDATED", action: "Update" },
@@ -28,29 +31,22 @@ const TONE: Record<SkillState["status"], { color: string; label: string; action:
 
 export default function SkillInstaller({ onChanged }: { onChanged?: () => void }) {
   const { fireBoltFromEvent } = useBoltsContext();
-  const [skills, setSkills] = useState<SkillState[] | null>(null);
-  const [target, setTarget] = useState("");
+  const queryClient = useQueryClient();
+  const skillsQuery = useQuery({
+    queryKey: SKILLS_KEY,
+    queryFn: async (): Promise<{ skills: SkillState[]; target: string }> => {
+      const r = await fetch("/api/skills/install");
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Could not read the installed skills.");
+      return { skills: data.skills as SkillState[], target: data.target as string };
+    },
+  });
+  const skills = skillsQuery.data?.skills ?? null;
+  const target = skillsQuery.data?.target ?? "";
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
   /** Names whose next click is an explicit confirmed overwrite. */
   const [confirming, setConfirming] = useState<Set<string>>(new Set());
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/skills/install");
-      const data = await r.json();
-      if (r.ok) {
-        setSkills(data.skills as SkillState[]);
-        setTarget(data.target as string);
-      }
-    } catch {
-      /* leave the panel empty rather than break the page around it */
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const run = async (payload: { name?: string; all?: boolean; force?: boolean }, key: string) => {
     setBusy(key);
@@ -62,7 +58,12 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
         body: JSON.stringify(payload),
       });
       const data = await r.json();
-      if (data.skills) setSkills(data.skills as SkillState[]);
+      if (data.skills) {
+        queryClient.setQueryData(SKILLS_KEY, (old?: { skills: SkillState[]; target: string }) => ({
+          target: old?.target ?? "",
+          skills: data.skills as SkillState[],
+        }));
+      }
 
       if (r.status === 409) {
         // Existing copy differs — arm the confirmed-overwrite click.
@@ -79,6 +80,7 @@ export default function SkillInstaller({ onChanged }: { onChanged?: () => void }
       const results = (data.results ?? []) as { ok: boolean; detail: string }[];
       const bad = results.filter((x) => !x.ok);
       setNote(bad.length ? bad.map((b) => b.detail).join(" · ") : `Done — ${results.length} skill(s) up to date.`);
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
       onChanged?.();
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));

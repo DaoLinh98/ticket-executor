@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -25,7 +26,6 @@ import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import { useNotifications } from "../NotificationsProvider";
 import PageToolbar from "../PageToolbar";
-import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import { copyText } from "./copyText";
 import {
   PROGRESS_OPTIONS,
@@ -81,10 +81,7 @@ function localDay(): string {
 export default function ReportPage() {
   const { fireBoltFromEvent } = useBoltsContext();
   const [day, setDay] = useState("");
-  const [data, setData] = useState<ReportData | null>(null);
   const [draft, setDraft] = useState<ReportDraftState>(emptyDraft(""));
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   // What the server is known to hold, so an edit is saved and a reload is not
   // saved straight back.
@@ -96,33 +93,28 @@ export default function ReportPage() {
 
   useEffect(() => { setDay(localDay()); }, []);
 
-  const load = useCallback(async (d: string) => {
-    if (!d) { setLoading(false); return; }
-    setLoading(true);
-    setError("");
-    try {
-      const qs = new URLSearchParams({ day: d });
-      const res: ReportData = await fetch("/api/report?" + qs.toString(), { cache: "no-store" }).then((r) => r.json());
-      if (res.error) setError(res.error);
-      setData(res);
-      const loaded = res.draft ?? emptyDraft(res.identity?.name ?? "");
-      setDraft(loaded);
-      savedRef.current = JSON.stringify(loaded);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const queryClient = useQueryClient();
+  const reportKey = ["report", day] as const;
+  const reportQuery = useQuery({
+    queryKey: reportKey,
+    queryFn: (): Promise<ReportData> =>
+      fetch("/api/report?" + new URLSearchParams({ day }).toString(), { cache: "no-store" }).then((r) => r.json()),
+    enabled: !!day,
+  });
+  const data = reportQuery.data ?? null;
+  const loading = day ? reportQuery.isPending : false;
+  const error = data?.error || (reportQuery.error as Error | null)?.message || "";
 
-  useEffect(() => { load(day); }, [day, load]);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
-  // The organization switched in the header — this list belongs to the old one.
   useEffect(() => {
-    const onChanged = () => { load(day); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [load, day]);
+    if (!data) return;
+    if (saveTimer.current || (savedRef.current && JSON.stringify(draftRef.current) !== savedRef.current)) return;
+    const loaded = data.draft ?? emptyDraft(data.identity?.name ?? "");
+    setDraft(loaded);
+    savedRef.current = JSON.stringify(loaded);
+  }, [data]);
 
   // The draft is the same fact on the phone and on the laptop, so an edit made
   // on one has to reach the other. Written on a short delay — a checkbox is
@@ -156,7 +148,7 @@ export default function ReportPage() {
   useEffect(() => {
     const onShow = () => {
       if (document.hidden || saveTimer.current) return;
-      load(day);
+      void reportQuery.refetch();
     };
     document.addEventListener("visibilitychange", onShow);
     window.addEventListener("pageshow", onShow);
@@ -164,7 +156,7 @@ export default function ReportPage() {
       document.removeEventListener("visibilitychange", onShow);
       window.removeEventListener("pageshow", onShow);
     };
-  }, [load, day]);
+  }, [reportQuery.refetch]);
 
   const tickets = data?.tickets ?? [];
   const handedOff = new Set(data?.handedOff ?? []);
@@ -212,7 +204,7 @@ export default function ReportPage() {
       const res = (await r.json().catch(() => ({}))) as { error?: string; sent?: SentReport };
       if (!r.ok) throw new Error(res.error || `POST /api/report/slack -> ${r.status}`);
       savedRef.current = JSON.stringify(draft);
-      setData((d) => (d ? { ...d, sent: res.sent ?? null } : d));
+      queryClient.setQueryData<ReportData>(reportKey, (d) => (d ? { ...d, sent: res.sent ?? null } : d));
       showToast("Report sent to Slack.");
       void refreshNotifications({ force: true });
     } catch (err) {

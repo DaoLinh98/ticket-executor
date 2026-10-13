@@ -36,7 +36,7 @@ export default function AutomationPanel({
   onSaveReviewers,
 }: {
   stored: StoredPlan | null;
-  busy: string;
+  busy: ReadonlySet<string>;
   settings: PlanSettings;
   onSettings: (next: PlanSettings) => void;
   onBuild: () => void;
@@ -59,14 +59,14 @@ export default function AutomationPanel({
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
         <span style={sectionCaption()}>PLAN &amp; AUTOMATION</span>
         <div style={{ flex: 1 }} />
-        <ActionButton label={stored ? "Rebuild plan" : "Build plan"} variant="primary" onClick={onBuild} busy={busy === "plan"} />
+        <ActionButton label={stored ? "Rebuild plan" : "Build plan"} variant="primary" onClick={onBuild} busy={busy.has("plan")} />
         {stored && stored.status !== "active" && (
-          <ActionButton label="Activate" variant="success" onClick={() => onSetStatus("active")} busy={busy === "activate"} />
+          <ActionButton label="Activate" variant="success" onClick={() => onSetStatus("active")} busy={busy.has("activate")} />
         )}
         {stored?.status === "active" && (
-          <ActionButton label="Pause" variant="warning" onClick={() => onSetStatus("draft")} busy={busy === "activate"} />
+          <ActionButton label="Pause" variant="warning" onClick={() => onSetStatus("draft")} busy={busy.has("activate")} />
         )}
-        {stored?.status === "active" && <ActionButton label="Run now" variant="outline" onClick={onTick} busy={busy === "tick"} />}
+        {stored?.status === "active" && <ActionButton label="Run now" variant="outline" onClick={onTick} busy={busy.has("tick")} />}
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
@@ -118,7 +118,7 @@ export default function AutomationPanel({
                 />
               </label>
             ))}
-            <ActionButton label="Apply & rebuild" variant="outline" onClick={onApplySettings} busy={busy === "plan"} disabled={!stored || !valid} />
+            <ActionButton label="Apply & rebuild" variant="outline" onClick={onApplySettings} busy={busy.has("plan")} disabled={!stored || !valid} />
           </div>
 
           <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -137,7 +137,7 @@ export default function AutomationPanel({
               label="Save reviewers"
               variant="outline"
               onClick={() => onSaveReviewers(parsedReviewers)}
-              busy={busy === "reviewers"}
+              busy={busy.has("reviewers")}
               disabled={!stored || parsedReviewers.join(", ") === savedReviewers}
             />
           </div>
