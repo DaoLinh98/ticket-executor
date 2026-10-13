@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
@@ -10,47 +9,18 @@ import { useBoltsContext } from "../../BoltsContext";
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
-import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import { useProjects } from "../../queries";
 
 type Project = { id: string; name: string; description?: string };
 
 export default function ProjectsPage() {
   const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    setNotice("");
-    try {
-      // No provider param: the route resolves it from the stored setting and
-      // echoes it back. Asking /api/settings first only to fill in a value the
-      // server already holds made this page two sequential round-trips.
-      const r = await fetch("/api/projects");
-      const data = await r.json();
-      if (data.error) setError(data.error);
-      if (data.notice) setNotice(data.notice);
-      setProjects(Array.isArray(data.projects) ? data.projects : []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  // The organization switched in the header — these projects belong to the old
-  // one.
-  useEffect(() => {
-    const onChanged = () => { load(); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [load]);
+  const projectsQuery = useProjects();
+  const projects = (projectsQuery.data?.projects ?? []) as Project[];
+  const loading = projectsQuery.isPending;
+  const error = projectsQuery.data?.error || (projectsQuery.error as Error | null)?.message || "";
+  const notice = projectsQuery.data?.notice ?? "";
 
   const openProject = (name: string, e: { clientX: number; clientY: number }) => {
     fireBoltFromEvent(e);

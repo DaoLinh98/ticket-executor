@@ -13,6 +13,7 @@ import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import PageToolbar from "../PageToolbar";
+import { usePreflight } from "../../queries";
 import DesktopOnly from "../DesktopOnly";
 
 /** Roll the checks of one preflight group up into a single section verdict:
@@ -31,33 +32,20 @@ function rollUp(result: PreflightResult | null, group?: string): { status: Secti
 
 function GuidePageInner() {
   const { fireBoltFromEvent } = useBoltsContext();
-  const [result, setResult] = useState<PreflightResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const preflight = usePreflight();
+  const result = preflight.data ?? null;
+  const loading = preflight.isPending;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [touched, setTouched] = useState(false);
   const bodyRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/preflight");
-      const data = await r.json();
-      if (r.ok && data.checks) setResult(data as PreflightResult);
-    } catch {
-      /* the guide is still fully readable without live status */
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const reload = useCallback(() => { void preflight.refetch(); }, [preflight.refetch]);
 
   // An install from the embedded SkillInstaller changes what preflight sees.
   useEffect(() => {
-    window.addEventListener(SKILLS_CHANGED_EVENT, load);
-    return () => window.removeEventListener(SKILLS_CHANGED_EVENT, load);
-  }, [load]);
+    window.addEventListener(SKILLS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(SKILLS_CHANGED_EVENT, reload);
+  }, [reload]);
 
   const verdicts = useMemo(
     () => SECTIONS.map((s) => ({ id: s.id, ...rollUp(result, s.checkGroup) })),

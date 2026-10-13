@@ -13,7 +13,7 @@ export default function QcReplies({
 }: {
   drafts: QaDraft[];
   edits: Record<string, string>;
-  busy: string;
+  busy: ReadonlySet<string>;
   onEdit: (id: string, body: string) => void;
   onPost: (draft: QaDraft) => void;
   onDismiss: (draft: QaDraft) => void;
@@ -47,10 +47,10 @@ export default function QcReplies({
             )}
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               {d.status === "ready" && (
-                <ActionButton label="Post reply" variant="primary" onClick={() => onPost(d)} busy={busy === "post-" + d.id} disabled={!body.trim()} />
+                <ActionButton label="Post reply" variant="primary" onClick={() => onPost(d)} busy={busy.has("post-" + d.id)} disabled={!body.trim()} />
               )}
               {d.status !== "running" && (
-                <ActionButton label="Dismiss" variant="ghost" onClick={() => onDismiss(d)} busy={busy === "dismiss-" + d.id} />
+                <ActionButton label="Dismiss" variant="ghost" onClick={() => onDismiss(d)} busy={busy.has("dismiss-" + d.id)} />
               )}
             </div>
           </div>

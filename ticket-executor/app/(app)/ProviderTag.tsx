@@ -1,31 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { providerMeta, type ProviderId } from "@/lib/providers";
-import { CONNECTION_CHANGED_EVENT } from "../connectionEvents";
+import { useConnections } from "../queries";
 
 // The "which tracker am I driving" marker. It lives at the foot of the Sidebar,
 // so it reads once for the whole app instead of once per page header.
 export default function ProviderTag() {
-  const [id, setId] = useState<ProviderId | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/connections");
-      const data = await r.json();
-      if (data?.provider) setId(data.provider as ProviderId);
-    } catch {
-      /* leave whatever is on screen */
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    const onChanged = () => { load(); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [load]);
+  const id = (useConnections().data?.provider || null) as ProviderId | null;
 
   if (!id) return null;
   return (

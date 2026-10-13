@@ -76,7 +76,7 @@ export default function PlanTable({
   data: MySprint | null;
   drafts: QaDraft[];
   triaged: Map<string, TriagedTicket>;
-  busy: string;
+  busy: ReadonlySet<string>;
   releaseDayOptions: string[];
   costs: Record<string, number>;
   reorderable: boolean;
@@ -124,8 +124,8 @@ export default function PlanTable({
                 </span>
                 {canMove && (
                   <>
-                    <ArrowButton label={`Move #${t.ticketId} up the queue`} direction="up" disabled={t.id === firstMovable || busy === "move-" + t.id} onClick={() => h.move(t.id, "up")} />
-                    <ArrowButton label={`Move #${t.ticketId} down the queue`} direction="down" disabled={t.id === lastMovable || busy === "move-" + t.id} onClick={() => h.move(t.id, "down")} />
+                    <ArrowButton label={`Move #${t.ticketId} up the queue`} direction="up" disabled={t.id === firstMovable || busy.has("move-" + t.id)} onClick={() => h.move(t.id, "up")} />
+                    <ArrowButton label={`Move #${t.ticketId} down the queue`} direction="down" disabled={t.id === lastMovable || busy.has("move-" + t.id)} onClick={() => h.move(t.id, "down")} />
                   </>
                 )}
               </span>,
@@ -153,7 +153,7 @@ export default function PlanTable({
                   key="release"
                   aria-label={`Release day for #${t.ticketId}`}
                   value={t.releaseDay}
-                  disabled={busy === "redate-" + t.id}
+                  disabled={busy.has("redate-" + t.id)}
                   onChange={(e) => h.setReleaseDay(t.id, e.target.value)}
                   style={{ ...fieldInput({ height: "32px", fontSize: FONT.sm }), width: "100%", padding: "0 6px", color: t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted, fontWeight: 600 }}
                 >
@@ -275,9 +275,9 @@ export default function PlanTable({
                 <span className="te-plan-actions" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "7px", flexWrap: "nowrap" }}>
                   {canOverride &&
                     (t.unblockedByUser ? (
-                      <ActionButton label="Overridden" variant="success" onClick={() => h.setUnblocked(t.id, false)} busy={busy === "unblock-" + t.id} />
+                      <ActionButton label="Overridden" variant="success" onClick={() => h.setUnblocked(t.id, false)} busy={busy.has("unblock-" + t.id)} />
                     ) : (
-                      <ActionButton label="Force ready" variant="outline" onClick={() => h.setUnblocked(t.id, true)} busy={busy === "unblock-" + t.id} />
+                      <ActionButton label="Force ready" variant="outline" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
                     ))}
                   {t.implementState === "running" || t.reviewState === "running" ? (
                     <ActionButton label="Watch" variant="outline" onClick={() => h.openExecution(t.ticketId, "execution")} />
@@ -285,31 +285,31 @@ export default function PlanTable({
                     <ActionButton label="Result" variant="ghost" onClick={() => h.openExecution(t.ticketId, "result")} />
                   ) : null}
                   {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" && (
-                    <ActionButton label="Fix review" variant="outline" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy === "fixreview-" + t.id} />
+                    <ActionButton label="Fix review" variant="outline" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
                   )}
                   {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
                     (t.implementState === "failed" || t.implementState === "skipped") && (
-                      <ActionButton label={held ? "Resume" : "Retry"} variant="warning" onClick={() => h.retry(t.id)} busy={busy === "retry-" + t.id} />
+                      <ActionButton label={held ? "Resume" : "Retry"} variant="warning" onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />
                     )}
-                  {due && t.id && <ActionButton label="Release" variant="primary" onClick={() => h.release(t)} busy={busy === "release-" + t.id} />}
+                  {due && t.id && <ActionButton label="Release" variant="primary" onClick={() => h.release(t)} busy={busy.has("release-" + t.id)} />}
                   {t.id && QA_STAGES.has(stage) && t.pendingAction !== "fix-qa" && stage !== "qa-failed" && claim !== "dropped" && !replyWaiting && (
-                    <ActionButton label="Draft reply" variant="outline" onClick={() => h.draftReply(t.id)} busy={busy === "draft-" + t.id} />
+                    <ActionButton label="Draft reply" variant="outline" onClick={() => h.draftReply(t.id)} busy={busy.has("draft-" + t.id)} />
                   )}
                   {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < MAX_QA_ROUNDS && !replyWaiting &&
                     t.implementState !== "running" && t.reviewState !== "running" && claim === "mine" && (
-                      <ActionButton label="Start QA fix" variant="warning" onClick={() => h.startQaFix(t.id, t.ticketId)} busy={busy === "qafix-" + t.id} />
+                      <ActionButton label="Start QA fix" variant="warning" onClick={() => h.startQaFix(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />
                     )}
                   {t.id && t.pendingAction === "move-to-qa" && (
-                    <ActionButton label="Move to In QA" variant="primary" onClick={() => h.moveToQa(t.id)} busy={busy === "qa-" + t.id} />
+                    <ActionButton label="Move to In QA" variant="primary" onClick={() => h.moveToQa(t.id)} busy={busy.has("qa-" + t.id)} />
                   )}
                   {canMove && t.id !== firstMovable && (
-                    <ActionButton label="Do next" variant="ghost" onClick={() => h.move(t.id, "top")} busy={busy === "move-" + t.id} />
+                    <ActionButton label="Do next" variant="ghost" onClick={() => h.move(t.id, "top")} busy={busy.has("move-" + t.id)} />
                   )}
                   {t.id && t.implementState === "pending" && t.implementOrder > 0 && claim === "mine" && !t.runId && !t.prUrl && !t.releasedAt && (
-                    <ActionButton label="Hold" variant="ghost" onClick={() => h.hold(t.id)} busy={busy === "hold-" + t.id} />
+                    <ActionButton label="Hold" variant="ghost" onClick={() => h.hold(t.id)} busy={busy.has("hold-" + t.id)} />
                   )}
                   {t.id && t.implementState === "pending" && !t.runId && !t.prUrl && !t.releasedAt && (
-                    <ActionButton label="Remove" variant="ghost" onClick={() => h.remove(t.id, t.ticketId)} busy={busy === "remove-" + t.id} />
+                    <ActionButton label="Remove" variant="ghost" onClick={() => h.remove(t.id, t.ticketId)} busy={busy.has("remove-" + t.id)} />
                   )}
                 </span>
               </div>

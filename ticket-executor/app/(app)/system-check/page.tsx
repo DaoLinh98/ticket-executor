@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -11,7 +11,7 @@ import type { Check, CheckGroup, CheckStatus, PreflightResult } from "@/lib/pref
 import ProviderBadge from "../ProviderBadge";
 import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
-import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
+import { PREFLIGHT_KEY, fetchPreflight, usePreflight } from "../../queries";
 import DesktopOnly from "../DesktopOnly";
 
 // Section order + copy. Each group answers one question a new dev has.
@@ -74,41 +74,17 @@ function CheckRow({ c }: { c: Check }) {
 
 function SystemCheckPageInner() {
   const { fireBoltFromEvent } = useBoltsContext();
-  const [result, setResult] = useState<PreflightResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"" | "quick" | "deep">("");
-  const [error, setError] = useState("");
-
-  const load = useCallback(async (opts?: { deep?: boolean }) => {
-    const mode = opts?.deep ? "deep" : "quick";
-    setBusy(mode);
-    setError("");
-    try {
-      const r = await fetch(`/api/preflight${opts?.deep ? "?deep=1" : ""}`);
-      const data = await r.json();
-      if (!r.ok || !data.checks) {
-        setError(data.error || "Preflight failed to run.");
-        return;
-      }
-      setResult(data as PreflightResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // The connection checks below authenticate as the active organization.
-  useEffect(() => {
-    const onChanged = () => { load(); };
-    window.addEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(CONNECTION_CHANGED_EVENT, onChanged);
-  }, [load]);
+  const queryClient = useQueryClient();
+  const quick = usePreflight();
+  const deep = useMutation({
+    mutationFn: () => fetchPreflight(true),
+    onSuccess: (data) => queryClient.setQueryData(PREFLIGHT_KEY, data),
+  });
+  const result = quick.data ?? null;
+  const loading = quick.isPending;
+  const busy: "" | "quick" | "deep" = deep.isPending ? "deep" : quick.isFetching ? "quick" : "";
+  const error = deep.error?.message || quick.error?.message || "";
+  const load = (opts?: { deep?: boolean }) => (opts?.deep ? deep.mutate() : void quick.refetch());
 
   const summary = result?.summary;
   const banner = !summary

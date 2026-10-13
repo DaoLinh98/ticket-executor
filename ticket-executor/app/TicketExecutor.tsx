@@ -34,9 +34,14 @@ import type {
 } from "./ticket-executor/types";
 import type { CommitFile, CommitSummary, FileChange, KnowledgeChange, LogLine, MentionCandidate, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
+import { useQueryClient } from "@tanstack/react-query";
+import { useLive } from "./useLive";
+import { SETTINGS_KEY, fetchSettings } from "./queries";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
 import { FONT, MOTION, RUN_COLOR, actionInfoFor, branchOf, ctaButtonStyle, isFixReviewSkill, isReviewable, pill, tabStyle as uiTabStyle } from "@/lib/ui";
+
+const LIST_REVALIDATE_MS = 60_000;
 
 // Container for the whole app: owns all state (tickets, executions, settings,
 // reviews) and the polling/SSE plumbing, and composes the presentational pieces
@@ -125,6 +130,12 @@ function iterationPathFor(options: IterationOption[], name: string): string {
 }
 
 export default function TicketExecutor() {
+  const queryClient = useQueryClient();
+  const readJson = useCallback(
+    (key: readonly unknown[], url: string, staleTime = 0) =>
+      queryClient.fetchQuery({ queryKey: key, queryFn: () => fetch(url).then((r) => r.json()), staleTime }),
+    [queryClient]
+  );
   // Which project, sprint and view this organization was last looking at.
   // Restored before the first provider call so the screen opens on the work in
   // progress instead of the first project's current iteration.
@@ -464,11 +475,10 @@ export default function TicketExecutor() {
   const loadWorkspace = useCallback(async () => {
     let provider: ProviderId = "azure-devops";
     try {
-      const r = await fetch("/api/settings", { cache: "no-store" });
-      const data = await r.json();
+      const data = await queryClient.fetchQuery({ queryKey: SETTINGS_KEY, queryFn: fetchSettings, staleTime: 0 });
       if (data.settings) {
-        setSettings(data.settings);
-        provider = data.settings.provider ?? provider;
+        setSettings(data.settings as unknown as SettingsView);
+        provider = (data.settings.provider as ProviderId | undefined) ?? provider;
       }
     } catch {
       /* ignore — fall back to default provider */
@@ -602,8 +612,7 @@ export default function TicketExecutor() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/skills");
-        const data = await r.json();
+        const data = await readJson(["skills"], "/api/skills", 30_000);
         if (Array.isArray(data.skills) && data.skills.length) setSkillOptions(data.skills);
       } catch {
         /* keep default SKILL_OPTIONS */
@@ -611,8 +620,7 @@ export default function TicketExecutor() {
     })();
     (async () => {
       try {
-        const r = await fetch("/api/claude-models");
-        const data = await r.json();
+        const data = await readJson(["claude-models"], "/api/claude-models", 600_000);
         if (Array.isArray(data.models) && data.models.length) setModelOptions(data.models);
       } catch {
         /* keep the family aliases, which the CLI resolves to the latest model */
@@ -695,8 +703,7 @@ export default function TicketExecutor() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(`/api/tickets/${selectedId}/detail?provider=${settings.provider}`);
-        const data = await r.json();
+        const data = await readJson(["ticket-detail", settings.provider, selectedId], `/api/tickets/${selectedId}/detail?provider=${settings.provider}`, 60_000);
         if (cancelled || data.error) return;
         setTickets((list) =>
           list.map((x) =>
@@ -1464,6 +1471,43 @@ export default function TicketExecutor() {
     const target = active ?? shippedWithPr ?? list[0];
     if (target) hydrateExecution(selectedId, target.id, target.skill);
   }, [selectedId, history, execs, hydrateExecution]);
+
+  // A run this screen did not start — the scheduler's, or another tab's — has
+  // no stream here until something looks. The live signal re-reads the history,
+  // and a running run the screen is not already tracking is hydrated through the
+  // same path a reload uses.
+  useLive("/api/live/runs", () => {
+    if (selectedId) void loadHistory(selectedId);
+  });
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const active = history[selectedId]?.find((r) => r.state === "running" || r.state === "waiting");
+    if (!active || execs[selectedId]?.runId === active.id) return;
+    hydrateExecution(selectedId, active.id, active.skill);
+  }, [selectedId, history, execs, hydrateExecution]);
+
+  // The board is the provider's, so nothing can push a change in it. Coming back
+  // to the tab is the moment the developer looks, so the list is re-read then —
+  // in the background, so the rows on screen stay put while it lands.
+  const listArgsRef = useRef({ provider: settings.provider, project: selectedProject, sprint: selectedSprint, scope, loading });
+  listArgsRef.current = { provider: settings.provider, project: selectedProject, sprint: selectedSprint, scope, loading };
+  const listRevalidatedAt = useRef(Date.now());
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden || Date.now() - listRevalidatedAt.current < LIST_REVALIDATE_MS) return;
+      const a = listArgsRef.current;
+      if (a.loading) return;
+      listRevalidatedAt.current = Date.now();
+      void reloadTickets(a.provider, a.project, a.scope === "sprint" ? a.sprint : undefined, { scope: a.scope, background: true });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [reloadTickets]);
 
   // Core "start a run for this ticket" logic, usable both for the selected
   // ticket's CTA button and for batch runs kicked off from multi-select
