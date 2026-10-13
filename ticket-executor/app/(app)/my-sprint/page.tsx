@@ -599,7 +599,7 @@ export default function MySprintPage() {
     return (
     <motion.div {...reveal({ from: i % 2 ? "right" : "left", index: i })} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
       <span style={sectionCaption()}>{label}</span>
-      <span style={{ ...displayText("stat"), whiteSpace: "nowrap" }}>{value}</span>
+      <span style={{ ...displayText("stat"), overflowWrap: "anywhere" }}>{value}</span>
       {sub && <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>{sub}</span>}
     </motion.div>
     );
@@ -780,9 +780,9 @@ export default function MySprintPage() {
                   "FORECAST",
                   forecast ? dayLabel(forecast.projectedDay) : "—",
                   forecast
-                    ? (forecast.slipDays > 0 ? forecast.slipDays + " working day(s) past the end" : "lands inside the sprint") +
-                      " · " + (Math.round(forecast.velocity * 10) / 10) + "pt/day so far"
-                    : "needs a point delivered first"
+                    ? (forecast.slipDays > 0 ? forecast.slipDays + "d late" : "On track") +
+                      " · " + (Math.round(forecast.velocity * 10) / 10) + "pt/day"
+                    : "No delivery yet"
                 )}
                 {tile("RUN COST", usd(totalCost), Object.values(costs).filter((c) => c > 0).length + " tickets run")}
               </div>

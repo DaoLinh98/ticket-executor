@@ -208,6 +208,7 @@ button:not(:disabled),a[href]{transition:transform .32s var(--te-ease-expo),filt
 button:not(:disabled):hover,a[href]:hover{transform:translateY(-2px) scale(1.03);filter:brightness(1.08);}
 button:not(:disabled):active,a[href]:active{transform:scale(.97);transition:transform .08s var(--te-ease-out),filter .08s ease;filter:brightness(.95);}
 button:disabled{cursor:not-allowed;}
+.te-action-btn[data-state="off"]{opacity:.4;filter:grayscale(.8);box-shadow:none;}
 @media (prefers-reduced-motion: reduce){
   button:not(:disabled):hover,a[href]:hover,button:not(:disabled):active,a[href]:active{transform:none;}
 }
