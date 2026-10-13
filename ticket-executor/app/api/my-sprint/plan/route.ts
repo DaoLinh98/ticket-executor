@@ -3,7 +3,11 @@ import {
   addTicketToPlan,
   dismissQaReply,
   findPlan,
+  holdPlannedTicket,
   listQaDrafts,
+  moveInQueue,
+  previewRebuild,
+  setReleaseDay,
   postQaReply,
   startQaReply,
   moveToQa,
@@ -45,10 +49,23 @@ export async function GET(req: Request) {
   const cycle = await loadSprintCycle(provider, setting.sprintAnchorProject).catch(() => null);
   const { key } = await keyFor(provider, cycle?.sprint ?? "");
   const plan = await findPlan(key);
+  const forTicket = params.get("events");
+  if (forTicket) {
+    return NextResponse.json({ events: plan ? await recentAutomation(plan.id, 50, forTicket) : [] });
+  }
+  const runs = plan?.items.length
+    ? await prisma.run.findMany({
+        where: { ticketId: { in: plan.items.map((i) => i.ticketId) }, provider, org: key.org },
+        select: { ticketId: true, steps: { select: { costUsd: true } } },
+      })
+    : [];
+  const costs: Record<string, number> = {};
+  for (const r of runs) costs[r.ticketId] = (costs[r.ticketId] ?? 0) + r.steps.reduce((sum, st) => sum + st.costUsd, 0);
   return NextResponse.json({
     plan,
     events: plan ? await recentAutomation(plan.id) : [],
     drafts: plan ? await listQaDrafts(plan.id) : [],
+    costs,
   });
 }
 
@@ -84,6 +101,11 @@ export async function POST(req: Request) {
   // const triageRow = await latestTriage(key);
   // const triage =
   //   triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
+
+  if (body.dryRun === true) {
+    const preview = await previewRebuild(key, deliverablesOnly(loaded.tickets, provider), identity, null, window, today, cfg);
+    return NextResponse.json({ preview });
+  }
 
   const plan = await rebuildPlan(
     key,
@@ -244,6 +266,24 @@ export async function PUT(req: Request) {
       { outcome, plan: item ? await planById(item.planId) : null },
       outcome.ok ? undefined : { status: 400 }
     );
+  }
+  if (body.moveInQueue && typeof body.moveInQueue === "object" && typeof body.moveInQueue.id === "string") {
+    const { id, move } = body.moveInQueue;
+    if (!["up", "down", "top"].includes(move)) return NextResponse.json({ error: "Unknown move." }, { status: 400 });
+    const outcome = await moveInQueue(id, move);
+    const item = await prisma.plannedTicket.findUnique({ where: { id } });
+    return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (body.setReleaseDay && typeof body.setReleaseDay === "object" && typeof body.setReleaseDay.id === "string") {
+    const { id, day } = body.setReleaseDay;
+    const outcome = await setReleaseDay(id, String(day ?? ""), new Date().toISOString().slice(0, 10));
+    const item = await prisma.plannedTicket.findUnique({ where: { id } });
+    return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (typeof body.hold === "string" && body.hold) {
+    const outcome = await holdPlannedTicket(body.hold);
+    const item = await prisma.plannedTicket.findUnique({ where: { id: body.hold } });
+    return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
   }
   if (body.tick) return NextResponse.json({ report: await tickNow() });
   return NextResponse.json({ error: "Nothing to do." }, { status: 400 });

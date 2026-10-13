@@ -563,3 +563,85 @@ export function retryDenial(f: RetryFacts): string {
   }
   return "";
 }
+
+export type QueueMove = "up" | "down" | "top";
+
+export function reorderQueue(
+  rows: { id: string; implementOrder: number }[],
+  id: string,
+  move: QueueMove
+): Map<string, number> | null {
+  const sorted = [...rows].sort((a, b) => a.implementOrder - b.implementOrder);
+  const from = sorted.findIndex((r) => r.id === id);
+  if (from < 0) return null;
+  const to = move === "top" ? 0 : move === "up" ? from - 1 : from + 1;
+  if (to < 0 || to >= sorted.length || to === from) return null;
+  const orders = sorted.map((r) => r.implementOrder);
+  const sequence = sorted.map((r) => r.id);
+  const [moved] = sequence.splice(from, 1);
+  sequence.splice(to, 0, moved);
+  return new Map(sequence.map((rowId, i) => [rowId, orders[i]]));
+}
+
+export type PlanDiff = {
+  added: string[];
+  moved: { ticketId: string; from: number; to: number }[];
+  redated: { ticketId: string; from: string; to: string }[];
+  claimChanged: { ticketId: string; from: string; to: string }[];
+};
+
+export function planDiff(
+  stored: {
+    ticketId: string;
+    implementState: string;
+    releasedAt: Date | string | null;
+    implementOrder: number;
+    releaseDay: string;
+    claim: string;
+  }[],
+  computed: PlannedTicket[]
+): PlanDiff {
+  const byTicket = new Map(stored.map((s) => [s.ticketId, s]));
+  const diff: PlanDiff = { added: [], moved: [], redated: [], claimChanged: [] };
+  for (const t of computed) {
+    const prev = byTicket.get(t.ticketId);
+    if (!prev) {
+      diff.added.push(t.ticketId);
+      continue;
+    }
+    if (prev.claim !== t.claim) diff.claimChanged.push({ ticketId: t.ticketId, from: prev.claim, to: t.claim });
+    if (prev.implementState !== "pending" || prev.releasedAt) continue;
+    if (prev.implementOrder !== t.implementOrder) {
+      diff.moved.push({ ticketId: t.ticketId, from: prev.implementOrder, to: t.implementOrder });
+    }
+    if (prev.releaseDay !== t.releaseDay) {
+      diff.redated.push({ ticketId: t.ticketId, from: prev.releaseDay, to: t.releaseDay });
+    }
+  }
+  return diff;
+}
+
+export type Forecast = {
+  velocity: number;
+  projectedDay: string;
+  slipDays: number;
+};
+
+export function forecastFinish(f: {
+  donePoints: number;
+  remainingPoints: number;
+  window: SprintWindow;
+  today: string;
+}): Forecast | null {
+  const { donePoints, remainingPoints, window, today } = f;
+  if (!window.startDate || !window.finishDate || today < window.startDate) return null;
+  const elapsed = workingDays(window.startDate, today > window.finishDate ? window.finishDate : today).length;
+  if (elapsed === 0 || donePoints <= 0) return null;
+  const velocity = donePoints / elapsed;
+  if (remainingPoints <= 0) return { velocity, projectedDay: today, slipDays: 0 };
+  const daysNeeded = Math.ceil(remainingPoints / velocity);
+  const days = workingDaysFrom(today, daysNeeded);
+  const projectedDay = days[days.length - 1];
+  const slipDays = projectedDay > window.finishDate ? Math.max(0, workingDays(window.finishDate, projectedDay).length - 1) : 0;
+  return { velocity, projectedDay, slipDays };
+}

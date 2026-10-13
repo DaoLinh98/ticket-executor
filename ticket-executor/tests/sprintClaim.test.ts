@@ -144,3 +144,10 @@ test("an empty sprint read would reassign everything — which is why the caller
   const claimed = claimSprint([], [remembered("1", true), remembered("2", false)], KEN);
   assert.deepEqual(claimed.map((c) => c.claim), ["handed-off", "dropped"]);
 });
+
+test("a ticket the developer added by hand stays theirs until the app has worked it", () => {
+  assert.equal(claimOf(undefined, KEN, false, true), "mine");
+  assert.equal(claimOf(qa("1"), KEN, false, true), "mine");
+  assert.equal(claimOf(qa("1"), KEN, true, true), "handed-off");
+  assert.equal(claimOf(undefined, KEN, false, false), "dropped");
+});

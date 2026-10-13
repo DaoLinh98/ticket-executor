@@ -10,10 +10,14 @@ import type { DevIdentity } from "../identity";
 import { claimSprint, type ClaimedTicket, type Remembered } from "../sprintClaim";
 import {
   buildPlan,
+  planDiff,
   releaseDays,
+  reorderQueue,
   retryDenial,
   type PlanConfig,
+  type PlanDiff,
   type PlanInput,
+  type QueueMove,
   type SprintPlanResult,
 } from "../sprintPlan";
 import { pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
@@ -89,6 +93,7 @@ export async function rememberSprint(key: PlanKey): Promise<Remembered[]> {
       !!i.prUrl ||
       i.claim === "handed-off" ||
       ran.has(i.ticketId),
+    manual: i.addedByUser,
   }));
 }
 
@@ -217,6 +222,42 @@ export async function savePlan(
   return planById(plan.id);
 }
 
+async function computePlan(
+  key: PlanKey,
+  live: Ticket[],
+  identity: DevIdentity,
+  triage: TriageResult | null,
+  window: { startDate: string; finishDate: string },
+  today: string,
+  cfg: PlanConfig
+) {
+  const claimed = await claimedSprint(key, live, identity);
+  const existing = await findPlan(key);
+  const kept = new Map((existing?.items ?? []).filter((i) => i.implementOrder > 0).map((i) => [i.ticketId, i.implementOrder]));
+  const inputs = planInputs(claimed, triage).map((input) =>
+    input.order === undefined && kept.has(input.ticket.id) ? { ...input, order: kept.get(input.ticket.id) } : input
+  );
+  return { computed: buildPlan(inputs, window, today, cfg), existing };
+}
+
+export async function previewRebuild(
+  key: PlanKey,
+  live: Ticket[],
+  identity: DevIdentity,
+  triage: TriageResult | null,
+  window: { startDate: string; finishDate: string },
+  today: string,
+  cfg: PlanConfig
+): Promise<PlanDiff & { overflowPoints: number; titles: Record<string, string> }> {
+  const { computed, existing } = await computePlan(key, live, identity, triage, window, today, cfg);
+  const diff = planDiff(existing?.items ?? [], computed.tickets);
+  return {
+    ...diff,
+    overflowPoints: computed.overflowPoints,
+    titles: Object.fromEntries(computed.tickets.map((t) => [t.ticketId, t.title])),
+  };
+}
+
 /** Recompute and store in one step — what the page's "Build plan" does. */
 export async function rebuildPlan(
   key: PlanKey,
@@ -228,8 +269,7 @@ export async function rebuildPlan(
   cfg: PlanConfig,
   opts: { reviewers?: string[]; includeWider?: boolean } = {}
 ) {
-  const claimed = await claimedSprint(key, live, identity);
-  const computed = buildPlan(planInputs(claimed, triage), window, today, cfg);
+  const { computed } = await computePlan(key, live, identity, triage, window, today, cfg);
   const saved = await savePlan(key, window, cfg, computed, opts);
   if (!saved) return saved;
 
@@ -323,9 +363,9 @@ export async function logAutomation(e: {
   }
 }
 
-export async function recentAutomation(planId: string, take = 50) {
+export async function recentAutomation(planId: string, take = 50, ticketId = "") {
   return prisma.automationEvent.findMany({
-    where: planId ? { planId } : {},
+    where: { ...(planId ? { planId } : {}), ...(ticketId ? { ticketId } : {}) },
     orderBy: { createdAt: "desc" },
     take,
   });
@@ -426,6 +466,7 @@ export async function addTicketToPlan(
       estimateHours: ticket.estimateHours,
       implementOrder: Math.max(0, ...rows.map((r) => r.implementOrder)) + 1,
       releaseDay: lastDay,
+      addedByUser: true,
     },
   });
   await logAutomation({
@@ -435,6 +476,66 @@ export async function addTicketToPlan(
     outcome: "skipped",
     reason: "added-by-user",
     detail: `Added to the plan by hand, last in the implement queue, release day ${lastDay}.`,
+  });
+  return { ok: true };
+}
+
+export async function moveInQueue(plannedId: string, move: QueueMove): Promise<{ ok: boolean; error?: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+  const movable = (i: { implementState: string; implementOrder: number; claim: string; runId: string; prUrl: string; releasedAt: Date | null }) =>
+    i.implementState === "pending" && i.implementOrder > 0 && i.claim === "mine" && !i.runId && !i.prUrl && !i.releasedAt;
+  if (!movable(item)) return { ok: false, error: "Only a ticket still waiting in the queue can be moved." };
+  const siblings = (await prisma.plannedTicket.findMany({ where: { planId: item.planId } })).filter(movable);
+  const next = reorderQueue(siblings, plannedId, move);
+  if (!next) return { ok: false, error: "It is already there." };
+  await prisma.$transaction(
+    [...next].map(([id, implementOrder]) => prisma.plannedTicket.update({ where: { id }, data: { implementOrder } }))
+  );
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "implement",
+    outcome: "skipped",
+    reason: "reordered-by-user",
+    detail: move === "top" ? "Moved to the front of the implement queue." : `Moved ${move} in the implement queue.`,
+  });
+  return { ok: true };
+}
+
+export async function setReleaseDay(plannedId: string, day: string, today: string): Promise<{ ok: boolean; error?: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+  if (item.releasedAt) return { ok: false, error: "This ticket has already been released." };
+  if (item.claim !== "mine") return { ok: false, error: "This ticket is no longer assigned to you." };
+  const days = releaseDays({ startDate: item.plan.startDate, finishDate: item.plan.finishDate }, today);
+  if (!days.includes(day)) return { ok: false, error: "Pick a working day inside the sprint that has not passed." };
+  await prisma.plannedTicket.update({ where: { id: plannedId }, data: { releaseDay: day } });
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "release",
+    outcome: "skipped",
+    reason: "redated-by-user",
+    detail: `Release day moved from ${item.releaseDay || "none"} to ${day}.`,
+  });
+  return { ok: true };
+}
+
+export async function holdPlannedTicket(plannedId: string): Promise<{ ok: boolean; error?: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+  if (item.implementState !== "pending" || item.runId || item.prUrl || item.releasedAt || item.claim !== "mine") {
+    return { ok: false, error: "Only a ticket still waiting in the queue can be put on hold." };
+  }
+  await prisma.plannedTicket.update({ where: { id: plannedId }, data: { implementState: "skipped" } });
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "implement",
+    outcome: "skipped",
+    reason: "held-by-user",
+    detail: "Put on hold by hand. The scheduler leaves it alone until you resume it.",
   });
   return { ok: true };
 }

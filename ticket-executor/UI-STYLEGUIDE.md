@@ -117,6 +117,8 @@ media query, so the phone layout lives in **one CSS block at the foot of
 | `te-main` | Scroll-region padding drops to 14px + bottom safe area. |
 | `te-grid-2` / `te-grid-3` | Fixed-column grids collapse to one column. |
 | `te-table-scroll` + `te-table-body` | A real table scrolls sideways at full width rather than reflowing. |
+| `te-plan-table` / `te-plan-head` / `te-plan-row` / `te-plan-ticket` / `te-plan-cell[data-label]` / `te-plan-actions` | The Flow Runner plan table reflows into a card per ticket: the header row is dropped, the ticket takes a full row, each cell becomes a labelled chip (the label is its `data-label`), and the actions wrap on their own row. |
+| `te-action-btn` / `te-icon-btn` | Buttons and icon buttons reach the 40px tap target. |
 | `te-split[data-pane]` / `te-pane-list` / `te-pane-detail` / `te-back-btn` | A two-pane screen shows one pane at a time with a Back control (Ticket Execution, the commit popup). |
 | `te-tabbar-tabs` | The detail tabs become one sideways-scrolling row (`display: contents` above the breakpoint), leaving the run buttons their own row. |
 | `te-open-ticket-mobile` | The detail header's Open Ticket chip is replaced by a copy-link icon beside the status (the meta-row chip carries `te-mobile-hide`). |

@@ -49,6 +49,10 @@ export {
 export {
   claimedSprint,
   findPlan,
+  holdPlannedTicket,
+  moveInQueue,
+  previewRebuild,
+  setReleaseDay,
   logAutomation,
   planById,
   planInputs,
