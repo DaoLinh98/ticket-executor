@@ -1,0 +1,50 @@
+name: ticket-executor
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: te
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-te}
+      POSTGRES_DB: te
+    ports:
+      - "127.0.0.1:${DB_PORT:-5438}:5432"
+    volumes:
+      - te-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U te -d te"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  web:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://te:${POSTGRES_PASSWORD:-te}@db:5432/te
+      REDIS_URL: redis://redis:6379
+      APP_ACCESS_PASSWORD: ${APP_ACCESS_PASSWORD:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - te-data:/data
+      - te-workspace:/workspace
+
+volumes:
+  te-db:
+  te-data:
+  te-workspace:
