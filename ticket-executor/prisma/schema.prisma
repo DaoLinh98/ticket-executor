@@ -145,6 +145,7 @@ model Run {
   // resultText (the run summary shown when a run finishes). None of them is
   // sniffed out of the log any more — they are contract fields.
   prUrl        String    @default("")
+  companionPrUrls String[] @default([])
   branch       String    @default("")
   resultText   String    @default("")
   // The single source of truth for where the run is. `phase`/`planStatus`-style
@@ -180,6 +181,7 @@ model Run {
   // HEAD against this, computed by the harness (free, no tokens) rather than
   // asked of the agent.
   baseSha      String    @default("")
+  companions   Json      @default("[]")
   // Scalar summary of that diff, denormalized when the run ends so the dashboard
   // can aggregate change size without loading the diff blob (which lives in an
   // Artifact of kind "diff").
@@ -515,6 +517,7 @@ model PlannedTicket {
   // The run that implemented it, when one has.
   runId          String     @default("")
   prUrl          String     @default("")
+  companionPrUrls String[] @default([])
   // ---- release: one column per provider write ----
   prPublished    Boolean    @default(false)
   reviewersSet   Boolean    @default(false)

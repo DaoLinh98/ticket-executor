@@ -1,9 +1,11 @@
 import { execSync } from "child_process";
 import { readFileSync, rmSync } from "fs";
 import path from "path";
-import { evaluatePrompt, fixPrompt, openingPrompt, publishPrompt, reflectPrompt, REVIEW_PUBLISH_PROMPT } from "./prompts";
+import { companionsToPublish, evaluatePrompt, fixPrompt, openingPrompt, publishPrompt, reflectPrompt, REVIEW_PUBLISH_PROMPT } from "./prompts";
 import {
+  acceptancePartial,
   blockedOf,
+  lastDelivery,
   EVALUATE_OUTPUT,
   PUBLISH_OUTPUT,
   QA_IMPLEMENT_OUTPUT,
@@ -81,6 +83,37 @@ function changedFiles(cwd: string, baseSha: string): string[] {
     .filter(Boolean);
 }
 
+export type RepoChange = { name: string; root: boolean; cwd: string; branch: string; files: string[] };
+
+export function repoGaps(repos: RepoChange[], exemption: string): { file: string; issue: string }[] {
+  const changed = repos.filter((r) => r.files.some((f) => !f.startsWith(".te/")));
+  if (!changed.length) return [{ file: "", issue: testGap([], exemption) }];
+  const named = repos.length > 1;
+  const gaps: { file: string; issue: string }[] = [];
+  for (const r of changed) {
+    if (!r.root && !r.branch) {
+      gaps.push({
+        file: `${r.name}/`,
+        issue: `${r.name}: the commits are not on a branch. Create the ticket's branch in that repository and commit on it.`,
+      });
+    }
+    const gap = testGap(r.files, exemption);
+    if (gap) gaps.push({ file: named ? `${r.name}/` : "", issue: named ? `${r.name}: ${gap}` : gap });
+  }
+  return gaps;
+}
+
+function changedRepos(c: RunContext): RepoChange[] {
+  const companions = c.companions.map((m) => {
+    const files = changedFiles(m.cwd, m.baseSha);
+    const branch = files.length ? execSync(`git -C "${m.cwd}" branch --show-current`, { encoding: "utf8" }).trim() : "";
+    return { name: m.name, root: false, cwd: m.cwd, branch, files };
+  });
+  return [{ name: path.basename(c.rootRepo), root: true, cwd: c.cwd, branch: "", files: changedFiles(c.cwd, c.baseSha) }, ...companions];
+}
+
+export const ACCEPTANCE_PARTIAL = "acceptance criteria partial";
+
 // ---- the loop graph ----
 
 // One shape for every flow. Nobody approves a plan: the run is judged on the
@@ -110,7 +143,8 @@ const FLOWS: Record<Flow, { id: string; legacyId: string; skill: string; label: 
   qa: { id: "fix-qa-v5", legacyId: "fix-qa-v4", skill: "fix-qa-v4", label: "Review QA findings & fix", evaluateMode: "qa-fix" },
 };
 
-function standingRefusal(c: RunContext): string {
+function standingRefusal(c: RunContext, flow: Flow): string {
+  if (flow === "implement" && acceptancePartial(lastDelivery(c))) return ACCEPTANCE_PARTIAL;
   const check = c.channels.check;
   if (check && check.passed === false) {
     const issue = String((check.blockers as { issue?: string }[] | undefined)?.[0]?.issue ?? "test gate failed");
@@ -130,12 +164,13 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
     if (attempts >= MAX_FIX_ATTEMPTS) return { to: reflect ? "reflect" : FAIL, reason: `${why} after ${attempts} fix attempt(s)` };
     return { to: "fix", reason: why };
   };
-  const committedLocally: Edge = (_c, r) => {
+  const committedLocally: Edge = (c, r) => {
     const bad = turnGuard(r);
     if (bad) return bad;
     const failed = verificationFailed(verificationOf(r.data));
     if (failed) return { to: FAIL, reason: failed };
     if (!r.data.committed) return { to: FAIL, reason: "nothing was committed" };
+    if (flow === "implement" && acceptancePartial(r.data)) return fixBound(c, ACCEPTANCE_PARTIAL);
     return { to: "check", reason: "committed, verification clear" };
   };
 
@@ -165,15 +200,17 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         effects: "pure",
         run: async (c) => {
           const exemption = String((c.channels.fix ?? c.channels.implement)?.testExemption ?? "");
-          let gap: string;
+          let repos: RepoChange[];
           try {
-            gap = testGap(changedFiles(c.cwd, c.baseSha), exemption);
+            repos = changedRepos(c);
           } catch (e) {
             return { ok: false, data: {}, error: `could not diff the branch: ${(e as Error).message}`, usage: ZERO_USAGE };
           }
+          const blockers = repoGaps(repos, exemption);
+          const companions = repos.filter((r) => !r.root && r.files.length).map(({ name, cwd, branch }) => ({ name, cwd, branch }));
           return {
             ok: true,
-            data: { passed: !gap, blockers: gap ? [{ file: "", issue: gap }] : [] },
+            data: { passed: !blockers.length, blockers, rootChanged: repos[0].files.length > 0, companions },
             error: "",
             usage: ZERO_USAGE,
           };
@@ -198,7 +235,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         label: "Fix review findings",
         effects: "local",
         context: "resume",
-        prompt: fixPrompt,
+        prompt: (c) => fixPrompt(c, flow === "implement"),
         output: STEP_OUTPUT as unknown as Record<string, unknown>,
       },
       publish: {
@@ -271,11 +308,17 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         if (bad) return bad;
         // Only a reply-only review has nothing to push.
         const committed = !!(c.channels.fix?.committed || c.channels.implement?.committed);
-        if ((!review || committed) && !r.data.pushed) return { to: FAIL, reason: "branch was not pushed" };
+        const rootChanged = c.channels.check?.rootChanged !== false;
+        if ((!review || committed) && rootChanged && !r.data.pushed) return { to: FAIL, reason: "branch was not pushed" };
+        const prs = Array.isArray(r.data.prs) ? (r.data.prs as { repo?: string; pushed?: boolean; prUrl?: string }[]) : [];
+        for (const m of companionsToPublish(c)) {
+          const pr = prs.find((p) => p.repo === m.name);
+          if (!pr?.pushed || !pr.prUrl) return { to: FAIL, reason: `${m.name}: branch was not pushed or no pull request was opened` };
+        }
         return { to: END, reason: r.data.reusedExisting ? "published (reused existing PR)" : "published" };
       },
       ...(reflect && {
-        reflect: (c: RunContext) => ({ to: FAIL, reason: `${standingRefusal(c)} after ${c.visits.fix ?? 0} fix attempt(s)` }),
+        reflect: (c: RunContext) => ({ to: FAIL, reason: `${standingRefusal(c, flow)} after ${c.visits.fix ?? 0} fix attempt(s)` }),
       }),
     },
   };

@@ -15,7 +15,8 @@ import assert from "node:assert/strict";
 
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
 import { parseLimitReset } from "../lib/execution/claudeCli";
-import { graphById, graphForSkill, isTestPath, KNOWN_SKILLS, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
+import { ACCEPTANCE_PARTIAL, graphById, graphForSkill, isTestPath, KNOWN_SKILLS, repoGaps, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
+import { companionPathsFromInstructions } from "../lib/repoContext";
 import { DRAFT_RULE, evaluatePrompt, fixPrompt, publishPrompt, reflectPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
 
@@ -32,6 +33,7 @@ const CTX: RunContext = {
   rootRepo: "C:/repo",
   cwd: "C:/repo",
   baseSha: "abc123",
+  companions: [],
   channels: {},
   visits: {},
 };
@@ -548,6 +550,100 @@ test("test gate: test files are recognised across the stacks the app runs on", (
   for (const p of ["angular/src/app/pages/fund/edit/edit.component.ts", "lib/latest.ts", "src/Contest.tsx"]) {
     assert.ok(!isTestPath(p), p);
   }
+});
+
+// ---- acceptance criteria: a partial delivery is never published ----
+
+const PARTIAL = { ...STEP, verification: { ...CLEAN_VERIFICATION, acceptanceCriteria: "partial" }, deviations: [{ what: "slide 7 not rendered", why: "ReportingService repo" }] };
+
+test("implement: acceptance criteria reported partial go back to fix, then to reflect — never to the test gate", () => {
+  assert.deepEqual(route(impl, "implement", result(PARTIAL)), { to: "fix", reason: ACCEPTANCE_PARTIAL });
+  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: 1 })).to, "fix");
+  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: 2 })).to, "reflect");
+  const stopped = { ...CTX, visits: { fix: 2 }, channels: { implement: STEP, fix: PARTIAL } };
+  assert.equal(route(impl, "reflect", result({ recorded: false, lesson: "" }), stopped).reason, "acceptance criteria partial after 2 fix attempt(s)");
+});
+
+test("implement: cannot-verify still reaches the test gate, and the gate is the implement flow's only", () => {
+  assert.equal(route(impl, "implement", result({ ...STEP, verification: { ...CLEAN_VERIFICATION, acceptanceCriteria: "cannot-verify" } })).to, "check");
+  assert.equal(route(review, "implement", result(PARTIAL)).to, "check");
+  assert.equal(route(qa, "implement", result({ ...PARTIAL, outcome: "fixed", qaReply: "" })).to, "check");
+});
+
+test("fix brief: a partial delivery is told what it left out and that no criterion is out of scope", () => {
+  const p = promptOf(impl, "fix", { ...CTX, channels: { implement: PARTIAL } });
+  assert.match(p, /^Mode: implement\./);
+  assert.match(p, /slide 7 not rendered — ReportingService repo/);
+  assert.match(p, /never out of scope/);
+  assert.match(p, /blocked\.is = true/);
+  const qaBrief = promptOf(qa, "fix", { ...CTX, channels: { implement: PARTIAL, check: GAP.data } });
+  assert.match(qaBrief, /no test/);
+  assert.doesNotMatch(qaBrief, /never out of scope/);
+});
+
+// ---- companion repositories ----
+
+const COMPANION = { name: "ReportingService", path: "C:/rs", cwd: "C:/rs/.te-worktrees/Demo-run_test", baseSha: "def456" };
+const WITH_COMPANION: RunContext = { ...CTX, companions: [COMPANION] };
+
+test("companions: the implementer and the reviewer are told every repository and its base", () => {
+  for (const p of [promptOf(impl, "implement", WITH_COMPANION), promptOf(impl, "evaluate", WITH_COMPANION)]) {
+    assert.match(p, / - Repos: ReportingService=C:\/rs\/\.te-worktrees\/Demo-run_test base=def456/);
+  }
+  assert.doesNotMatch(promptOf(impl, "implement"), /Repos:/);
+});
+
+test("companions: publish is told exactly the repositories the test gate saw change", () => {
+  const changed = { ...WITH_COMPANION, channels: { check: { passed: true, rootChanged: true, companions: [{ name: "ReportingService", cwd: COMPANION.cwd, branch: "feature/1234-x" }] } } };
+  const p = publishPrompt(changed);
+  assert.match(p, /- ReportingService: working tree `C:\/rs\/\.te-worktrees\/Demo-run_test`, branch `feature\/1234-x`/);
+  assert.match(p, /companion pull requests/);
+  assert.doesNotMatch(p, /has no change for this ticket/);
+  assert.match(publishPrompt({ ...changed, channels: { check: { ...changed.channels.check, rootChanged: false } } }), /has no change for this ticket/);
+  assert.doesNotMatch(publishPrompt(WITH_COMPANION), /other repositories/);
+});
+
+test("companions: publish fails unless every changed repository was pushed with a pull request", () => {
+  const check = { passed: true, rootChanged: true, companions: [{ name: "ReportingService", cwd: COMPANION.cwd, branch: "b" }] };
+  const c = { ...WITH_COMPANION, channels: { implement: { committed: true }, check } };
+  const base = { pushed: true, prUrl: "u", linked: true, reusedExisting: false, isDraft: true, blocked: NOT_BLOCKED };
+  assert.equal(route(impl, "publish", result({ ...base, prs: [{ repo: "ReportingService", pushed: true, prUrl: "u2", isDraft: true }] }), c).to, END);
+  const missing = route(impl, "publish", result({ ...base, prs: [] }), c);
+  assert.equal(missing.to, FAIL);
+  assert.match(missing.reason, /^ReportingService: /);
+  assert.equal(route(impl, "publish", result({ ...base, prs: [{ repo: "ReportingService", pushed: false, prUrl: "", isDraft: false }] }), c).to, FAIL);
+  const onlyCompanion = { ...c, channels: { ...c.channels, check: { ...check, rootChanged: false } } };
+  assert.equal(route(impl, "publish", result({ ...base, pushed: false, prUrl: "", prs: [{ repo: "ReportingService", pushed: true, prUrl: "u2", isDraft: true }] }), onlyCompanion).to, END);
+});
+
+test("test gate: repoGaps — one repository keeps today's messages; several name the repository at fault", () => {
+  const root = { name: "RIS", root: true, cwd: "C:/repo", branch: "", files: ["a.cs", "aTests.cs"] };
+  assert.deepEqual(repoGaps([root], ""), []);
+  assert.deepEqual(repoGaps([{ ...root, files: ["a.cs"] }], ""), [{ file: "", issue: testGap(["a.cs"], "") }]);
+  assert.deepEqual(repoGaps([{ ...root, files: [] }], ""), [{ file: "", issue: testGap([], "") }]);
+  const rs = { name: "ReportingService", root: false, cwd: "C:/rs", branch: "feature/1234-x", files: ["Section.cs"] };
+  const gaps = repoGaps([root, rs], "");
+  assert.equal(gaps.length, 1);
+  assert.match(gaps[0].issue, /^ReportingService: /);
+  assert.deepEqual(repoGaps([root, { ...rs, files: ["Section.cs", "SectionTests.cs"] }], ""), []);
+  assert.deepEqual(repoGaps([{ ...root, files: [] }, { ...rs, files: ["SectionTests.cs"] }], ""), []);
+  assert.match(repoGaps([root, { ...rs, branch: "", files: ["SectionTests.cs"] }], "")[0].issue, /not on a branch/);
+});
+
+test("companion discovery: absolute paths are read out of instruction files, links and relative paths are not", () => {
+  const md = [
+    "**Report services**",
+    "- The path: C:\\Users\\linh.dao\\Desktop\\ReportingService",
+    "- RFI at `C:/Users/linh.dao/Desktop/RFI`.",
+    "- Linux clone: /home/dev/repos/reporting;",
+    "See https://dev.azure.com/org/RIS/_git/RIS and ./docs/setup.md or src/app.",
+  ].join("\n");
+  assert.deepEqual(companionPathsFromInstructions(md), [
+    "C:\\Users\\linh.dao\\Desktop\\ReportingService",
+    "C:/Users/linh.dao/Desktop/RFI",
+    "/home/dev/repos/reporting",
+  ]);
+  assert.deepEqual(companionPathsFromInstructions("no paths here"), []);
 });
 
 test("test gate: testGap — a test file or a stated reason passes, neither refuses", () => {

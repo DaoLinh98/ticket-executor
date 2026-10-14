@@ -214,7 +214,7 @@ export function triageLive(id: string, cwd: string, provider: string, skill: str
     graphId: skill === TRIAGE_SKILL ? "triage" : skill,
     ctx: {
       runId: id, ticketId: "", ticketUrl: "", provider, project: "", prUrl: "",
-      skill, rootRepo: cwd, cwd, baseSha: "",
+      skill, rootRepo: cwd, cwd, baseSha: "", companions: [],
       channels: {}, visits: {},
     },
     state: "running",
@@ -241,6 +241,7 @@ export function triageLive(id: string, cwd: string, provider: string, skill: str
     errorMessage: "",
     endReason: "",
     prUrl: "",
+    companionPrUrls: [],
     branch: "",
     resultText: "",
     knowledgeAtStart: null,

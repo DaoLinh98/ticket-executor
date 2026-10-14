@@ -93,6 +93,7 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     resultText: (run.resultText as string) ?? "",
     error: (run.errorMessage as string) ?? "",
     prUrl: (run.prUrl as string) ?? "",
+    companionPrUrls: (run.companionPrUrls as string[]) ?? [],
     branch: (run.branch as string) ?? "",
     duration: run.duration as string | undefined,
     costUsd: run.costUsd as number | undefined,

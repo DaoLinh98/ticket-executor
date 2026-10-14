@@ -1,4 +1,5 @@
 import path from "path";
+import { acceptancePartial, lastDelivery } from "./schemas";
 import type { RunContext } from "./types";
 
 // The ticket is addressed by its provider URL when we know it: a URL names the
@@ -49,6 +50,16 @@ function withKnowledge(c: RunContext, prompt: string): string {
   return file ? `${prompt} - Knowledge: ${file}` : prompt;
 }
 
+function withRepos(c: RunContext, prompt: string): string {
+  if (!c.companions.length) return prompt;
+  return `${prompt} - Repos: ${c.companions.map((m) => `${m.name}=${m.cwd} base=${m.baseSha}`).join("; ")}`;
+}
+
+export function companionsToPublish(c: RunContext): { name: string; cwd: string; branch: string }[] {
+  const list = c.channels.check?.companions;
+  return Array.isArray(list) ? (list as { name: string; cwd: string; branch: string }[]) : [];
+}
+
 /**
  * Why a review run has to check out a branch that already exists.
  *
@@ -79,7 +90,7 @@ export function openingPrompt(c: RunContext, mode: string, opts: { review?: bool
   // The review flow's first turn reads and rewrites the code under review, and
   // it is not on the branch that holds that code until it checks it out.
   const branch = opts.review ? REVIEW_BRANCH_RULE : "";
-  return withKnowledge(c, invokeSkill(c, mode)) + branch;
+  return withRepos(c, withKnowledge(c, invokeSkill(c, mode))) + branch;
 }
 
 // Resume prompts stay short: the session already holds the ticket and the
@@ -131,6 +142,19 @@ export function publishPrompt(c: RunContext): string {
   // STEP_OUTPUT, so the field is in the same place either way.
   const branch =
     String(c.channels.fix?.branch ?? c.channels.implement?.branch ?? "").trim();
+  const companions = companionsToPublish(c);
+  const rootUnchanged = c.channels.check?.rootChanged === false;
+  const others = companions.length
+    ? "\n\nThis ticket also changed other repositories. Publish each of them the same way — push its branch, reuse the " +
+      "pull request already open for that branch or open one against that repository's default branch, and link the " +
+      "ticket — and report every one in `prs`, using the name given here:\n" +
+      companions.map((m) => `- ${m.name}: working tree \`${m.cwd}\`, branch \`${m.branch}\``).join("\n") +
+      "\nIn every pull request description, list the ticket's other pull requests as companion pull requests." +
+      (rootUnchanged
+        ? "\nThe working tree above has no change for this ticket: do not push it, and report `pushed: false` and an empty `prUrl` for it."
+        : "") +
+      "\n"
+    : "";
   return (
     `${invokeSkill(c, "publish")}${branch ? ` - Branch: ${branch}` : ""}\n\n` +
     "You are starting a FRESH session: you did not write this code and have no memory of the earlier phases. " +
@@ -141,7 +165,8 @@ export function publishPrompt(c: RunContext): string {
     "it if so, since this phase may be retried after a crash. Use `.te/plan.md` and `git log` for the PR title and " +
     "description — do not re-derive them by reading the source.\n" +
     DRAFT_RULE +
-    "Do not edit source, do not commit, do not re-verify, and do not review the diff."
+    "Do not edit source, do not commit, do not re-verify, and do not review the diff." +
+    others
   );
 }
 
@@ -160,7 +185,7 @@ export function evaluatePrompt(c: RunContext, mode = ""): string {
   const ticket = c.ticketUrl || c.ticketId;
   const pr = mode === "review-fix" && c.prUrl ? ` - PR: ${c.prUrl}` : "";
   const base = `/${REVIEW_SKILL} Provider: ${c.provider} - Ticket: ${ticket}${pr}${c.baseSha ? ` - Base: ${c.baseSha}` : ""}`;
-  return withKnowledge(c, base) + (mode ? ` - Mode: ${mode}` : "");
+  return withRepos(c, withKnowledge(c, base)) + (mode ? ` - Mode: ${mode}` : "");
 }
 
 /** Fed whichever refusal sent the run round the loop back to the implementer.
@@ -168,9 +193,24 @@ export function evaluatePrompt(c: RunContext, mode = ""): string {
  *  transcript — the fix node resumes the implementer's session, so everything
  *  else it needs is already there. The test gate is read first: it runs before
  *  the reviewer, so a failed check is always the newer refusal. */
-export function fixPrompt(c: RunContext): string {
+export function fixPrompt(c: RunContext, gateAcceptance = false): string {
   const lesson =
     "Before you commit, record the lesson each item taught in KNOWLEDGE.md when it is reusable, as your skill describes. ";
+  const last = lastDelivery(c);
+  if (gateAcceptance && acceptancePartial(last)) {
+    const left = (Array.isArray(last.deviations) ? (last.deviations as { what?: string; why?: string }[]) : [])
+      .map((d, i) => `${i + 1}. ${d.what ?? ""}${d.why ? ` — ${d.why}` : ""}`)
+      .join("\n");
+    return (
+      "Mode: implement. You reported `acceptanceCriteria: partial`, and a change that does not meet every Acceptance " +
+      "Criterion is not published." +
+      (left ? ` What you reported leaving out:\n\n${left}\n\n` : " ") +
+      "Implement the missing criteria now — in the repository the work belongs to, including any listed under `Repos:` — " +
+      "re-run the verification, and commit locally. An Acceptance Criterion is never out of scope. If one truly cannot be " +
+      "met (it needs a repository you were not given, or information the ticket does not contain), set `blocked.is = true` " +
+      "and name exactly what is missing. " + lesson + "Do NOT push or open a pull request."
+    );
+  }
   const check = c.channels.check;
   if (check && check.passed === false) {
     const issues = (check.blockers ?? []) as { issue?: string }[];

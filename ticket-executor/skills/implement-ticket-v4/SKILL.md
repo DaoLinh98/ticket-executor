@@ -1,7 +1,7 @@
 ---
 name: implement-ticket-v4
 description: Implement a ticket from Azure DevOps, GitHub, or GitLab autonomously in two phases — implement, verify and commit locally (re-entered to fix what the runner's checks and an independent reviewer refuse), then publish the branch and a draft PR as a separate final step; records reusable lessons in the project's KNOWLEDGE.md
-version: 4.1.0
+version: 4.2.0
 ---
 
 Implement ticket $ARGUMENTS following the project structure, existing workflow, coding standards, and verification expectations. Make the **smallest safe change that satisfies the Acceptance Criteria**, and preserve all unrelated behavior and all uncommitted work in the tree.
@@ -26,6 +26,7 @@ This skill runs non-interactively. Never end a turn with a question or a "let me
 
 - If ticket info is incomplete or a requirement is ambiguous: pick the most reasonable interpretation given the ticket, AC, discussion, and existing code patterns, proceed with it, and record the assumption in the plan record and the summary.
 - Only stop short of the phase's deliverable on a hard external blocker (missing credentials, repo doesn't exist, tests fail for reasons unrelated to your change and you can't fix them) — explain it plainly in `blocked` instead of asking.
+- **An Acceptance Criterion is never out of scope.** Assumptions may settle *how* a criterion is met, never *whether*. If a criterion needs a repository that is not this working tree and not listed under `Repos:`, set `blocked.is = true` and name that repository — do not ship the rest and call it done.
 
 ## Working rules (these bound cost — they override any habit to be thorough)
 
@@ -48,6 +49,16 @@ If the declared provider turns out not to work, don't ask and don't retry it rep
 | Link ticket ↔ PR | ADO MCP `wit_link_work_item_to_pull_request` | `Closes #<id>` in the body is sufficient | `Closes #<id>` in the body is sufficient |
 
 If a provider-specific CLI/MCP tool isn't available, fall back to the next best option (raw `git` + the provider's REST API via `curl` with a token from env, if one is configured) rather than stalling — note the fallback in the summary.
+
+## Repos (other repositories this ticket may need)
+
+$ARGUMENTS may carry `Repos: <name>=<path> base=<sha>; ...` — repositories besides this working tree that the project's own instruction files point at (a report service, a function app, a shared library). The runner has already placed each `<path>` at its base commit, exactly as it placed this one.
+
+- Decide from the ticket and the code which repositories the Acceptance Criteria actually need. Most tickets need only this one; a ticket whose criteria span a producer and a consumer needs both, and then both are delivered in this run.
+- Work on a listed repository **only at the `<path>` given**, never at another checkout of it. Read its root `CLAUDE.md` / `AGENTS.md` before editing it, and follow its conventions and test setup.
+- In every repository you change, create the **same branch name** with `git checkout -b <branch>` from its current HEAD (never `git checkout main`), add or update its tests, verify it with its own narrowest check, and commit there. Leave repositories you do not need untouched.
+- `.te/plan.md` and `KNOWLEDGE.md` stay in this working tree / at the `Knowledge:` path only; the plan's Changes table names the repository of every file.
+- The runner gates, reviews and publishes every listed repository that has commits after its base — commits elsewhere are never published.
 
 ## Context
 
@@ -78,7 +89,7 @@ On the first pass:
 2. Explore only the code areas the ticket touches. Scale the reading to the ticket: a one-point change does not justify a codebase tour.
 3. Write the plan record to **`.te/plan.md`** (template below), then **keep going without pausing**.
 4. Run `git status` and note any pre-existing uncommitted changes, so you neither revert them nor sweep them into your commit.
-5. Get onto the working branch: `git checkout -b <branch>` from the current HEAD — `feature/[ID]-[short-description]` for a feature/User Story, `bug/[ID]-[short-description]` for a Bug. **Do not `git checkout main` first.** The runner has already placed this working tree at the right base commit, and when the run is isolated it is a detached worktree where `main` is checked out elsewhere, so that checkout fails. If the branch already exists, check it out and continue on it.
+5. Get onto the working branch — in this working tree and in every `Repos:` repository you will change: `git checkout -b <branch>` from the current HEAD — `feature/[ID]-[short-description]` for a feature/User Story, `bug/[ID]-[short-description]` for a Bug. **Do not `git checkout main` first.** The runner has already placed this working tree at the right base commit, and when the run is isolated it is a detached worktree where `main` is checked out elsewhere, so that checkout fails. If the branch already exists, check it out and continue on it.
 6. Implement the change, preserving existing behavior unless the ticket explicitly requires otherwise.
 7. **Add or update a test** for the behaviour the change introduces — business logic, validation, mapping, branching, edge cases — following the existing test style. Only a change with nothing a test can cover (markup, style or copy only) may skip this, and then `testExemption` says why in one sentence. The runner refuses a change with no test file and no reason.
 8. Verify with the narrowest check that actually proves the change — the affected test file(s) first, then a type-check, and a full build only if the project offers nothing faster or the change is broad. Fix failures you caused before moving on.
@@ -107,13 +118,13 @@ Keep it markdown, concrete and under ~120 lines. Name real files and real functi
 **In scope**
 - <bullet>
 
-**Out of scope**
+**Out of scope** (only what the ticket does not ask for — never an Acceptance Criterion)
 - <bullet>
 
 ## Changes
-| # | File | Change | Why |
-|---|---|---|---|
-| 1 | `path/to/file.ts` | <what you will add/modify> | <which requirement it serves> |
+| # | Repo | File | Change | Why |
+|---|---|---|---|---|
+| 1 | <repo name> | `path/to/file.ts` | <what you will add/modify> | <which requirement it serves> |
 
 ## Verification
 - <command you will run> — <what it proves>
@@ -146,6 +157,7 @@ The code is committed and final. This phase publishes it and does nothing else �
 2. **Check for an existing PR/MR on this branch before creating one** (`gh pr list --head <branch>`, `glab mr list --source-branch <branch>`, or the ADO MCP pull-request list filtered by source branch). If one exists, reuse its URL and report `reusedExisting: true`.
 3. Otherwise open it as a **draft** against `main`, following the draft rule in the prompt.
 4. Link the ticket to the PR only if it is not already linked.
+5. When the prompt lists other repositories to publish, repeat steps 1–4 in each one, at the working tree it gives, and report each in `prs`. Every PR description names the ticket's other PRs as companion PRs.
 
 Write the PR/MR body yourself rather than letting the tool auto-fill it from the commit message:
 
@@ -170,7 +182,8 @@ The runner passes a JSON Schema and the CLI requires you to call `StructuredOutp
 Fill them honestly. In particular:
 
 - `verification.tests` / `verification.build` are `passed` **only** if you actually ran them and they passed. Use `not-run` when there was nothing to run. A reported `failed` stops the run before anything is pushed.
-- `verification.acceptanceCriteria` is `met` only when you checked **every** criterion individually and each one holds; `partial` when some hold, `cannot-verify` when you had no way to check them.
+- `verification.acceptanceCriteria` is `met` only when you checked **every** criterion individually and each one holds; `partial` when some hold, `cannot-verify` when you had no way to check them. The runner does not publish a `partial` change: it hands it back to you to finish.
+- `committed` and `branch` cover every repository you changed; the branch name is the same in all of them.
 - `committed` is `true` only once the work is really committed on the branch, and `branch` is the branch you committed on.
 - `testExemption` is empty when the change adds or updates a test, otherwise one sentence on why none applies.
 - `deviations` lists anything that diverged from `.te/plan.md`.

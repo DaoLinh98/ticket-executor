@@ -75,6 +75,7 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
   // others degrade to the status move alone rather than throwing — the same
   // contract every other provider-touching path in this app keeps.
   const prWrites = provider === "azure-devops";
+  const prUrls = [item.prUrl, ...item.companionPrUrls];
 
   if (!item.prUrl) {
     // Nothing to hand over. This is the normal state of a ticket the agent has
@@ -90,14 +91,21 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
     if (!prWrites) {
       lines.push("Draft publishing is not wired for this provider — publish the pull request by hand.");
     } else {
-      try {
-        const r = await publishPullRequest(item.prUrl);
-        prPublished = r.ok;
-        lines.push(r.detail);
-        if (!r.ok) error = r.detail;
-      } catch (e) {
-        error = e instanceof Error ? e.message : String(e);
-        lines.push("Could not publish the draft: " + error);
+      prPublished = true;
+      for (const url of prUrls) {
+        try {
+          const r = await publishPullRequest(url);
+          lines.push(r.detail);
+          if (!r.ok) {
+            prPublished = false;
+            if (!error) error = r.detail;
+          }
+        } catch (e) {
+          prPublished = false;
+          const msg = e instanceof Error ? e.message : String(e);
+          lines.push("Could not publish the draft: " + msg);
+          if (!error) error = msg;
+        }
       }
     }
   }
@@ -110,15 +118,21 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
     if (!prWrites) {
       lines.push("Reviewer assignment is not wired for this provider.");
     } else {
-      try {
-        const r = await addPullRequestReviewers(item.prUrl, reviewers);
-        reviewersSet = r.ok;
-        lines.push(r.detail);
-        if (!r.ok && !error) error = r.detail;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        lines.push("Could not add reviewers: " + msg);
-        if (!error) error = msg;
+      reviewersSet = true;
+      for (const url of prUrls) {
+        try {
+          const r = await addPullRequestReviewers(url, reviewers);
+          lines.push(r.detail);
+          if (!r.ok) {
+            reviewersSet = false;
+            if (!error) error = r.detail;
+          }
+        } catch (e) {
+          reviewersSet = false;
+          const msg = e instanceof Error ? e.message : String(e);
+          lines.push("Could not add reviewers: " + msg);
+          if (!error) error = msg;
+        }
       }
     }
   } else if (prPublished && reviewers.length === 0) {

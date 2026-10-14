@@ -41,12 +41,14 @@ const MAX_LIMIT_PARKS = 3;
 // Windows can block removal, and leaving the folder is harmless. Never touches
 // rootRepo (a non-isolated run executed there).
 function removeWorktree(live: LiveRun) {
-  const { cwd, rootRepo } = live.ctx;
-  if (!cwd || !rootRepo || cwd === rootRepo) return;
-  try {
-    execSync(`git -C "${rootRepo}" worktree remove --force "${cwd}"`, { stdio: "ignore" });
-  } catch {
-    /* leave the worktree if git can't remove it right now */
+  const trees = [{ path: live.ctx.rootRepo, cwd: live.ctx.cwd }, ...live.ctx.companions];
+  for (const { path, cwd } of trees) {
+    if (!cwd || !path || cwd === path) continue;
+    try {
+      execSync(`git -C "${path}" worktree remove --force "${cwd}"`, { stdio: "ignore" });
+    } catch {
+      /* leave the worktree if git can't remove it right now */
+    }
   }
 }
 
@@ -56,6 +58,9 @@ function removeWorktree(live: LiveRun) {
 async function captureDiff(live: LiveRun) {
   if (!live.ctx.baseSha) return;
   const files = collectFileChanges(live.ctx.cwd, live.ctx.baseSha);
+  for (const m of live.ctx.companions) {
+    files.push(...collectFileChanges(m.cwd, m.baseSha).map((f) => ({ ...f, path: `${m.name}/${f.path}` })));
+  }
   if (!files.length) return;
   await saveArtifact(live.id, "diff", JSON.stringify(files), "agent");
   const sum = summarizeChanges(files);
@@ -218,6 +223,13 @@ async function capturePlan(live: LiveRun) {
 function promoteContractFields(live: LiveRun, data: Record<string, unknown>) {
   if (typeof data.branch === "string" && data.branch) live.branch = data.branch;
   if (typeof data.prUrl === "string" && data.prUrl) live.prUrl = data.prUrl;
+  if (Array.isArray(data.prs)) {
+    const urls = (data.prs as { prUrl?: unknown }[])
+      .map((p) => (typeof p?.prUrl === "string" ? p.prUrl : ""))
+      .filter(Boolean);
+    if (!live.prUrl && urls.length) live.prUrl = urls[0];
+    live.companionPrUrls = urls.filter((u) => u !== live.prUrl);
+  }
   // `resultText` is what the Result tab shows as "what this run did", so it must
   // come from the node that produced the deliverable — not from whichever node
   // happened to report a `summary` last. Keyed off `committed` rather than a

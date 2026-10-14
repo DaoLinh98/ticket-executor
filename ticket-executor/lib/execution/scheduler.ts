@@ -700,7 +700,7 @@ async function reconcileImplement(): Promise<void> {
   if (!inFlight.length) return;
   const runs = await prisma.run.findMany({
     where: { id: { in: inFlight.map((i) => i.runId) } },
-    select: { id: true, state: true, prUrl: true, endReason: true, skill: true },
+    select: { id: true, state: true, prUrl: true, companionPrUrls: true, endReason: true, skill: true },
   });
   const byId = new Map(runs.map((r) => [r.id, r]));
   const steps = await prisma.step.findMany({
@@ -723,6 +723,7 @@ async function reconcileImplement(): Promise<void> {
       data: {
         implementState: implemented ? "implemented" : "failed",
         prUrl: run.prUrl,
+        companionPrUrls: run.companionPrUrls.length ? run.companionPrUrls : item.companionPrUrls,
         ...(implemented && run.skill.startsWith("fix-qa-") ? QA_FIX_RESET : {}),
       },
     });

@@ -8,11 +8,13 @@ import { admissionDenial } from "./admission";
 import { cleanPath } from "./format";
 import { bankParkedTime, cancel, drive, finish } from "./graph/drive";
 import { readKnowledge } from "./graph/knowledge";
-import { clearRunArtifacts, graphById, graphForSkill, KNOWN_SKILLS, resolveSkill, skillOfGraph } from "./graph/graphs";
+import { clearRunArtifacts, graphById, graphForSkill, IMPLEMENT_SKILL, KNOWN_SKILLS, resolveSkill, skillOfGraph } from "./graph/graphs";
 import { REVIEW_SKILL } from "./graph/prompts";
 import { saveRun } from "./graph/persist";
-import type { LiveRun } from "./graph/types";
+import type { Companion, LiveRun } from "./graph/types";
 import { skillProblem } from "../skillPack";
+import { discoverCompanionRepos } from "../preflight";
+import { INSTRUCTION_FILES } from "../repoContext";
 import { store } from "./store";
 
 // ---- repo hygiene ----
@@ -31,11 +33,9 @@ import { store } from "./store";
  */
 // KNOWLEDGE.md is deliberately absent: a run reads and writes the Root repo's
 // copy by absolute path (knowledgeFile()), so a lesson outlives the worktree.
-const CONTEXT_FILES = ["CLAUDE.md", "AGENTS.md", path.join(".claude", "CLAUDE.md")];
-
 function carryRepoContext(rootRepo: string, worktree: string): string[] {
   const copied: string[] = [];
-  for (const rel of CONTEXT_FILES) {
+  for (const rel of INSTRUCTION_FILES) {
     try {
       const src = path.join(rootRepo, rel);
       const dst = path.join(worktree, rel);
@@ -191,6 +191,46 @@ function applyGitIdentity(rootRepo: string, name: string, email: string) {
       /* read-only .git, or not a repo — validateRootRepo already ruled on that */
     }
   }
+}
+
+function prepareCompanions(live: LiveRun, project: string, isolate: boolean, gitName: string, gitEmail: string): Companion[] {
+  const log = (text: string) => live.logLines.push({ text, kind: "step" });
+  const { repos, warnings } = discoverCompanionRepos(live.ctx.rootRepo);
+  for (const w of warnings) log(`⚠ ${w}`);
+  const prepared: Companion[] = [];
+  for (const repo of repos) {
+    excludeTeArtifacts(repo.path);
+    applyGitIdentity(repo.path, gitName, gitEmail);
+    if (!isolate) {
+      const reset = returnToDefaultBranch(repo.path);
+      if (!reset.ok) {
+        log(`⚠ Related repo ${repo.name} is not offered to this run: ${reset.detail}`);
+        continue;
+      }
+    }
+    let baseSha = "";
+    try {
+      baseSha = execSync(`git -C "${repo.path}" rev-parse HEAD`).toString().trim();
+    } catch {
+      log(`⚠ Related repo ${repo.name} has no commit to start from — not offered to this run.`);
+      continue;
+    }
+    let cwd = repo.path;
+    if (isolate) {
+      const wt = path.join(repo.path, ".te-worktrees", `${project}-${live.id}`);
+      try {
+        execSync(`git -C "${repo.path}" worktree add --detach "${wt}" HEAD`, { stdio: "ignore" });
+        carryRepoContext(repo.path, wt);
+        cwd = wt;
+      } catch (e) {
+        log(`⚠ Related repo ${repo.name}: could not create an isolated worktree (${e instanceof Error ? e.message : e}) — not offered to this run.`);
+        continue;
+      }
+    }
+    prepared.push({ name: repo.name, path: repo.path, cwd, baseSha });
+    log(`● Related repo ${repo.name} (named in the Root repo's instruction files): ${cwd} @ ${baseSha.slice(0, 7)}`);
+  }
+  return prepared;
 }
 
 // ---- start ----
@@ -390,6 +430,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       rootRepo,
       cwd: rootRepo,
       baseSha: "",
+      companions: [],
       channels: {},
       visits: {},
     },
@@ -417,6 +458,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     errorMessage: "",
     endReason: "",
     prUrl: "",
+    companionPrUrls: [],
     branch: "",
     resultText: "",
     knowledgeAtStart: readKnowledge(rootRepo),
@@ -476,6 +518,9 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
       return { ok: true, runId: row.id };
     }
   }
+  if (skill === IMPLEMENT_SKILL) {
+    live.ctx.companions = prepareCompanions(live, project, isolate, setting?.gitUserName ?? "", setting?.gitUserEmail ?? "");
+  }
   console.log(`Using working directory: ${live.ctx.cwd}`);
 
   // Start from a clean scratch directory. A previous run in this same tree (or a
@@ -526,6 +571,7 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
       rootRepo: row.rootRepo,
       cwd: row.worktreePath || row.rootRepo,
       baseSha: row.baseSha,
+      companions: Array.isArray(row.companions) ? (row.companions as unknown as Companion[]) : [],
       channels: (row.channels as Record<string, Record<string, unknown>>) ?? {},
       // Restored, not reset: the hop and cycle counters belong to the run. A
       // recovered run that started its counters over would be allowed to loop
@@ -559,6 +605,7 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     errorMessage: row.errorMessage,
     endReason: row.endReason as LiveRun["endReason"],
     prUrl: row.prUrl,
+    companionPrUrls: row.companionPrUrls,
     branch: row.branch,
     resultText: row.resultText,
     // Not persisted: a run rebuilt after a restart cannot tell what the file
