@@ -8,6 +8,7 @@ import {
   moveInQueue,
   previewRebuild,
   setReleaseDay,
+  setRunOptions,
   postQaReply,
   startQaReply,
   moveToQa,
@@ -277,6 +278,12 @@ export async function PUT(req: Request) {
   if (body.setReleaseDay && typeof body.setReleaseDay === "object" && typeof body.setReleaseDay.id === "string") {
     const { id, day } = body.setReleaseDay;
     const outcome = await setReleaseDay(id, String(day ?? ""), new Date().toISOString().slice(0, 10));
+    const item = await prisma.plannedTicket.findUnique({ where: { id } });
+    return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (body.setRunOptions && typeof body.setRunOptions === "object" && typeof body.setRunOptions.id === "string") {
+    const { id, model, effort } = body.setRunOptions;
+    const outcome = await setRunOptions(id, String(model ?? ""), String(effort ?? ""));
     const item = await prisma.plannedTicket.findUnique({ where: { id } });
     return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
   }

@@ -6,6 +6,7 @@
 // the sprint's data shifts is a plan nobody can be held to.
 
 import { prisma } from "../prisma";
+import { CLAUDE_EFFORTS } from "../claudeOptions";
 import type { DevIdentity } from "../identity";
 import { claimSprint, type ClaimedTicket, type Remembered } from "../sprintClaim";
 import {
@@ -518,6 +519,26 @@ export async function setReleaseDay(plannedId: string, day: string, today: strin
     outcome: "skipped",
     reason: "redated-by-user",
     detail: `Release day moved from ${item.releaseDay || "none"} to ${day}.`,
+  });
+  return { ok: true };
+}
+
+export async function setRunOptions(plannedId: string, model: string, effort: string): Promise<{ ok: boolean; error?: string }> {
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+  if (item.implementState !== "pending" || item.runId || item.prUrl || item.releasedAt) {
+    return { ok: false, error: "Model and effort can only be changed before the ticket starts." };
+  }
+  if (!/^[\w.\-[\]]{1,80}$/.test(model)) return { ok: false, error: "Unknown model." };
+  if (!(CLAUDE_EFFORTS as readonly string[]).includes(effort)) return { ok: false, error: "Unknown effort." };
+  await prisma.plannedTicket.update({ where: { id: plannedId }, data: { model, effort } });
+  await logAutomation({
+    planId: item.planId,
+    ticketId: item.ticketId,
+    action: "implement",
+    outcome: "skipped",
+    reason: "run-options-by-user",
+    detail: `Implement run set to ${model} at ${effort} effort (was ${item.model} at ${item.effort}).`,
   });
   return { ok: true };
 }

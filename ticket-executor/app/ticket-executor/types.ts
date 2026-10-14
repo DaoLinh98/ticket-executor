@@ -29,6 +29,7 @@ export type ExecView = {
   resultText: string;
   error: string;
   prUrl?: string;
+  companionPrUrls?: string[];
   branch?: string;
   duration?: string;
   // Token & cost usage summed from the run's Step rows.

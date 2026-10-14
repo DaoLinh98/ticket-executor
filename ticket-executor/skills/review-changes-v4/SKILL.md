@@ -1,7 +1,7 @@
 ---
 name: review-changes-v4
 description: Review an uncommitted-to-unpublished change set against its ticket and report whether it is safe to open a pull request — read-only, no edits, no commits, no pushes
-version: 4.0.0
+version: 4.1.0
 ---
 
 Review the change set described by $ARGUMENTS and decide one thing: is it safe to open a pull request with?
@@ -47,6 +47,10 @@ $ARGUMENTS carries:
 - `Base: <sha>` — the commit the branch started from. The change set under review
   is exactly `git diff <sha>...HEAD`.
 
+- `Repos: <name>=<path> base=<sha>; ...` — optional. Other repositories the ticket
+  may have changed, each with the commit its change set starts from. The change
+  set under review is `git diff <base>...HEAD` in **every** one of them as well as
+  in this working tree; an empty diff in one of them is normal.
 - `Knowledge: <path>` — optional. The project's `KNOWLEDGE.md`; see **Project
   memory** below.
 - `PR: <url>` — present in review-fix mode: the pull request whose threads the
@@ -93,7 +97,10 @@ a pull request:
    creates, a broken contract with an existing caller, a regression in behaviour
    the ticket did not ask to change.
 2. **A missed acceptance criterion** — the ticket asked for something and the diff
-   does not do it, or does something materially different.
+   does not do it, or does something materially different. Judge the criteria
+   against the diffs of every repository together. A criterion the plan record
+   (`.te/plan.md`) lists as "out of scope" because it lives in another repository
+   is still missed — a blocker, naming that repository.
 3. **A security or data-loss risk** — an injection or auth hole the change opens,
    a secret committed, a destructive migration or delete without a guard.
 

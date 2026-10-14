@@ -34,6 +34,31 @@ type Props = {
 type Bag = Record<string, unknown>;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+const PR_LINK_STYLE = {
+  flex: "0 0 auto",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "7px",
+  height: "32px",
+  padding: "0 14px",
+  textDecoration: "none",
+  color: "var(--te-btn-success-text)",
+  fontSize: FONT.sm,
+  fontWeight: 700,
+  cursor: "pointer",
+  // Opaque fill so the spinning conic-gradient stays confined to the
+  // border ring, matching the subtle tab/CTA glow instead of bleeding
+  // through the translucent fill as a harsh diagonal sweep.
+  ...ringBorder({ fill: "#162F2C", ring: COLORS.success, highlight: "#baf5e3", duration: 3 }),
+} as const;
+
+const OPEN_ICON = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>;
+
+function repoOfPr(url: string): string {
+  const m = /\/_git\/([^/]+)\/pullrequest\//.exec(url) ?? /\/([^/]+)\/(?:pull|-\/merge_requests)\/\d+/.exec(url);
+  return m ? decodeURIComponent(m[1]) : "Open PR";
+}
 const rows = (v: unknown): Bag[] => (Array.isArray(v) ? (v as Bag[]) : []);
 
 /** A verification verdict as a pill: green when it actually passed, red when a
@@ -153,29 +178,26 @@ export default function ResultTab({ exec: ex, sections, showSectionHeader, onOpe
             target="_blank"
             rel="noopener noreferrer"
             onClick={onOpenPr}
-            style={{
-              flex: "0 0 auto",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "7px",
-              height: "32px",
-              padding: "0 14px",
-              textDecoration: "none",
-              color: "var(--te-btn-success-text)",
-              fontSize: FONT.sm,
-              fontWeight: 700,
-              cursor: "pointer",
-              // Opaque fill so the spinning conic-gradient stays confined to the
-              // border ring, matching the subtle tab/CTA glow instead of bleeding
-              // through the translucent fill as a harsh diagonal sweep.
-              ...ringBorder({ fill: "#162F2C", ring: COLORS.success, highlight: "#baf5e3", duration: 3 }),
-            }}
+            style={PR_LINK_STYLE}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14L21 3" /></svg>
+            {OPEN_ICON}
             Open PR
           </a>
         )}
       </div>
+      {(ex.companionPrUrls?.length ?? 0) > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={sectionCaption()}>Companion pull requests</div>
+          <div style={{ display: "flex", gap: "7px", flexWrap: "wrap" }}>
+            {ex.companionPrUrls!.map((url) => (
+              <a key={url} href={url} target="_blank" rel="noopener noreferrer" onClick={onOpenPr} className="te-action-btn" style={PR_LINK_STYLE}>
+                {OPEN_ICON}
+                {repoOfPr(url)}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       {reported && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <div style={sectionCaption()}>What the run reported</div>

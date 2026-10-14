@@ -5,6 +5,8 @@ import { COLORS, FONT, card, fieldInput, pill, sectionCaption, statusPill } from
 import { isFixingQa, MAX_QA_ROUNDS, QA_STAGES, stageOf } from "@/lib/ticketLifecycle";
 import type { QueueMove } from "@/lib/sprintPlan";
 import type { TriagedTicket } from "@/lib/execution/triage";
+import { CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelLabel, resolveModelId } from "@/lib/claudeOptions";
+import { useClaudeModels } from "../../queries";
 import ActionButton from "./ActionButton";
 import {
   CLAIM,
@@ -38,6 +40,7 @@ export type PlanHandlers = {
   setReleaseDay: (plannedId: string, day: string) => void;
   hold: (plannedId: string) => void;
   history: (ticketId: string) => void;
+  runOptions: (row: PlannedRow) => void;
 };
 
 const isMovable = (t: PlannedRow) =>
@@ -82,6 +85,7 @@ export default function PlanTable({
   reorderable: boolean;
   handlers: PlanHandlers;
 }) {
+  const modelOptions = useClaudeModels().data?.models ?? CLAUDE_MODELS;
   const movable = rows.filter(isMovable).sort((a, b) => a.implementOrder - b.implementOrder);
   const firstMovable = movable[0]?.id;
   const lastMovable = movable[movable.length - 1]?.id;
@@ -216,6 +220,18 @@ export default function PlanTable({
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
                       </button>
+                      {t.id && t.implementState === "pending" && t.implementOrder > 0 && claim === "mine" && !t.runId && !t.prUrl && !t.releasedAt && (
+                        <button
+                          type="button"
+                          className="te-icon-btn"
+                          aria-label={`Model and effort for #${t.ticketId}`}
+                          title={`${modelLabel(resolveModelId(t.model || DEFAULT_PLAN_MODEL, modelOptions), modelOptions)} · ${t.effort || DEFAULT_PLAN_EFFORT}`}
+                          onClick={() => h.runOptions(t)}
+                          style={{ flex: "0 0 auto", width: "24px", height: "24px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.textDim, cursor: "pointer", padding: 0 }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                        </button>
+                      )}
                       </span>
                       {(t.project || ticket?.project || origin || cost > 0) && (
                         <span style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>

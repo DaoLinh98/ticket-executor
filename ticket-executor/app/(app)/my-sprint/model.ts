@@ -57,6 +57,8 @@ export type PlannedRow = {
   reviewError: string;
   claim: Claim;
   assigneeNow: string;
+  model: string;
+  effort: string;
   stage: string;
   prMerged: boolean;
   pendingAction: string;

@@ -53,6 +53,7 @@ export {
   moveInQueue,
   previewRebuild,
   setReleaseDay,
+  setRunOptions,
   logAutomation,
   planById,
   planInputs,

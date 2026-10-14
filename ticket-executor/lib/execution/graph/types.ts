@@ -64,6 +64,8 @@ export type NodeResult = {
 //            before it. Any node that *judges* another node's work must be fresh.
 export type ContextPolicy = "resume" | "fresh";
 
+export type Companion = { name: string; path: string; cwd: string; baseSha: string };
+
 /** Everything an edge or a prompt builder is allowed to read. Deliberately a
  *  plain value: edges must be pure functions of it. */
 export type RunContext = {
@@ -79,6 +81,7 @@ export type RunContext = {
   cwd: string;
   /** Commit the worktree branched from; the run's diff is measured against it. */
   baseSha: string;
+  companions: Companion[];
   /** nodeId → that node's validated output. The only channel between nodes. */
   channels: Record<string, Record<string, unknown>>;
   /** nodeId → how many times it has been entered. Cycle accounting for edges. */
@@ -195,6 +198,7 @@ export type LiveRun = {
   endReason: string;
   // Promoted out of node output as nodes report it (see promoteContractFields).
   prUrl: string;
+  companionPrUrls: string[];
   branch: string;
   resultText: string;
   /** The project's KNOWLEDGE.md as it was when the run started ("" when

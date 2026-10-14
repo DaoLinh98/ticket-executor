@@ -10,7 +10,7 @@
 // component.
 
 import { spawnSync } from "child_process";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { prisma } from "./prisma";
@@ -36,6 +36,7 @@ import {
 } from "./mcp";
 import { normalizeProvider } from "./tickets";
 import { providerMeta } from "./providers";
+import { companionPathsFromInstructions, INSTRUCTION_FILES } from "./repoContext";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 export type CheckGroup = "environment" | "skills" | "connection" | "agent-access" | "repo";
@@ -623,6 +624,42 @@ export function validateRootRepo(rootRepo: string | undefined | null): { ok: boo
   if (!git(["-C", p, "rev-parse", "--git-dir"]).ok)
     return { ok: false, error: `${p} is not a git repository. Root repo is used verbatim as the run's working directory — point it at the clone itself, not a parent folder.` };
   return { ok: true };
+}
+
+export function discoverCompanionRepos(rootRepo: string): { repos: { name: string; path: string }[]; warnings: string[] } {
+  const norm = (p: string) => {
+    const r = path.resolve(p);
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  const root = norm(rootRepo);
+  const seen = new Set([root]);
+  const repos: { name: string; path: string }[] = [];
+  const warnings: string[] = [];
+  const text = INSTRUCTION_FILES.map((rel) => {
+    try {
+      return readFileSync(path.join(rootRepo, rel), "utf8");
+    } catch {
+      return "";
+    }
+  }).join("\n");
+  for (const raw of companionPathsFromInstructions(text)) {
+    const p = path.resolve(raw);
+    const key = norm(p);
+    if (seen.has(key) || key.startsWith(root + path.sep)) continue;
+    seen.add(key);
+    try {
+      if (!existsSync(p) || !statSync(p).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const top = git(["-C", p, "rev-parse", "--show-toplevel"]);
+    if (!top.ok || norm(top.out) !== key) {
+      warnings.push(`${p} is named in the Root repo's instruction files but is not the top of a git repository — not offered to the run.`);
+      continue;
+    }
+    repos.push({ name: path.basename(p), path: p });
+  }
+  return { repos, warnings };
 }
 
 /** The MCP half of the same gate, for one run. Cheap: static config reads only.

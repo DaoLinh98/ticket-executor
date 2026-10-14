@@ -124,9 +124,24 @@ export const PUBLISH_OUTPUT = {
       type: "boolean",
       description: "True if the pull request is in draft state. The harness publishes it later, on the sprint plan's release day.",
     },
+    prs: {
+      type: "array",
+      description: "One entry per other repository you were asked to publish. Empty when there were none.",
+      items: {
+        type: "object",
+        properties: {
+          repo: { type: "string", description: "The repository name exactly as the prompt gave it." },
+          pushed: { type: "boolean" },
+          prUrl: { type: "string" },
+          isDraft: { type: "boolean" },
+        },
+        required: ["repo", "pushed", "prUrl", "isDraft"],
+        additionalProperties: false,
+      },
+    },
     blocked: BLOCKED,
   },
-  required: ["pushed", "prUrl", "linked", "reusedExisting", "isDraft", "blocked"],
+  required: ["pushed", "prUrl", "linked", "reusedExisting", "isDraft", "prs", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -220,6 +235,14 @@ export function verificationOf(data: Record<string, unknown>): Verification {
     build: v?.build ?? "not-run",
     acceptanceCriteria: v?.acceptanceCriteria ?? "cannot-verify",
   };
+}
+
+export function lastDelivery(c: { channels: Record<string, Record<string, unknown>> }): Record<string, unknown> {
+  return c.channels.fix ?? c.channels.implement ?? {};
+}
+
+export function acceptancePartial(data: Record<string, unknown>): boolean {
+  return verificationOf(data).acceptanceCriteria === "partial";
 }
 
 /** A verification result that must stop the run before anything is published.

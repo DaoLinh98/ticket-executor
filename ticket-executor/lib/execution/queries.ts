@@ -64,6 +64,7 @@ export type RunView = {
   resultText: string;
   errorMessage: string;
   prUrl: string;
+  companionPrUrls: string[];
   branch: string;
   /** The latest plan Artifact, once the implement node has written one. */
   planMarkdown: string;
@@ -123,6 +124,7 @@ export async function getRun(id: string): Promise<RunView | null> {
     resultText: live.resultText,
     errorMessage: live.errorMessage,
     prUrl: live.prUrl,
+    companionPrUrls: live.companionPrUrls,
     branch: live.branch,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
@@ -163,6 +165,7 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     resultText: row.resultText,
     errorMessage: row.errorMessage,
     prUrl: row.prUrl,
+    companionPrUrls: row.companionPrUrls,
     branch: row.branch,
     planMarkdown: extras.planMarkdown,
     filesChanged: extras.filesChanged,
