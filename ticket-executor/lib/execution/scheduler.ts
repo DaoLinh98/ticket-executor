@@ -388,6 +388,8 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
     project: next.project || plan.project,
     rootRepo,
     requestedSkill: IMPLEMENT_SKILL,
+    model: next.model,
+    effort: next.effort,
   });
 
   if (!result.ok) {

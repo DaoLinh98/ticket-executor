@@ -31,6 +31,21 @@ import { logAutomation } from "./planStore";
  *  the skill that ran, it is the point of the exercise. */
 export const RELEASE_STATUS = "Code Review";
 
+const INTERMEDIATE_STATUS = "In Progress";
+
+async function moveStatus(provider: ProviderId, ticketId: string, state: string): Promise<string> {
+  try {
+    return await updateTicketStatus(provider, ticketId, state);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/not in the list of supported values/i.test(msg)) throw e;
+    const step = await resolveStatusForUpdate(provider, ticketId, INTERMEDIATE_STATUS);
+    if (!step) throw e;
+    await updateTicketStatus(provider, ticketId, step);
+    return updateTicketStatus(provider, ticketId, state);
+  }
+}
+
 export type ReleaseOutcome = {
   ok: boolean;
   prPublished: boolean;
@@ -147,7 +162,7 @@ export async function releasePlannedTicket(plannedId: string): Promise<ReleaseOu
         lines.push(`This work item's workflow has no state matching "${RELEASE_STATUS}" — move it by hand.`);
         if (!error) error = "No matching review state in this work item's workflow.";
       } else {
-        const applied = await updateTicketStatus(provider, item.ticketId, resolved);
+        const applied = await moveStatus(provider, item.ticketId, resolved);
         statusMoved = true;
         const stage = stageOf(applied);
         const current = item.pendingAction as PendingAction;

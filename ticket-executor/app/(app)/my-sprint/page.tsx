@@ -35,6 +35,8 @@ import type { TriagedTicket } from "@/lib/execution/triage";
 import ActionButton from "./ActionButton";
 import AutomationPanel, { type PlanSettings } from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
+import RunOptionsDialog from "./RunOptionsDialog";
+import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import NeedsYou, { type AttentionItem } from "./NeedsYou";
 import PlanFilters from "./PlanFilters";
 import PlanTable from "./PlanTable";
@@ -113,6 +115,7 @@ export default function MySprintPage() {
   const [sort, setSort] = useState<PlanSort>("queue");
   const [projectFilter, setProjectFilter] = useState("");
   const [historyFor, setHistoryFor] = useState("");
+  const [optionsFor, setOptionsFor] = useState("");
 
   const setError = (m: string) => { if (m) showToast(m, "error"); };
   const setMessage = (m: string) => { if (m) showToast(m); };
@@ -364,6 +367,14 @@ export default function MySprintPage() {
       setMessage(`Release day set to ${dayLabel(day)}.`);
     });
 
+  const saveRunOptionsNow = (plannedId: string, model: string, effort: string) =>
+    act("options-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { setRunOptions: { id: plannedId, model, effort } }, "PUT");
+      if (d.plan) setStored(d.plan);
+      setOptionsFor("");
+      setMessage("Run settings saved.");
+    }, editItem(plannedId, { model, effort }));
+
   const releaseNow = (plannedId: string) =>
     act("release-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { release: plannedId }, "PUT");
@@ -501,6 +512,7 @@ export default function MySprintPage() {
           reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
           reviewRounds: 0, reviewError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
+          model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
           stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
         }));
 
@@ -931,6 +943,7 @@ export default function MySprintPage() {
                     setReleaseDay: setReleaseDayNow,
                     hold: holdNow,
                     history: setHistoryFor,
+                    runOptions: (row) => setOptionsFor(row.id),
                   }}
                 />
               </div>
@@ -952,6 +965,19 @@ export default function MySprintPage() {
       {historyFor && (
         <TicketTimeline ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
       )}
+      {optionsFor && (() => {
+        const row = rows.find((t) => t.id === optionsFor);
+        return row ? (
+          <RunOptionsDialog
+            ticketId={row.ticketId}
+            model={row.model}
+            effort={row.effort}
+            busy={busy.has("options-" + row.id)}
+            onSave={(model, effort) => saveRunOptionsNow(row.id, model, effort)}
+            onCancel={() => setOptionsFor("")}
+          />
+        ) : null;
+      })()}
       {confirm && (
         <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy.has(confirm.busyKey)} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
           {confirm.body}

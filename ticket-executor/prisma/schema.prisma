@@ -513,6 +513,8 @@ model PlannedTicket {
   // report as a quiet one.
   claim          String     @default("mine")
   assigneeNow    String     @default("")
+  model          String     @default("sonnet")
+  effort         String     @default("medium")
   implementState String     @default("pending") // pending | running | implemented | failed | skipped
   // The run that implemented it, when one has.
   runId          String     @default("")

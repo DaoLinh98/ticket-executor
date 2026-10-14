@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ProviderId } from "@/lib/providers";
 import type { PreflightResult } from "@/lib/preflight";
+import type { ClaudeModel } from "@/lib/claudeOptions";
 
 export type ConnectionRow = {
   id: string; label: string; org: string; isActive: boolean;
@@ -59,3 +60,17 @@ export const fetchSettings = async (): Promise<SettingsPayload> => {
   const r = await fetch("/api/settings", { cache: "no-store" });
   return (await r.json()) as SettingsPayload;
 };
+
+export const CLAUDE_MODELS_KEY = ["claude-models"] as const;
+
+export const useClaudeModels = () =>
+  useQuery({
+    queryKey: CLAUDE_MODELS_KEY,
+    queryFn: async (): Promise<{ models: ClaudeModel[] }> => {
+      const r = await fetch("/api/claude-models");
+      const d = await r.json();
+      if (!r.ok || !Array.isArray(d?.models)) throw new Error(d?.error || "Could not read the Claude model list.");
+      return d;
+    },
+    staleTime: 600_000,
+  });

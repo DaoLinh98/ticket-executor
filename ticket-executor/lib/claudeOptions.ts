@@ -20,6 +20,9 @@ export const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const
 export const DEFAULT_CLAUDE_MODEL = "opus";
 export const DEFAULT_CLAUDE_EFFORT = "medium";
 
+export const DEFAULT_PLAN_MODEL = "sonnet";
+export const DEFAULT_PLAN_EFFORT = "medium";
+
 export function modelLabel(id: string, models: readonly ClaudeModel[] = CLAUDE_MODELS): string {
   return models.find((m) => m.id === id)?.label ?? id;
 }
