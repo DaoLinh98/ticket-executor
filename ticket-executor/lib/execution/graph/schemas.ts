@@ -191,7 +191,7 @@ export const REVIEW_PUBLISH_OUTPUT = {
     pushed: { type: "boolean" },
     prUrl: { type: "string" },
     threadsReplied: { type: "integer", description: "How many review threads you replied to." },
-    threadsResolved: { type: "integer", description: "How many you marked resolved." },
+    threadsResolved: { type: "integer", description: "Always 0: this run never resolves threads." },
     blocked: BLOCKED,
   },
   required: ["pushed", "prUrl", "threadsReplied", "threadsResolved", "blocked"],

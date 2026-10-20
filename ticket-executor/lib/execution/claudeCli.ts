@@ -83,6 +83,8 @@ export function commonArgs(a: TurnArgs): string[] {
     "--verbose",
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
+    "--disallowedTools",
+    "Agent",
     "--json-schema",
     JSON.stringify(a.outputSchema),
   ];

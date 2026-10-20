@@ -11,6 +11,7 @@ import {
   getGithubPullRequestCommits, getGithubCommitFiles,
 } from "./github";
 import { prisma } from "./prisma";
+import { prNumberFromUrl } from "./execution/reviewTargets";
 import { hasIdentity, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { DEFAULT_PROVIDER, type ProviderId } from "./providers";
@@ -577,6 +578,56 @@ export async function readTicketStatus(provider: ProviderId, ticketId: string): 
   return "";
 }
 
+function summaryEntry(ticketId: string, review: ReviewData): ReviewSummaryEntry {
+  const pr = review.pr!;
+  const latest = [...review.comments].reverse().find((c) => c.status === "open");
+  return {
+    ticketId,
+    prId: pr.id,
+    prUrl: pr.url,
+    prTitle: pr.title,
+    reviewer: latest?.author ?? pr.reviewers[0] ?? "",
+    unresolvedCount: review.unresolvedCount,
+    latestComment: latest?.text ?? "",
+    latestAt: latest?.date ?? "",
+    latestIso: latest?.at ?? "",
+    latestAutomated: latest?.automated ?? false,
+    approved: pr.approved,
+    prStatus: pr.status,
+  };
+}
+
+export type PrReviewOutcome = { entry: ReviewSummaryEntry | null; failed: boolean };
+
+export async function loadPrReviews(
+  provider: ProviderId,
+  targets: Array<{ ticketId: string; prUrl: string }>
+): Promise<{ outcomes: PrReviewOutcome[]; degraded: boolean; notice?: string }> {
+  if (!targets.length) return { outcomes: [], degraded: false };
+  if (provider !== "azure-devops" && provider !== "github") {
+    return { outcomes: targets.map(() => ({ entry: null, failed: false })), degraded: false };
+  }
+  const loadOne =
+    provider === "azure-devops"
+      ? (t: { ticketId: string; prUrl: string }) => getPullRequestReview(t.ticketId, t.prUrl, { fast: true })
+      : (t: { ticketId: string; prUrl: string }) => githubReviewFor(t.ticketId, t.prUrl);
+  const results = await Promise.allSettled(targets.map(loadOne));
+  let firstFailure = "";
+  const outcomes = results.map((r, i): PrReviewOutcome => {
+    if (r.status !== "fulfilled") {
+      if (!firstFailure) firstFailure = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      return { entry: null, failed: true };
+    }
+    const review = r.value;
+    if (!review.pr) return { entry: null, failed: false };
+    const wanted = prNumberFromUrl(targets[i].prUrl);
+    if (wanted && review.pr.id !== wanted) return { entry: null, failed: true };
+    return { entry: review.unresolvedCount > 0 ? summaryEntry(targets[i].ticketId, review) : null, failed: false };
+  });
+  const degraded = outcomes.every((o) => o.failed);
+  return { outcomes, degraded, notice: degraded ? firstFailure : undefined };
+}
+
 /** What the review bell got back. `degraded` means the answer is incomplete —
  *  the provider refused, so an empty list here is not the same
  *  claim as "nothing to review", and the UI must keep what it had. */
@@ -633,17 +684,7 @@ export async function loadReviewsSummary(
     // four-call resolution on every poll for the rest of its life.
     if (review.pr?.url) resolved.push({ ticketId: id, prUrl: review.pr.url });
     if (!review.pr || review.unresolvedCount === 0) continue;
-    const latest = [...review.comments].reverse().find((c) => c.status === "open");
-    entries.push({
-      ticketId: id,
-      prId: review.pr.id,
-      prUrl: review.pr.url,
-      prTitle: review.pr.title,
-      reviewer: latest?.author ?? review.pr.reviewers[0] ?? "",
-      unresolvedCount: review.unresolvedCount,
-      latestComment: latest?.text ?? "",
-      latestAt: latest?.date ?? "",
-    });
+    entries.push(summaryEntry(id, review));
   }
   // Every read failing is the signature of a dead credential or a provider
   // outage, and it must not render as a quiet "no reviews". One ticket failing is ordinary —

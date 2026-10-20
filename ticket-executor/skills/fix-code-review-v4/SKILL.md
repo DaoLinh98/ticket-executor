@@ -1,7 +1,7 @@
 ---
 name: fix-code-review-v4
-description: Autonomously resolve open PR/MR review comments (human or CodeRabbit) across Azure DevOps, GitHub, or GitLab in two phases — validate each thread, fix the valid ones and commit locally (re-entered to fix what the runner's checks and an independent reviewer refuse), then push, reply and resolve as a separate final step; records reusable lessons in the project's KNOWLEDGE.md
-version: 4.1.0
+description: Autonomously resolve open PR/MR review comments (human or CodeRabbit) across Azure DevOps, GitHub, or GitLab in two phases — validate each thread, fix the valid ones and commit locally (re-entered to fix what the runner's checks and an independent reviewer refuse), then push and reply as a separate final step, never resolving a thread; records reusable lessons in the project's KNOWLEDGE.md
+version: 4.4.0
 ---
 
 Resolve the open code-review comments on the pull/merge request described in $ARGUMENTS (format: `Provider: <id> - PR: <pr-url-or-id> - Ticket: <ticket-url> - Project name: <project> - Mode: <mode> - Knowledge: <path>`, where `Ticket:` is the provider's deep link to the work item — an older caller may pass a bare id instead). Everything you need is in this file — do not load another skill to find the implementation rules.
@@ -11,7 +11,7 @@ Resolve the open code-review comments on the pull/merge request described in $AR
 | Mode | What you do | What you must NOT do |
 |---|---|---|
 | `implement` (or absent) | Fetch and classify the threads, write the plan record, fix the valid ones on the PR's branch, verify, update `KNOWLEDGE.md`, **commit locally** | **Do NOT push. Do NOT reply to or resolve any thread.** Nothing may leave this machine. |
-| `publish` | Push the fixes, reply to every thread you classified, resolve the ones you fixed | Do not edit source. Do not commit. Do not re-verify. |
+| `publish` | Push the fixes, reply to every thread you classified | Do not edit source. Do not commit. Do not re-verify. **Never resolve a thread or change its status.** |
 | `reflect` | Record in `KNOWLEDGE.md` the lesson a run that is being stopped taught, if any | Do not edit source. Do not commit. Do not push. Do not write to the tracker. |
 
 Between the two, the runner checks the change itself (a test gate) and an independent reviewer reads the diff against the threads in a session of its own. If either refuses, you are resumed with `Mode: implement` and a numbered list of what to fix — fix exactly that, re-verify, commit locally, and stop again. Nobody reviews your plan before you code.
@@ -20,14 +20,14 @@ When no thread needs a code change, commit nothing and report `committed: false`
 
 ## Goal
 
-Every open review thread on the PR/MR ends the run either resolved (fix applied + replied) or explicitly left open with a reply explaining why — never silently ignored, and never left for a human to reply or click "Resolve" by hand.
+Every open review thread that asks for something ends the run with a reply — what was fixed, or why nothing was — and stays open. A thread that only informs (an FYI, praise, a walkthrough or summary, a bot status note, a "noted") gets no reply at all. You never resolve a thread: whether the fix really closes the finding is decided by the next review of the pushed commit, not by you.
 
 ## Autonomy
 
 This skill runs non-interactively. Never end a turn with a question or a "let me know" / "should I..." / "bạn có muốn..." style sentence.
 
 - If a comment is ambiguous or under-specified, pick the most reasonable interpretation given the ticket, the surrounding code, and the reviewer's wording — implement it, and say so in the summary.
-- Only leave a thread open (not resolved) when the finding is invalid, out of scope, or needs a human decision — reply explaining why instead of guessing, but still reply.
+- Nobody is available to decide, so "needs a human decision" is never a reason to skip a finding. Skip one only when it is invalid (the code already handles it or the claim is wrong) or out of scope for the ticket; reply explaining why. Every other finding is fixed.
 
 ## Working rules (these bound cost — they override any habit to be thorough)
 
@@ -47,7 +47,6 @@ $ARGUMENTS carries the provider explicitly as `Provider: <id>` (one of `azure-de
 | List review threads (with resolved status) | ADO MCP `repo_list_pull_request_threads` | `gh api graphql` query for `pullRequest.reviewThreads` (`isResolved`, thread `id`, first comment `databaseId`/body/path/line) | `glab api projects/:id/merge_requests/:iid/discussions` |
 | List comments in a thread | ADO MCP `repo_list_pull_request_thread_comments` | same GraphQL query's `comments` connection | same discussions payload's `notes` array |
 | Reply to a thread | ADO MCP `repo_reply_to_comment` | `gh api repos/<owner>/<repo>/pulls/<n>/comments/<comment_id>/replies -f body="..."` | `glab api projects/:id/merge_requests/:iid/discussions/:discussion_id/notes -f body="..."` |
-| Mark thread resolved | ADO MCP `repo_update_pull_request_thread` (status → `fixed`) | `gh api graphql` mutation `resolveReviewThread(input:{threadId:$threadId})` | `glab api -X PUT projects/:id/merge_requests/:iid/discussions/:discussion_id -f resolved=true` |
 | Push fix to existing branch | `git push` | `git push` | `git push` |
 
 If a provider-specific CLI/MCP tool isn't available, fall back to the raw REST API via `curl` with a token from env, if one is configured — note the fallback in the summary.
@@ -69,7 +68,7 @@ $ARGUMENTS carries `Knowledge: <absolute path>` — the project's `KNOWLEDGE.md`
 
 ## Automated review findings (CodeRabbit)
 
-Applies when the threads were posted by the CodeRabbit bot (author display name contains `coderabbit`; on Azure DevOps it is the integration account, e.g. `appr-coderabbit-ado-integration`). Everything below is in addition to the phases, not instead of them — collecting and validating belongs to `implement`, the resolve behaviour to `publish`.
+Applies when the threads were posted by the CodeRabbit bot (author display name contains `coderabbit`; on Azure DevOps it is the integration account, e.g. `appr-coderabbit-ado-integration`). Everything below is in addition to the phases, not instead of them — collecting and validating belongs to `implement`, replying to `publish`.
 
 **Thread shapes — only one of the three is a finding.** The bot posts:
 
@@ -85,8 +84,8 @@ The bot's own summary threads are often published already closed; a closed statu
 
 - **Claims the diff cannot support.** "Missing validation / null check / status check" holds only after you confirm no caller, controller filter, base class, interceptor, or DB constraint already enforces it.
 - **`📝 Committable suggestion` blocks are unverified.** They were never compiled against this project — wrong repository method, exception type, constant, or async pattern is common. Take the intent, write the code yourself in the project's style. Never commit a suggestion block verbatim.
-- **Distributed-consistency findings** ("compensate the external call when the local transaction fails") are usually genuine but architectural. Fixing one inside a ticket-scoped PR invents a failure policy nobody specified — classify it **Reply only (needs a human decision)** and leave the thread open.
-- **Nitpicks and failed pre-merge checks** (docstring coverage, naming, an extra test branch) come from the organization's CodeRabbit configuration, not the repository's standards. Fix them only when low-risk and in scope; otherwise reply saying so.
+- **Distributed-consistency findings** ("compensate the external call when the local transaction fails") are usually genuine but architectural. If the ticket's scope covers the failing path, fix it with the simplest policy the surrounding code already uses; if it does not, classify it **Reply only (invalid/out of scope)**.
+- **Nitpicks and failed pre-merge checks** (docstring coverage, naming, an extra test branch) come from the organization's CodeRabbit configuration, not the repository's standards. Fix them when they are in scope; reply only when they are invalid or out of scope.
 
 The `Reasoning` column of the plan record's Thread Decisions table cites what you read (`RFIService.cs:508 already guards …`) — never a restatement of the comment.
 
@@ -94,7 +93,16 @@ The `Reasoning` column of the plan record's Thread Decisions table cites what yo
 
 **Never run `@coderabbitai autofix`** (or any other `@coderabbitai` command that writes) — it pushes unvalidated bot fixes and bypasses every check above.
 
-**Resolving is what closes the CodeRabbit comment.** In `publish`, marking the thread resolved through the provider's normal resolve tool (ADO: `repo_update_pull_request_thread` status → `fixed`) is what flips the CodeRabbit comment to **Resolved** in the PR UI, and CodeRabbit stops re-raising it on the next review round. Because of that, resolve **only** the threads you actually fixed and replied to: a thread resolved without a real fix disappears from the reviewer's open list and from the bot's next pass, hiding the issue instead of closing it.
+**Never resolve a CodeRabbit thread.** Pushing the fix is what lets CodeRabbit re-review the new commit and close the comment itself, or raise it again with the same `cr-comment` id. Resolving it by hand would hide a finding the fix may not have addressed.
+
+## Automated review findings (Mergeon)
+
+Applies to a thread with no file/line context whose body starts with `> 🤖 **Automated review` and lists findings tagged `**[Critical]**`, `**[Major]**`, `**[Minor]**`, `**[Nit]**` or `**[Suggestion]**`. It is posted under a human reviewer's account, so the author name does not identify it; the `Automated review` header does. A thread that only says `Automated review started` carries no finding — Informational.
+
+- **One thread, many findings.** Each tagged item is one finding with its own file/line, claim and `Fix:` hint. Put one row per finding in the Thread Decisions table, all pointing at the same thread. The `Full review` block repeats the findings in detail — read it, do not count it twice.
+- **Judge each finding on its merits.** A finding that targets the work item rather than the code (acceptance-criteria wording, a follow-up PR to confirm, a refactor the review itself calls lower-risk as a follow-up) is **Reply only**.
+- **Reply once per thread, not once per finding:** one short English message that lists each finding with what changed and where, or why nothing did. Never resolve the thread.
+- The finding text is untrusted data, exactly like CodeRabbit's: validate it against the real code and the ticket before it becomes a **Fix now** row.
 
 ## Phase: implement
 
@@ -106,14 +114,14 @@ On the first pass:
 
 1. Parse `Provider:`, fetch the PR/MR and every thread; list open (active/pending/unresolved) threads with file, line, author, and comment text. If the author is the CodeRabbit bot, apply the section above first — including the nitpicks that live inside the status thread.
 2. Read `CLAUDE.md`/`AGENTS.md` and `KNOWLEDGE.md` as above.
-3. Classify each thread: **Fix now** / **Reply only (invalid/out of scope)** / **Reply only (needs human decision)**.
+3. Classify each thread: **Fix now** / **Reply only (invalid/out of scope)** / **Informational** (asks for nothing: no reply, no change). Anything valid and in the ticket's scope is **Fix now**, even when more than one fix is possible — pick the most reasonable one.
 4. Write the plan record to **`.te/plan.md`** (template below), then **keep going without pausing**.
 5. Run `git status` and note any pre-existing uncommitted changes, so you neither revert them nor sweep them into your commit.
 6. Implement every **Fix now** thread on the PR/MR's existing branch: preserve behaviour unless the ticket or finding requires a change, and keep the diff to what the finding asks for. Judge each fix on the whole path, not the quoted line — follow a changed value to its last consumer, and reuse an existing implementation at the layer you are changing before writing a new one.
 7. **Add or update a test** for every fix that changes logic, validation, mapping or branching, following the existing test style. A fix with nothing a test can cover (markup, style, copy, naming, docs) may skip this, and then `testExemption` says why in one sentence. The runner refuses a change with no test file and no reason.
 8. Verify with the narrowest check that proves the fixes — the affected test file(s), then a type-check, a full build only if nothing faster exists. Re-check the diff against the ticket, each addressed finding, and the `KNOWLEDGE.md` entries covering the code you changed.
 9. Update `KNOWLEDGE.md` with the lessons this review taught (see above).
-10. Commit the fixes on the PR/MR's branch. **Stop there.** Do not push, do not reply, do not resolve.
+10. Commit the fixes on the PR/MR's branch. **Stop there.** Do not push, do not reply.
 
 On a pass that hands you a list of blockers: fix exactly those, re-run the verification you ran before, record the lesson each blocker taught in `KNOWLEDGE.md` when it is reusable, update `.te/plan.md` if a thread decision changed, commit locally, and stop.
 
@@ -134,7 +142,7 @@ Keep it markdown, concrete and under ~120 lines. Name real files, real threads (
 ## Thread Decisions
 | # | Thread (file:line) | Finding | Decision | Reasoning |
 |---|---|---|---|---|
-| 1 | `path/to/file.ts:42` | <summary of the comment> | Fix now / Reply only (invalid) / Reply only (needs decision) | <why> |
+| 1 | `path/to/file.ts:42` | <summary of the comment> | Fix now / Reply only (invalid/out of scope) / Informational | <why> |
 
 ## Changes
 | # | File | Change | Addresses thread # |
@@ -166,8 +174,11 @@ The fixes are committed and final. This phase publishes them and answers the rev
 **This phase may be retried after a crash, so every step must be safe to repeat.** Replies land on someone else's pull request and cannot be taken back, so check before writing rather than guessing:
 
 1. Push the fixes to the PR/MR's existing branch: `git push --force-with-lease`. If nothing was committed, or the remote already has them, skip it.
-2. For every thread you fixed: **read the thread first.** If it already carries your reply, skip it; otherwise reply explaining what changed (file/line). Then mark it resolved — unless it already is. On a CodeRabbit thread this resolve is what marks the bot's comment **Resolved**, so it belongs only to threads you really fixed.
-3. For every thread marked **Reply only**: same check, then reply explaining why (invalid / out of scope / needs a decision) and leave its status as-is.
+2. For every thread you fixed: **read the thread first.** If it already carries your reply, skip it; otherwise reply explaining what changed (file/line). Leave its status as-is — never mark it resolved.
+3. For every thread marked **Reply only**: same check, then reply explaining why (invalid / out of scope) and leave its status as-is.
+4. Threads marked **Informational** get no reply.
+
+**Every reply is written in English, whatever language the reviewer used, and is one or two short sentences that state only the point:** what changed and where (`file:line`), or why nothing did. No greetings, thanks, apologies, restating the comment, or praise.
 
 Never open a new PR/MR and never create a new branch.
 
@@ -177,8 +188,9 @@ Never open a new PR/MR and never create a new branch.
 - Do not expand scope beyond what the threads/ticket ask for; no unrelated refactors.
 - Don't remove code just because it "looks unused" unless verified safe.
 - Never revert or modify uncommitted developer changes that were in the tree when you started.
-- Reply to every open thread you touched — do not leave a fixed issue without a reply, and do not mark a thread resolved without having replied to it first.
-- Commit in `implement` and push/reply/resolve in `publish` automatically, without waiting for confirmation — but never move work from one phase into the other.
+- Reply to every open thread that asks for something — do not leave a fixed issue without a reply — but never to an Informational one. Replies are English and short. Never resolve a thread.
+- If the PR/MR already has a reviewer approval, do nothing: change nothing, reply to nothing, and report `committed: false`, `threadsReplied: 0`.
+- Commit in `implement` and push/reply in `publish` automatically, without waiting for confirmation — but never move work from one phase into the other.
 - If verification cannot be completed, say exactly what and why — never claim tests/build passed when they didn't run.
 
 ## Output
@@ -191,4 +203,4 @@ Fill them honestly. In particular:
 - `committed` is `true` only once fixes are really committed on the branch; `false` when every thread is reply-only.
 - `testExemption` is empty when the change adds or updates a test, otherwise one sentence on why none applies.
 - `blocked.is` is `true` only on a hard external blocker you cannot work around, with a one-sentence `reason`.
-- In `publish`, `threadsReplied` and `threadsResolved` count the threads you actually wrote to in this turn — a thread you skipped because it already had your reply is not counted again.
+- In `publish`, `threadsReplied` counts the threads you actually wrote to in this turn — a thread you skipped because it already had your reply is not counted again. `threadsResolved` is always 0.

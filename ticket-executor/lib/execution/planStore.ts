@@ -526,8 +526,10 @@ export async function setReleaseDay(plannedId: string, day: string, today: strin
 export async function setRunOptions(plannedId: string, model: string, effort: string): Promise<{ ok: boolean; error?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
   if (!item) return { ok: false, error: "No such planned ticket." };
-  if (item.implementState !== "pending" || item.runId || item.prUrl || item.releasedAt) {
-    return { ok: false, error: "Model and effort can only be changed before the ticket starts." };
+  const beforeImplement = item.implementState === "pending" && !item.runId && !item.prUrl && !item.releasedAt;
+  const beforeReview = item.prPublished && !item.prMerged && item.reviewState !== "running";
+  if (!beforeImplement && !beforeReview) {
+    return { ok: false, error: "Model and effort can only be changed before an implement or review run starts." };
   }
   if (!/^[\w.\-[\]]{1,80}$/.test(model)) return { ok: false, error: "Unknown model." };
   if (!(CLAUDE_EFFORTS as readonly string[]).includes(effort)) return { ok: false, error: "Unknown effort." };
@@ -535,10 +537,10 @@ export async function setRunOptions(plannedId: string, model: string, effort: st
   await logAutomation({
     planId: item.planId,
     ticketId: item.ticketId,
-    action: "implement",
+    action: beforeImplement ? "implement" : "review",
     outcome: "skipped",
     reason: "run-options-by-user",
-    detail: `Implement run set to ${model} at ${effort} effort (was ${item.model} at ${item.effort}).`,
+    detail: `${beforeImplement ? "Implement" : "Review fix"} run set to ${model} at ${effort} effort (was ${item.model} at ${item.effort}).`,
   });
   return { ok: true };
 }

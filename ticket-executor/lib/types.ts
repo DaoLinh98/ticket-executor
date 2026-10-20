@@ -124,6 +124,7 @@ export type PullRequestOverview = {
   author: string;
   reviewers: string[];
   createdAt: string; // ISO
+  approved: boolean;
 };
 
 /** One reviewer's standing on a pull request. `vote` is the provider's own
@@ -186,6 +187,8 @@ export type ReviewComment = {
   line?: number;
   status: "open" | "resolved";
   date: string;
+  at?: string;
+  automated?: boolean;
 };
 
 export type ReviewData = {
@@ -217,4 +220,8 @@ export type ReviewSummaryEntry = {
   unresolvedCount: number;
   latestComment: string;
   latestAt: string;
+  latestIso: string;
+  latestAutomated: boolean;
+  approved: boolean;
+  prStatus: string;
 };

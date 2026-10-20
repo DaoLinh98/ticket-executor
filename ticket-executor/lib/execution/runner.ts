@@ -263,6 +263,7 @@ export type StartRunInput = {
   project: string;
   rootRepo: string;
   prUrl?: string;
+  rememberRootRepo?: boolean;
   provider?: string;
   model?: string;
   effort?: string;
@@ -407,11 +408,13 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
   // stale the moment it is bypassed. Best-effort — a prefill hint is not worth
   // failing an admitted run over.
   try {
-    await prisma.rootRepoProjectMap.upsert({
-      where: { provider_org_project: { provider, org, project } },
-      create: { provider, org, project, rootRepo },
-      update: { rootRepo },
-    });
+    if (params.rememberRootRepo !== false) {
+      await prisma.rootRepoProjectMap.upsert({
+        where: { provider_org_project: { provider, org, project } },
+        create: { provider, org, project, rootRepo },
+        update: { rootRepo },
+      });
+    }
   } catch {
     /* the next run gets another chance to record it */
   }

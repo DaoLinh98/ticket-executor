@@ -26,7 +26,7 @@ import { claimSprint } from "../sprintClaim";
 import { deliverablesOnly, isoDay } from "../sprintPlan";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
-import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadReviewsSummary, normalizeProvider } from "../tickets";
+import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadPrReviews, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
 import { IMPLEMENT_SKILL, QA_FIX_SKILL, REVIEW_FIX_SKILL } from "./graph/graphs";
@@ -34,6 +34,8 @@ import { isFixingQa, MAX_QA_ROUNDS } from "../ticketLifecycle";
 import { openQaDraft } from "./qaReply";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
+import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewTargets } from "./reviewTargets";
+import { discoverCompanionRepos } from "../preflight";
 import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
@@ -45,6 +47,8 @@ const TICK_MS = 120_000;
  *  string, so it is greppable next to the one `startRun()` uses. */
 const TICK_LOCK = 918_273_641;
 
+const TICK_TX_TIMEOUT_MS = 600_000;
+
 /** How many times one ticket may go round the fix-review loop.
  *
  *  Three, because the loop's failure mode is not a wrong fix but an unfixable
@@ -53,6 +57,30 @@ const TICK_LOCK = 918_273_641;
  *  would re-read the same threads and reach the same conclusion, at full price.
  *  Hitting the ceiling is a state (`needs-human`), not a failure. */
 const MAX_REVIEW_ROUNDS = 3;
+
+const CLOSED_PR_STATUSES = ["Completed", "Abandoned"];
+
+/** How many failed releases one ticket gets before the scheduler stops retrying
+ *  it. The Release button still works by hand. */
+const MAX_RELEASE_ATTEMPTS = 3;
+
+async function releaseRetriesExhausted(planId: string, ticketId: string): Promise<boolean> {
+  const failures = await prisma.automationEvent.count({
+    where: { planId, ticketId, action: "release", outcome: "failed" },
+  });
+  if (failures < MAX_RELEASE_ATTEMPTS) return false;
+  const already = await prisma.automationEvent.findFirst({
+    where: { planId, ticketId, action: "release", reason: "retries-exhausted" },
+    select: { id: true },
+  });
+  if (!already) {
+    await logAutomation({
+      planId, ticketId, action: "release", outcome: "skipped", reason: "retries-exhausted",
+      detail: `Automatic release failed ${MAX_RELEASE_ATTEMPTS} times — stopped retrying. Release it by hand once the cause is fixed.`,
+    });
+  }
+  return true;
+}
 
 /** How long after a review run finishes before its ticket may be looked at
  *  again. The run has just pushed commits and written replies; the provider
@@ -97,56 +125,62 @@ export type TickReport = {
  */
 export async function tick(now = new Date()): Promise<TickReport> {
   const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, resumed: 0, watched: 0 };
-  // A non-blocking lock: if another process holds it, this tick simply does not
-  // happen. Waiting would only queue up ticks behind a slow one.
-  const [{ locked }] = await prisma.$queryRaw<{ locked: boolean }[]>`
-    SELECT pg_try_advisory_lock(${TICK_LOCK}::bigint) AS locked
-  `;
-  if (!locked) return report;
+  await prisma.$transaction(
+    async (tx) => {
+      const [{ locked }] = await tx.$queryRaw<{ locked: boolean }[]>`
+        SELECT pg_try_advisory_xact_lock(${TICK_LOCK}::bigint) AS locked
+      `;
+      if (!locked) return;
+      await runTick(now, report);
+    },
+    { timeout: TICK_TX_TIMEOUT_MS, maxWait: 5_000 }
+  );
+  return report;
+}
 
-  try {
-    // Before the plans, and outside the loop: a run parked on a spent quota
-    // belongs to whatever plan started it, and the account it is waiting on is
-    // the machine's, not the sprint's. It is also the cheapest work in the
-    // tick — one indexed read that normally returns nothing.
-    report.resumed = await resumeRateLimitedRuns(now);
-    await rolloverPlans(now);
+async function runTick(now: Date, report: TickReport): Promise<void> {
+  // Before the plans, and outside the loop: a run parked on a spent quota
+  // belongs to whatever plan started it, and the account it is waiting on is
+  // the machine's, not the sprint's. It is also the cheapest work in the
+  // tick — one indexed read that normally returns nothing.
+  report.resumed = await resumeRateLimitedRuns(now);
+  await rolloverPlans(now);
 
-    const plans = await prisma.sprintPlan.findMany({ where: { status: "active" } });
-    report.plans = plans.length;
-    const today = isoDay(now);
+  const plans = await prisma.sprintPlan.findMany({ where: { status: "active" } });
+  report.plans = plans.length;
+  const today = isoDay(now);
 
-    for (const plan of plans) {
-      // Before acting on the plan, find out whether it is still describing the
-      // developer's work. Ownership is the one input to every decision below
-      // that the app does not control, so it is re-read first rather than
-      // trusted from whenever the plan was last built by hand.
-      report.aborted += await refreshClaims(plan);
-      report.watched += await syncNewTickets(plan, now);
-      report.watched += await watchLifecycle(plan, now);
-      if (plan.autoRelease) {
-        for (const item of await dueForRelease(plan.id, today)) {
-          const outcome = await releasePlannedTicket(item.id);
-          if (outcome.ok) report.released += 1;
-          else report.skipped += 1;
+  for (const plan of plans) {
+    // Before acting on the plan, find out whether it is still describing the
+    // developer's work. Ownership is the one input to every decision below
+    // that the app does not control, so it is re-read first rather than
+    // trusted from whenever the plan was last built by hand.
+    report.aborted += await refreshClaims(plan);
+    report.watched += await syncNewTickets(plan, now);
+    report.watched += await watchLifecycle(plan, now);
+    if (plan.autoRelease) {
+      for (const item of await dueForRelease(plan.id, today)) {
+        if (await releaseRetriesExhausted(plan.id, item.ticketId)) {
+          report.skipped += 1;
+          continue;
         }
-      }
-      // Before the queue, not after it. An open review comment is work somebody
-      // is already waiting on, while the next ticket in the queue is work nobody
-      // has seen yet — and both compete for the same concurrency slot.
-      if (plan.autoResolveReview) {
-        if (await resolveNextReview(plan)) report.reviewStarted += 1;
-      }
-      if (plan.autoImplement) {
-        const started = await startNextTicket(plan, today);
-        if (started) report.implementStarted += 1;
+        const outcome = await releasePlannedTicket(item.id);
+        if (outcome.ok) report.released += 1;
         else report.skipped += 1;
       }
     }
-  } finally {
-    await prisma.$queryRaw`SELECT pg_advisory_unlock(${TICK_LOCK}::bigint)`;
+    // Before the queue, not after it. An open review comment is work somebody
+    // is already waiting on, while the next ticket in the queue is work nobody
+    // has seen yet — and both compete for the same concurrency slot.
+    if (plan.autoResolveReview) {
+      if (await resolveNextReview(plan)) report.reviewStarted += 1;
+    }
+    if (plan.autoImplement) {
+      const started = await startNextTicket(plan, today);
+      if (started) report.implementStarted += 1;
+      else report.skipped += 1;
+    }
   }
-  return report;
 }
 
 type ActivePlan = { id: string; provider: string; org: string; project: string };
@@ -460,12 +494,15 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
     where: {
       planId: plan.id,
       claim: "mine",
+      implementState: "implemented",
+      runId: { not: "" },
       prPublished: true,
       prMerged: false,
       NOT: { prUrl: "" },
       reviewState: { notIn: ["running", "needs-human"] },
       reviewRounds: { lt: MAX_REVIEW_ROUNDS },
     },
+    include: { prReviews: true },
     orderBy: { implementOrder: "asc" },
   });
   if (!candidates.length) return false;
@@ -478,69 +515,86 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
 
   const provider = normalizeProvider(plan.provider);
   const { org, identity } = await resolveCredential(plan.provider);
-  // The same condition `refreshClaims` checks, for the same reason: a read
-  // authenticated against another organization answers about other pull requests.
   if (!org || org !== plan.org) return false;
 
-  const prUrls = new Map(ready.map((r) => [r.ticketId, r.prUrl]));
-  const summary = await loadReviewsSummary(provider, ready.map((r) => r.ticketId), prUrls);
-  // Every read failed: a dead token, or an outage. Acting on that would mark
-  // every ticket clean, which is the one answer here that hides real work.
-  if (summary.degraded) {
+  const targets = ready.flatMap((row) =>
+    reviewTargets(row).map((prUrl) => ({ row, ticketId: row.ticketId, prUrl }))
+  );
+  const scan = await loadPrReviews(provider, targets);
+  if (scan.degraded) {
     await logAutomation({
       planId: plan.id, action: "review", outcome: "skipped", reason: "provider-degraded",
-      detail: summary.notice || "The review poll failed for every ticket, so nothing was judged.",
+      detail: scan.notice || "The review poll failed for every pull request, so nothing was judged.",
     });
     return false;
   }
-  const byTicket = new Map(summary.reviews.map((e) => [e.ticketId, e]));
 
-  // One pass to record what the scan saw and to find the first row with something
-  // new on it. The writes happen for every row, including rows that will not run:
-  // no open comments is an answer the table has to be able to show.
-  let target: { row: (typeof ready)[number]; latestAt: string; reviewer: string; open: number } | null = null;
+  type ReviewTarget = {
+    row: (typeof ready)[number]; prUrl: string; latestAt: string; reviewer: string; open: number; total: number;
+  };
+  let target: ReviewTarget | null = null as ReviewTarget | null;
   for (const row of ready) {
-    const entry = byTicket.get(row.ticketId);
-    if (!entry) {
-      if (row.openComments !== 0) {
-        await prisma.plannedTicket.update({ where: { id: row.id }, data: { openComments: 0 } });
+    const tracked = new Map(row.prReviews.map((t) => [t.prUrl, t]));
+    const counts: number[] = [];
+    let primaryMark: string | null = null;
+    let rowTarget = null as ReviewTarget | null;
+    for (let i = 0; i < targets.length; i++) {
+      if (targets[i].row !== row) continue;
+      const prUrl = targets[i].prUrl;
+      const primary = prUrl === row.prUrl;
+      const outcome = scan.outcomes[i];
+      const stored = primary ? null : tracked.get(prUrl);
+      if (outcome.failed) {
+        counts.push(primary ? row.openComments - row.prReviews.reduce((n, t) => n + t.openComments, 0) : stored?.openComments ?? 0);
+        continue;
       }
-      continue;
+      const entry = outcome.entry && !CLOSED_PR_STATUSES.includes(outcome.entry.prStatus) ? outcome.entry : null;
+      const open = entry?.unresolvedCount ?? 0;
+      counts.push(open);
+      const verdict = entry
+        ? reviewVerdict(
+            { lastCommentAt: primary ? row.lastCommentAt : stored?.lastCommentAt ?? "", reviewRounds: row.reviewRounds },
+            {
+              unresolvedCount: entry.unresolvedCount,
+              latestAt: entry.latestIso,
+              mine: isSamePerson("", entry.reviewer, identity),
+              approved: entry.approved,
+            },
+            MAX_REVIEW_ROUNDS
+          )
+        : null;
+      const mark = verdict && verdict.act === "wait" && verdict.advanceTo ? verdict.advanceTo : null;
+      if (primary) {
+        primaryMark = mark;
+      } else if (stored?.openComments !== open || mark) {
+        await prisma.plannedTicketPr.upsert({
+          where: { plannedTicketId_prUrl: { plannedTicketId: row.id, prUrl } },
+          create: { plannedTicketId: row.id, prUrl, openComments: open, lastCommentAt: mark ?? "" },
+          update: { openComments: open, ...(mark ? { lastCommentAt: mark } : {}) },
+        });
+      }
+      if (entry && verdict?.act === "run" && !rowTarget) {
+        rowTarget = { row, prUrl, latestAt: verdict.advanceTo, reviewer: entry.reviewer, open, total: 0 };
+      }
     }
-    // A review comment carries a display name and no address on either provider
-    // wired here, so authorship matches on `identity.name`. It is the second
-    // guard and not the first: the watermark catches our own reply even when the
-    // name does not match, because it advances past everything already weighed.
-    const verdict = reviewVerdict(row, {
-      unresolvedCount: entry.unresolvedCount,
-      latestAt: entry.latestAt,
-      mine: isSamePerson("", entry.reviewer, identity),
-    }, MAX_REVIEW_ROUNDS);
+    const total = openCommentsTotal(counts);
     await prisma.plannedTicket.update({
       where: { id: row.id },
-      data: {
-        openComments: entry.unresolvedCount,
-        // On a `wait` the watermark still moves when the verdict says so, and
-        // that is what closes the loop on our own replies.
-        ...(verdict.act === "wait" && verdict.advanceTo ? { lastCommentAt: verdict.advanceTo } : {}),
-      },
+      data: { openComments: total, ...(primaryMark ? { lastCommentAt: primaryMark } : {}) },
     });
-    if (verdict.act !== "run" || target) continue;
-    target = { row, latestAt: verdict.advanceTo, reviewer: entry.reviewer, open: entry.unresolvedCount };
+    if (rowTarget && !target) target = { ...rowTarget, total };
   }
   if (!target) return false;
 
   const started = await startReviewRun(target.row.id, {
+    prUrl: target.prUrl,
     reason: "new-comment",
     detail:
-      `${target.open} open thread(s); newest by ${target.reviewer || "a reviewer"} at ${target.latestAt}. ` +
+      `${target.open} open thread(s) on ${repoNameFromPrUrl(target.prUrl) || "the pull request"}; ` +
+      `newest by ${target.reviewer || "a reviewer"} at ${target.latestAt}. ` +
       `Round ${target.row.reviewRounds + 1} of ${MAX_REVIEW_ROUNDS}.`,
-    // Advanced at the start rather than on completion. A run that fails leaves
-    // the row `failed` and visible, and retrying it automatically would be the
-    // loop this whole function exists to prevent: the next trigger is a genuinely
-    // new comment, or the button on the row.
     lastCommentAt: target.latestAt,
-    openComments: target.open,
+    openComments: target.total,
   });
   return started.ok;
 }
@@ -560,9 +614,9 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
  */
 export async function startReviewRun(
   plannedId: string,
-  opts: { reason: string; detail: string; lastCommentAt?: string; openComments?: number }
+  opts: { reason: string; detail: string; prUrl?: string; lastCommentAt?: string; openComments?: number }
 ): Promise<{ ok: boolean; error: string; blocked?: string }> {
-  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true, prReviews: true } });
   if (!item) return { ok: false, error: "No such planned ticket." };
 
   // The three conditions that make a review run meaningful at all, re-read here
@@ -592,14 +646,32 @@ export async function startReviewRun(
     return { ok: false, error, blocked: "no-root-repo" };
   }
 
+  const targetPr =
+    opts.prUrl && reviewTargets(item).includes(opts.prUrl) ? opts.prUrl : pickReviewPr(item, item.prReviews);
+  const isPrimary = targetPr === item.prUrl;
+  const repoPath = isPrimary ? rootRepo : localRepoForPr(targetPr, rootRepo, discoverCompanionRepos(rootRepo).repos);
+  if (!repoPath) {
+    const error =
+      `No local clone of ${repoNameFromPrUrl(targetPr) || "the pull request's repository"} is named in the Root repo's ` +
+      `instruction files, so its review comments cannot be fixed here.`;
+    await logAutomation({
+      planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
+      reason: "no-local-checkout", detail: error,
+    });
+    return { ok: false, error };
+  }
+
   const result = await startRun({
     ticketId: item.ticketId,
     ticketUrl: "",
     provider: item.plan.provider,
     project: item.project || item.plan.project,
-    rootRepo,
-    prUrl: item.prUrl,
+    rootRepo: repoPath,
+    prUrl: targetPr,
     requestedSkill: REVIEW_FIX_SKILL,
+    rememberRootRepo: isPrimary,
+    model: item.model,
+    effort: item.effort,
   });
   if (!result.ok) {
     await logAutomation({
@@ -616,9 +688,16 @@ export async function startReviewRun(
       reviewRunId: result.runId,
       reviewError: "",
       ...(opts.openComments === undefined ? {} : { openComments: opts.openComments }),
-      ...(opts.lastCommentAt ? { lastCommentAt: opts.lastCommentAt } : {}),
+      ...(opts.lastCommentAt && isPrimary ? { lastCommentAt: opts.lastCommentAt } : {}),
     },
   });
+  if (opts.lastCommentAt && !isPrimary) {
+    await prisma.plannedTicketPr.upsert({
+      where: { plannedTicketId_prUrl: { plannedTicketId: item.id, prUrl: targetPr } },
+      create: { plannedTicketId: item.id, prUrl: targetPr, lastCommentAt: opts.lastCommentAt },
+      update: { lastCommentAt: opts.lastCommentAt },
+    });
+  }
   await logAutomation({
     planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "started",
     reason: opts.reason, detail: opts.detail,
@@ -863,7 +942,7 @@ async function reconcileReviews(): Promise<void> {
       detail: answered
         ? `Replied to ${replied} thread(s), resolved ${resolved}.` +
           (replied > resolved
-            ? ` ${replied - resolved} left open on purpose — invalid, out of scope, or needing your decision.`
+            ? ` ${replied - resolved} left open on purpose — invalid or out of scope.`
             : "") +
           (state === "needs-human"
             ? ` Round ${rounds} of ${MAX_REVIEW_ROUNDS}: this ticket will not be picked up automatically again.`

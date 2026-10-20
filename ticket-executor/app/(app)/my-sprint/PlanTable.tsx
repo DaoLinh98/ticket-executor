@@ -220,7 +220,10 @@ export default function PlanTable({
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
                       </button>
-                      {t.id && t.implementState === "pending" && t.implementOrder > 0 && claim === "mine" && !t.runId && !t.prUrl && !t.releasedAt && (
+                      {t.id && claim === "mine" && (
+                        (t.implementState === "pending" && t.implementOrder > 0 && !t.runId && !t.prUrl && !t.releasedAt) ||
+                        (t.prPublished && !t.prMerged && t.reviewState !== "running")
+                      ) && (
                         <button
                           type="button"
                           className="te-icon-btn"
@@ -300,9 +303,12 @@ export default function PlanTable({
                   ) : t.runId || t.reviewRunId ? (
                     <ActionButton label="Result" variant="ghost" onClick={() => h.openExecution(t.ticketId, "result")} />
                   ) : null}
-                  {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" && (
-                    <ActionButton label="Fix review" variant="outline" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
-                  )}
+                  {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
+                    (t.reviewState === "resolved" ? (
+                      <ActionButton label="Waiting for reviewer" variant="ghost" onClick={() => {}} disabled />
+                    ) : (
+                      <ActionButton label="Fix review" variant="outline" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
+                    ))}
                   {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
                     (t.implementState === "failed" || t.implementState === "skipped") && (
                       <ActionButton label={held ? "Resume" : "Retry"} variant="warning" onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />
