@@ -3,6 +3,7 @@ import type { MentionCandidate, Ticket, TicketComment, TicketReaction, ReactionK
 import { isMine, isSamePerson, type DevIdentity } from "./identity";
 import { resolveCredential } from "./providerCredentials";
 import { buildUnifiedDiff } from "./diffText";
+import { automatedFindingCount } from "./reviewFindings";
 import { hasContent, markdownToHtml, sanitizeHtml } from "./richText";
 import type { TicketScope } from "./ticketScope";
 import { cached, cachedStale, invalidatePrefix } from "./redis";
@@ -1225,6 +1226,11 @@ function prStatusLabel(raw: RawPullRequest): string {
   return "Active";
 }
 
+function isApproved(raw: RawPullRequest): boolean {
+  const votes = (raw.reviewers ?? []).map((r) => r.vote ?? 0);
+  return votes.some((v) => v >= 5) && votes.every((v) => v > -5);
+}
+
 type RawThreadComment = {
   id?: number;
   content?: string;
@@ -1281,23 +1287,27 @@ export async function getPullRequestReview(
     author: raw.createdBy?.displayName ?? "Unknown",
     reviewers: (raw.reviewers ?? []).map((r) => r.displayName ?? "").filter(Boolean),
     createdAt: raw.creationDate ?? "",
+    approved: isApproved(raw),
   };
 
   const threadsData = await adoGet<{ value?: RawThread[] }>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}/threads?${API}`, pat);
   const comments: ReviewComment[] = [];
   for (const th of threadsData.value ?? []) {
-    if (!th.threadContext) continue; // skip system threads (status/vote updates)
     const first = (th.comments ?? []).find((c) => !c.isDeleted && c.commentType !== "system");
     if (!first?.content) continue;
+    const automated = !th.threadContext && automatedFindingCount(first.content) > 0;
+    if (!th.threadContext && !automated) continue;
     comments.push({
       id: String(first.id ?? th.id),
       threadId: th.id,
       author: first.author?.displayName ?? "Unknown",
       text: first.content,
-      filePath: th.threadContext.filePath,
-      line: th.threadContext.rightFileStart?.line,
+      filePath: th.threadContext?.filePath,
+      line: th.threadContext?.rightFileStart?.line,
       status: RESOLVED_THREAD_STATUSES.has((th.status ?? "").toLowerCase()) ? "resolved" : "open",
       date: shortDate(first.publishedDate),
+      at: first.publishedDate,
+      automated,
     });
   }
 

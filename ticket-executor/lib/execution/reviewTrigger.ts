@@ -21,6 +21,8 @@ export type ReviewScan = {
   latestAt: string;
   /** Whether that newest open comment was written by us. */
   mine: boolean;
+  /** Whether a reviewer has approved the pull request. */
+  approved: boolean;
 };
 
 export type ReviewVerdict =
@@ -53,8 +55,10 @@ export type ReviewVerdict =
  */
 export function reviewVerdict(row: ReviewRowState, scan: ReviewScan, maxRounds: number): ReviewVerdict {
   if (scan.unresolvedCount <= 0) return { act: "wait", advanceTo: "", reason: "nothing-open" };
+  if (scan.approved) return { act: "wait", advanceTo: "", reason: "approved" };
   if (row.reviewRounds >= maxRounds) return { act: "wait", advanceTo: "", reason: "max-rounds" };
-  if (!scan.latestAt || scan.latestAt <= row.lastCommentAt) {
+  const seen = /^\d{4}-/.test(row.lastCommentAt) ? row.lastCommentAt : "";
+  if (!scan.latestAt || scan.latestAt <= seen) {
     return { act: "wait", advanceTo: "", reason: "no-new-comments" };
   }
   if (scan.mine) return { act: "wait", advanceTo: scan.latestAt, reason: "own-reply" };

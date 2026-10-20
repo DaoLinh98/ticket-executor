@@ -150,6 +150,7 @@ type GhPullRequestNode = {
   baseRefName: string;
   createdAt: string;
   author: { login: string } | null;
+  reviewDecision: string | null;
   reviews: { nodes: Array<{ author: { login: string } | null }> };
   reviewThreads: {
     nodes: Array<{
@@ -172,6 +173,7 @@ const PR_REVIEW_QUERY = `
         baseRefName
         createdAt
         author { login }
+        reviewDecision
         reviews(first: 20) { nodes { author { login } } }
         reviewThreads(first: 100) {
           nodes {
@@ -245,6 +247,7 @@ async function fetchPullRequestReview(
       ),
     ],
     createdAt: raw.createdAt ?? "",
+    approved: raw.reviewDecision === "APPROVED",
   };
 
   const comments: ReviewComment[] = [];
@@ -260,6 +263,7 @@ async function fetchPullRequestReview(
       line: first.line ?? undefined,
       status: th.isResolved ? "resolved" : "open",
       date: shortDate(first.createdAt),
+      at: first.createdAt,
     });
   });
 

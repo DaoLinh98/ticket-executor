@@ -265,6 +265,7 @@ export function reflectPrompt(c: RunContext): string {
  */
 export const REVIEW_PUBLISH_PROMPT =
   "Mode: publish. The fixes are committed and final. Publish them and nothing else: push the branch if anything was committed, " +
-  "then answer every thread in the Thread Decisions table of .te/plan.md — reply to each, and mark resolved only the ones you " +
-  "fixed. Check each thread first — if it already carries your reply or is already resolved, skip it, since this phase may be " +
-  "retried after a crash. Do not edit source, do not commit, do not re-verify, do not edit KNOWLEDGE.md.";
+  "then answer every thread in the Thread Decisions table of .te/plan.md — reply to each in English, in one or two short sentences stating what changed or why nothing did, and skip " +
+  "threads the table marks Informational. " +
+  "Never mark any thread resolved or change its status: the next review of the pushed commit decides that. Check each thread " +
+  "first — if it already carries your reply, skip it, since this phase may be retried after a crash. Do not edit source, do not commit, do not re-verify, do not edit KNOWLEDGE.md.";

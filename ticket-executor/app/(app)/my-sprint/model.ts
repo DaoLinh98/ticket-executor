@@ -214,10 +214,7 @@ export function reviewOf(t: PlannedRow): { color: string; label: string; spin: b
     case "resolved":
       return {
         color: t.openComments > 0 ? COLORS.warning : COLORS.success,
-        // Replied and resolved are different numbers on purpose: the skill
-        // deliberately answers threads it will not act on, and a row claiming to
-        // have resolved everything would hide the ones left for a person.
-        label: `Fixed ${t.threadsResolved}/${t.threadsReplied}`,
+        label: `Replied ${t.threadsReplied}`,
         spin: false,
       };
     default:

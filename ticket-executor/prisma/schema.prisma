@@ -562,6 +562,7 @@ model PlannedTicket {
   pendingSince    DateTime?
   qaRounds        Int       @default(0)
   qaCommentAt     String    @default("")
+  prReviews      PlannedTicketPr[]
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
@@ -570,6 +571,19 @@ model PlannedTicket {
   @@index([claim])
   @@index([reviewState])
   @@index([pendingAction])
+}
+
+model PlannedTicketPr {
+  id              String        @id @default(cuid())
+  plannedTicketId String
+  plannedTicket   PlannedTicket @relation(fields: [plannedTicketId], references: [id], onDelete: Cascade)
+  prUrl           String
+  openComments    Int           @default(0)
+  lastCommentAt   String        @default("")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([plannedTicketId, prUrl])
 }
 
 // Every decision the scheduler made, including the ones to do nothing.

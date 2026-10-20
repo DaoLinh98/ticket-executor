@@ -16,7 +16,14 @@ const scan = (over: Partial<ReviewScan> = {}): ReviewScan => ({
   unresolvedCount: 2,
   latestAt: "2026-09-10T09:00:00Z",
   mine: false,
+  approved: false,
   ...over,
+});
+
+test("an approved pull request is never worked on, however many threads are open", () => {
+  const v = reviewVerdict(fresh, scan({ approved: true }), MAX);
+  assert.equal(v.act, "wait");
+  assert.equal(v.reason, "approved");
 });
 
 test("a reviewer comment on a ticket nothing has been done to yet starts a run", () => {
@@ -94,4 +101,16 @@ test("the loop terminates: run, our reply, rescan — and it stops", () => {
   const third = reviewVerdict(row, ourReply, MAX);
   assert.equal(third.act, "wait");
   assert.equal(third.reason, "no-new-comments");
+});
+
+test("a watermark in the old short-date format is treated as unset instead of hiding new comments", () => {
+  const legacy: ReviewRowState = { lastCommentAt: "Oct 14", reviewRounds: 1 };
+  const v = reviewVerdict(legacy, scan({ latestAt: "2026-10-14T09:00:00Z" }), MAX);
+  assert.equal(v.act, "run");
+});
+
+test("a second review posted later the same day is new work", () => {
+  const after: ReviewRowState = { lastCommentAt: "2026-10-14T07:56:36.807Z", reviewRounds: 1 };
+  const v = reviewVerdict(after, scan({ latestAt: "2026-10-14T09:10:00.000Z" }), MAX);
+  assert.equal(v.act, "run");
 });
