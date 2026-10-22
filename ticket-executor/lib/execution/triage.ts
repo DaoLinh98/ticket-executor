@@ -226,6 +226,7 @@ export function triageLive(id: string, cwd: string, provider: string, skill: str
     child: null,
     cancelled: false,
     logLines: [],
+    stepLogStarts: {},
     mcpConfigPath: "",
     parkedAt: null,
     humanWaitMs: 0,

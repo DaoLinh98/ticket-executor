@@ -151,7 +151,9 @@ export function publishPrompt(c: RunContext): string {
       companions.map((m) => `- ${m.name}: working tree \`${m.cwd}\`, branch \`${m.branch}\``).join("\n") +
       "\nIn every pull request description, list the ticket's other pull requests as companion pull requests." +
       (rootUnchanged
-        ? "\nThe working tree above has no change for this ticket: do not push it, and report `pushed: false` and an empty `prUrl` for it."
+        ? `\nThe root repository \`${path.basename(c.rootRepo)}\` (\`${c.cwd}\`) has no change for this ticket: do not push it and do not open a pull request for it. ` +
+          "That is expected, not an error — the work lives in the repositories listed above, so publish every one of them " +
+          "as instructed and report `pushed: false` and an empty `prUrl` for the root repository only."
         : "") +
       "\n"
     : "";

@@ -55,6 +55,9 @@ never a hex in a component. Three consequences, all of which have bitten:
 | `tabStyle({ active, enabled? })` | THE tab-bar button (detail tabs + Settings tabs). |
 | `ctaButtonStyle(variant, opts?)` | Action buttons: `primary \| success \| warning \| danger \| outline \| ghost`. |
 | `typeBadge`, `statusPill`, `statusPillActive`, `execDot`, `avatar` | Domain badges already composed from the above — use directly. |
+| `stepTone(status)` / `stepToneColor(status)` | A run step's state (Step status or node state) as one of `pending | running | done | failed | skipped` and its colour — the flow map, attempt list and step detail all read it from here. |
+| `effectColor(effects)` | A node's effect class (`pure` / `local` / `external`) as its colour: info / indigo / accent. |
+| `toneTint(token, pct?)` | A token mixed into transparency (`color-mix`), for tinted fills and borders of a token that has no tint of its own. |
 | `LoadingRing` | THE only spinner, always accent orange. Not over a `primary` fill (orange-on-orange) — use `warning`/`ghost`/`outline` or text-only there. |
 | `RichText` + `.te-rich` | THE way to render provider rich text, styled by selector, never inline. The HTML must already have passed `sanitizeHtml()` at the producer. |
 | `useBoltsContext()` | THE only click effect (`BoltsProvider` is mounted once in `app/layout.tsx`). Always accent orange; `{ big: true }` only for a run's primary "go" action. |
@@ -125,6 +128,10 @@ media query, so the phone layout lives in **one CSS block at the foot of
 | `te-ask-log` / `te-ask-input` | The Ask Claude transcript takes a share of the viewport rather than a fixed 420px; the prompt drops to 14px mono — the one field that overrides the 16px anti-zoom rule. |
 | `te-diffview` | A diff's side padding drops to 12px — it wraps mid-word, so every pixel is a character. |
 | `te-modal-shell` / `te-modal-overlay` | Modals go full-screen, inset-padded. |
+| `te-flow` | Scope for the react-flow canvas: maps its `--xy-*` chrome onto the app's tokens (all widths). |
+| `te-flow-canvas` / `te-flow-rail` | The Execution tab's pan-and-zoom flow map is dropped; the vertical rail of the same nodes (hidden above the breakpoint) takes its place. |
+| `te-activity` | A step's activity feed takes a share of the viewport rather than a fixed 520px. |
+| `te-exec-hud` | The run summary strip tightens its gaps so its metrics wrap two per row. |
 | `te-picker-label` / `te-picker-short` | A picker's label truncates **in a header only** — the toolbar wraps instead. A picker given `shortLabel` swaps to it below the breakpoint. |
 
 Adding a component: reuse a hook above before inventing a class; a two-pane screen is

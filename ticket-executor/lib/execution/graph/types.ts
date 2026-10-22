@@ -49,6 +49,8 @@ export type NodeResult = {
    *  comes back. drive() parks on this instead of routing the edge, so it never
    *  reaches an edge and no edge may branch on it. */
   limitResetAt?: Date | null;
+  /** Lines a check node wants in the run's log; an agent node's log is its own turn. */
+  log?: { text: string; kind?: string }[];
 };
 
 // ---- context policy ----
@@ -95,7 +97,10 @@ type NodeBase = {
   /** Shown in the UI's progress list. The list is derived from the graph, so
    *  adding a node adds a step — there is no separate STEPS array to keep in sync. */
   label: string;
+  stepLabel?: (c: RunContext) => string;
+  tally?: (c: RunContext) => string;
   effects: EffectClass;
+  next: Target[];
 };
 
 /** A node that spawns a Claude turn. `output` is required: a node that does not
@@ -165,6 +170,7 @@ export type LiveRun = {
   cancelled: boolean;
   /** The whole run's log, in order. A step persists the slice it produced. */
   logLines: LogLine[];
+  stepLogStarts: Record<string, number>;
   mcpConfigPath: string;
   parkedAt: number | null;
   humanWaitMs: number;

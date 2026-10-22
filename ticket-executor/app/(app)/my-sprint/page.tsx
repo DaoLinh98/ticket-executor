@@ -3,7 +3,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { reveal } from "../../Motion";
 import { useRouter } from "next/navigation";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import SelectMenu from "../../SelectMenu";
@@ -28,7 +27,7 @@ import PageToolbar from "../PageToolbar";
 import { useProjects } from "../../queries";
 import { useLiveInvalidate } from "../../useLive";
 import { useToast } from "../ToastProvider";
-import { forecastFinish, releaseDays, reorderQueue, type Lane, type QueueMove } from "@/lib/sprintPlan";
+import { releaseDays, reorderQueue, type Lane, type QueueMove } from "@/lib/sprintPlan";
 import { isFixingQa, MAX_QA_ROUNDS } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
@@ -49,9 +48,7 @@ import {
   LANE_LABEL,
   VERDICT,
   dayLabel,
-  hours,
   matchesFilter,
-  usd,
   type MySprint,
   type PlanFilter,
   type PlanSort,
@@ -457,9 +454,11 @@ export default function MySprintPage() {
     });
 
   const openExecution = (ticketId: string, tab: "execution" | "result") =>
-    router.push(
+    window.open(
       `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` +
-        `&at=${Date.now()}`
+        `&at=${Date.now()}`,
+      "_blank",
+      "noopener"
     );
 
   const askRelease = (row: PlannedRow) =>
@@ -600,22 +599,6 @@ export default function MySprintPage() {
     .filter((t) => matchesFilter(t, filter, attentionIds) && (!projectFilter || t.project === projectFilter))
     .sort((a, b) => (sort === "release" ? (a.releaseDay || "9999").localeCompare(b.releaseDay || "9999") : 0));
   const reorderable = filter === "all" && sort === "queue" && !projectFilter;
-  const totalCost = Object.values(costs).reduce((sum, c) => sum + c, 0);
-  const forecast = summary && data?.window && data.today
-    ? forecastFinish({ donePoints: summary.donePoints, remainingPoints: summary.remainingPoints, window: data.window, today: data.today })
-    : null;
-
-  let tileIndex = 0;
-  const tile = (label: string, value: string, sub?: string) => {
-    const i = tileIndex++;
-    return (
-    <motion.div {...reveal({ from: i % 2 ? "right" : "left", index: i })} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
-      <span style={sectionCaption()}>{label}</span>
-      <span style={{ ...displayText("stat"), overflowWrap: "anywhere" }}>{value}</span>
-      {sub && <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>{sub}</span>}
-    </motion.div>
-    );
-  };
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
@@ -683,8 +666,8 @@ export default function MySprintPage() {
         </div>
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
-        <div style={{ maxWidth: "1160px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
+        <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
           {initialLoading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
           ) : data && !data.configured ? (
@@ -735,6 +718,11 @@ export default function MySprintPage() {
                 </span>
               </div>
 
+              <div
+                className="te-sprint-split"
+                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 460px", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}
+              >
+              <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
 
               {(runningRows.length > 0 || reviewingRows.length > 0) && (
@@ -760,44 +748,6 @@ export default function MySprintPage() {
                   ))}
                 </div>
               )}
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "14px" }}>
-                {tile(
-                  "SPRINT SCOPE",
-                  summary.ticketCount + " · " + summary.totalPoints + "pt",
-                  summary.droppedCount > 0
-                    ? summary.droppedCount + " left my plate"
-                    : summary.unsizedCount > 0
-                      ? summary.unsizedCount + " unsized"
-                      : "all sized"
-                )}
-                {tile(
-                  "STILL MINE",
-                  summary.mine.tickets + " · " + summary.mine.points + "pt",
-                  summary.remainingPoints + "pt left to deliver"
-                )}
-                {tile(
-                  "HANDED OFF",
-                  summary.handedOff.tickets + " · " + summary.handedOff.points + "pt",
-                  summary.handedOff.tickets > 0 ? "delivered, with someone else" : "nothing yet"
-                )}
-                {tile("WORK LEFT", hours(summary.requiredHours), summary.workingDaysLeft + " working days")}
-                {tile("CAPACITY", hours(summary.capacityHours), (data?.config.hoursPerDay ?? 8) + "h/day")}
-                {tile(
-                  summary.slackHours < 0 ? "SHORT BY" : "SLACK",
-                  hours(Math.abs(summary.slackHours)),
-                  summary.slackHours < 0 ? "does not fit the sprint" : "spare capacity"
-                )}
-                {tile(
-                  "FORECAST",
-                  forecast ? dayLabel(forecast.projectedDay) : "—",
-                  forecast
-                    ? (forecast.slipDays > 0 ? forecast.slipDays + "d late" : "On track") +
-                      " · " + (Math.round(forecast.velocity * 10) / 10) + "pt/day"
-                    : "No delivery yet"
-                )}
-                {tile("RUN COST", usd(totalCost), Object.values(costs).filter((c) => c > 0).length + " tickets run")}
-              </div>
 
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 {(Object.keys(LANE_LABEL) as Lane[]).map((lane) => (
@@ -875,19 +825,6 @@ export default function MySprintPage() {
               </div>
               */}
 
-              <AutomationPanel
-                stored={stored}
-                busy={busy}
-                settings={settings}
-                onSettings={(next) => setSettingsDraft(next)}
-                onBuild={buildPlan}
-                onApplySettings={buildPlan}
-                onSetStatus={(status) => patchPlan({ status }, "activate")}
-                onToggle={(field, on) => patchPlan({ [field]: on }, field)}
-                onTick={tickNow}
-                onSaveReviewers={(reviewers) => patchPlan({ reviewers }, "reviewers")}
-              />
-
               {(data?.plan?.overflowPoints ?? 0) > 0 && (
                 <div style={tintedCard("danger")}>
                   <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>
@@ -906,7 +843,22 @@ export default function MySprintPage() {
                 onDismiss={dismissReplyNow}
               />
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <SchedulerLog events={events} />
+              </div>
+
+              <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <AutomationPanel
+                  stored={stored}
+                  busy={busy}
+                  settings={settings}
+                  onSettings={(next) => setSettingsDraft(next)}
+                  onBuild={buildPlan}
+                  onApplySettings={buildPlan}
+                  onSetStatus={(status) => patchPlan({ status }, "activate")}
+                  onToggle={(field, on) => patchPlan({ [field]: on }, field)}
+                  onTick={tickNow}
+                  onSaveReviewers={(reviewers) => patchPlan({ reviewers }, "reviewers")}
+                />
                 <span style={sectionCaption()}>
                   RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
                 </span>
@@ -920,6 +872,7 @@ export default function MySprintPage() {
                   onSort={setSort}
                   onProject={setProjectFilter}
                 />
+                <div className="te-scroll te-sprint-pane" style={{ flex: "1 1 auto", minHeight: "360px", overflowY: "auto" }}>
                 <PlanTable
                   rows={shownRows}
                   data={data}
@@ -946,17 +899,9 @@ export default function MySprintPage() {
                     runOptions: (row) => setOptionsFor(row.id),
                   }}
                 />
+                </div>
               </div>
-
-              <SchedulerLog events={events} />
-
-              <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-                The queue order is what the agent works through, back to back. The release day is when the finished
-                pull request is taken out of draft, assigned to your reviewers and moved to Code Review — spread at a
-                steady pace so the sprint lands evenly instead of arriving all at once on the last Friday.
-                {" "}Tickets you finished stay listed as handed off once QA takes them over, so the sprint scope keeps
-                the whole fortnight in view instead of shrinking every time you succeed.
-              </span>
+              </div>
             </>
           )}
         </div>

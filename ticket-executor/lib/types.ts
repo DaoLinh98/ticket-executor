@@ -96,7 +96,15 @@ export type EndReason =
   // is reached, which is a run a person has to look at.
   | "rate-limited";
 
-export type LogLine = { text: string; kind: string };
+export type LogLine = {
+  text: string;
+  kind: string;
+  t?: number;
+  tool?: string;
+  ref?: string;
+  detail?: string;
+  isError?: boolean;
+};
 
 // One file touched by a run, with its unified diff against the base commit the
 // worktree started from — powers the Result tab's file-change diff popup.

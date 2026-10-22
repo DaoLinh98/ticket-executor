@@ -16,7 +16,8 @@ import { useToast } from "./(app)/ToastProvider";
 import { htmlToPlainText } from "@/lib/richText";
 import AskTab from "./ticket-executor/tabs/AskTab";
 import CommitsTab from "./ticket-executor/tabs/CommitsTab";
-import ExecutionTab from "./ticket-executor/tabs/ExecutionTab";
+import ExecutionTab, { EXEC_UI_DEFAULT, type ExecUiState } from "./ticket-executor/tabs/ExecutionTab";
+import type { FlowNodeDef } from "@/lib/runTrace";
 import OverviewTab from "./ticket-executor/tabs/OverviewTab";
 import PlanTab from "./ticket-executor/tabs/PlanTab";
 import ResolveReviewTab from "./ticket-executor/tabs/ResolveReviewTab";
@@ -30,7 +31,7 @@ import { useNotifications } from "./(app)/NotificationsProvider";
 import { CONNECTION_CHANGED_EVENT } from "./connectionEvents";
 import { usePagePrefs } from "./pagePrefs";
 import type {
-  Action, ExecView, NodeView, OverrideField, ResultSection, RunSummary, SettingsView, StepView, TabId,
+  Action, ExecView, OverrideField, ResultSection, RunSummary, SettingsView, TabId,
 } from "./ticket-executor/types";
 import type { CommitFile, CommitSummary, FileChange, KnowledgeChange, LogLine, MentionCandidate, ReactionKind, RunState, Ticket, TicketComment, ReviewData, ReviewSummaryEntry, UiRunState } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
@@ -80,6 +81,14 @@ const PLANNED_OPTIONS = [PLANNED_YES, PLANNED_NO];
 // One place that turns the API's RunView into the UI's ExecView. This used to be
 // written out three times (open a past run / stream update / rehydrate), which is
 // how the three drifted apart.
+function mergedLog(run: Record<string, unknown>, prev?: ExecView): LogLine[] {
+  if (Array.isArray(run.logLines)) return run.logLines as LogLine[];
+  const append = run.logAppend as { from: number; lines: LogLine[] } | undefined;
+  const base = prev && prev.runId === run.id ? prev.logLines : [];
+  if (!append) return base;
+  return [...base.slice(0, append.from), ...append.lines];
+}
+
 function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: string): ExecView {
   return {
     runId: run.id as string,
@@ -88,8 +97,12 @@ function toExecView(run: Record<string, unknown>, prev?: ExecView, skillHint?: s
     graphId: run.graphId as string | undefined,
     currentNodeId: run.currentNodeId as string | undefined,
     nodes: (run.nodes as ExecView["nodes"]) ?? [],
+    steps: (run.steps as ExecView["steps"]) ?? [],
+    transitions: (run.transitions as ExecView["transitions"]) ?? [],
     endReason: run.endReason as string | undefined,
-    logLines: (run.logLines as LogLine[]) ?? [],
+    logLines: mergedLog(run, prev),
+    startedAt: run.startedAt as string | undefined,
+    endedAt: (run.endedAt as string | null | undefined) ?? null,
     resultText: (run.resultText as string) ?? "",
     error: (run.errorMessage as string) ?? "",
     prUrl: (run.prUrl as string) ?? "",
@@ -274,7 +287,8 @@ export default function TicketExecutor() {
   const [runEvents, setRunEvents] = useState<RunEventSource[]>([]);
   // skill → the node list its graph walks, so the progress timeline can be drawn
   // before a run exists. Fetched once; the graphs are static code on the server.
-  const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; effects: string }[]>>({});
+  const [graphOutlines, setGraphOutlines] = useState<Record<string, { id: string; label: string; kind?: string; effects: string; context?: string; next?: string[] }[]>>({});
+  const [execUi, setExecUi] = useState<{ runKey: string; state: ExecUiState }>({ runKey: "", state: EXEC_UI_DEFAULT });
   // Mirror of selectedId for use inside stable callbacks (SSE handlers) without
   // re-memoizing them on every selection change.
   const selectedIdRef = useRef(selectedId);
@@ -1417,7 +1431,7 @@ export default function TicketExecutor() {
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
-          void applyExecutionUpdate(ticketId, runId, data.run);
+          void applyExecutionUpdate(ticketId, runId, data.run && data.log ? { ...data.run, logAppend: data.log } : data.run);
         } catch {
           /* ignore malformed frame */
         }
@@ -1595,7 +1609,7 @@ export default function TicketExecutor() {
             ...(prUrl ? { prUrl } : {}),
           }),
         });
-        const data = await r.json();
+        const data = await r.json().catch(() => ({ error: `The server answered ${r.status} ${r.statusText} without a JSON body — check the dev server's terminal.` }));
         if (!r.ok || !data.runId) {
           // A 400 means the run was rejected before the CLI was spawned (bad Root
           // repo, missing project) — nothing ran, so don't leave a failed run row
@@ -2021,50 +2035,24 @@ export default function TicketExecutor() {
             : `Claude Code will cd into the repo and run ${getSkill(t)} for ${getArea(t)}.`
     : "";
 
-  // Steps come from the graph the run is walking. Before a run exists we draw
-  // the outline of the graph the chosen skill *would* walk, fetched once from
-  // /api/graphs — either way the step list has exactly one source of truth.
   const skillForSteps = ex?.skill ?? (t ? getSkill(t) : undefined);
   const outline = skillForSteps ? graphOutlines[skillForSteps] ?? [] : [];
-  const runNodes = ex?.nodes?.length ? ex.nodes : undefined;
-  const stepSource: { id: string; label: string; state: NodeView["state"] }[] = runNodes
-    ? runNodes.map((n) => ({ id: n.id, label: n.label, state: n.state }))
-    : outline.map((n) => ({ id: n.id, label: n.label, state: "pending" as const }));
-
-  const steps: StepView[] = stepSource.map((n, i) => {
-    // A finished run marks every node it actually walked as done; nodes it never
-    // reached stay pending rather than pretending to have succeeded.
-    const sst: "pending" | "active" | "done" | "failed" =
-      n.state === "done" ? "done" : n.state === "failed" ? "failed" : n.state === "running" ? "active" : "pending";
-    const last = i === stepSource.length - 1;
-    const db: CSSProperties = {
-      position: "relative", width: "24px", height: "24px", borderRadius: "50%",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, fontWeight: 600, flex: "0 0 auto",
-      transition: "background .3s, border-color .3s, color .3s",
-    };
-    let dotStyle: CSSProperties;
-    if (sst === "done") dotStyle = { ...db, background: "rgba(53,214,164,.14)", border: "1px solid var(--te-success)", color: "var(--te-success)" };
-    else if (sst === "active") dotStyle = { ...db, background: "rgba(245,179,65,.12)", border: "1px solid var(--te-warning)", color: "var(--te-warning)" };
-    else if (sst === "failed") dotStyle = { ...db, background: "rgba(255,107,107,.14)", border: "1px solid var(--te-danger)", color: "var(--te-danger)" };
-    else dotStyle = { ...db, background: "transparent", border: "1px solid var(--te-btn-outline-border)", color: "var(--te-faint)" };
-    const connectorStyle: CSSProperties =
-      sst === "done"
-        ? { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", borderRadius: "2px", background: "linear-gradient(var(--te-success), rgba(53,214,164,.12))", backgroundSize: "100% 200%", animation: "flow 1.3s linear infinite" }
-        : { width: "2px", height: last ? "0px" : "20px", margin: "3px 0", background: "var(--te-border)" };
-    const labelStyle: CSSProperties = {
-      fontSize: FONT.base, paddingBottom: last ? "0" : "20px", lineHeight: "1.3", paddingTop: "3px",
-      color: sst === "done" ? "var(--te-text-soft)" : sst === "active" ? "var(--te-text)" : sst === "failed" ? "#FF8F8F" : "var(--te-faint)",
-      fontWeight: sst === "active" ? 600 : 500,
-    };
-    return { label: n.label, num: i + 1, dotStyle, connectorStyle, labelStyle, showCheck: sst === "done", showSpinner: sst === "active", showX: sst === "failed", showNum: sst === "pending" };
-  });
+  const flowDefs: FlowNodeDef[] = (ex?.nodes?.length ? ex.nodes : outline).map((n) => ({
+    id: n.id,
+    label: n.label,
+    kind: n.kind ?? "agent",
+    effects: n.effects,
+    context: n.context ?? "",
+    next: n.next ?? [],
+  }));
+  const execUiView: ExecUiState = execUi.runKey === (ex?.runId ?? "") ? execUi.state : { ...EXEC_UI_DEFAULT, view: execUi.state.view };
+  const patchExecUi = (patch: Partial<ExecUiState>) => setExecUi({ runKey: ex?.runId ?? "", state: { ...execUiView, ...patch } });
 
   const kindColor: Record<string, string> = {
     cmd: ACCENT, step: "var(--te-text)", ok: "var(--te-success)", muted: "var(--te-text-muted)", file: "var(--te-indigo)",
     diff: "var(--te-text-dim)", err: "var(--te-danger)", fail: "var(--te-danger)", done: "var(--te-success)",
   };
-  const logLines = (ex ? ex.logLines : []).map((l, i) => ({
+  const logLines = (ex ? ex.logLines : []).filter((l) => l.kind !== "result" && l.kind !== "thinking").map((l, i) => ({
     text: l.text, num: i + 1,
     style: {
       color: kindColor[l.kind] || "var(--te-text-soft)",
@@ -2296,8 +2284,18 @@ export default function TicketExecutor() {
 
                 {tab === "execution" && (
                   <ExecutionTab
-                    steps={steps}
-                    logLines={logLines}
+                    defs={flowDefs}
+                    steps={ex?.steps ?? []}
+                    transitions={ex?.transitions ?? []}
+                    logLines={ex?.logLines ?? []}
+                    terminalLines={logLines}
+                    startedAt={ex?.startedAt ?? ""}
+                    endedAt={ex?.endedAt ?? null}
+                    costUsd={ex?.costUsd ?? 0}
+                    inputTokens={ex?.inputTokens ?? 0}
+                    outputTokens={ex?.outputTokens ?? 0}
+                    ui={execUiView}
+                    onUi={patchExecUi}
                     logRef={logRef}
                     projectName={selProject}
                     state={st}

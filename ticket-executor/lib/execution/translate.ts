@@ -133,6 +133,7 @@ function translateLive(id: string, cwd: string): LiveRun {
     child: null,
     cancelled: false,
     logLines: [],
+    stepLogStarts: {},
     mcpConfigPath: "",
     parkedAt: null,
     humanWaitMs: 0,

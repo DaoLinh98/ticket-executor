@@ -242,8 +242,8 @@ export default function ReportPage() {
         />
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
-        <div style={{ maxWidth: "980px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "18px" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
+        <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "14px" }}>
           {error && (
             <div style={tintedCard("danger")}>
               <div style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</div>
@@ -258,20 +258,11 @@ export default function ReportPage() {
           {loading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "60px" }}><LoadingRing size={120} /></div>
           ) : (
-            <>
-              {data?.previous && (
-                <motion.section {...reveal()} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    <span style={sectionCaption()}>Last sent report</span>
-                    <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
-                      {formatReportDay(data.previous.day)} · sent {sentTime(data.previous.sentAt)}
-                    </span>
-                  </div>
-                  <pre style={{ ...codeBlock({ padding: "14px 16px" }), opacity: 0.8 }}>{data.previous.text}</pre>
-                </motion.section>
-              )}
-
-              <section style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div
+              className="te-sprint-split"
+              style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(360px, 520px)", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}
+            >
+              <section className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", paddingRight: "4px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={sectionCaption()}>Assigned to you</span>
                   <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{selectedCount} of {tickets.length} in this report</span>
@@ -348,7 +339,20 @@ export default function ReportPage() {
                 )}
               </section>
 
-              <motion.section {...reveal()} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div className="te-scroll te-sprint-pane" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "14px" }}>
+              {data?.previous && (
+                <motion.section {...reveal()} style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={sectionCaption()}>Last sent report</span>
+                    <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
+                      {formatReportDay(data.previous.day)} · sent {sentTime(data.previous.sentAt)}
+                    </span>
+                  </div>
+                  <pre className="te-scroll" style={{ ...codeBlock({ padding: "12px 14px" }), opacity: 0.8, maxHeight: "40vh", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{data.previous.text}</pre>
+                </motion.section>
+              )}
+
+              <motion.section {...reveal()} style={{ flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={sectionCaption()}>Preview</span>
                   <div style={{ flex: 1 }} />
@@ -391,13 +395,14 @@ export default function ReportPage() {
                   aria-label="Report text"
                   spellCheck={false}
                   rows={text.split("\n").length + 1}
-                  style={{ ...codeBlock({ padding: "14px 16px" }), width: "100%", boxSizing: "border-box", resize: "vertical", outline: "none", whiteSpace: "pre", overflowWrap: "normal" }}
+                  style={{ ...codeBlock({ padding: "14px 16px" }), width: "100%", boxSizing: "border-box", flex: "1 1 auto", minHeight: "220px", resize: "none", outline: "none", whiteSpace: "pre", overflowWrap: "normal" }}
                 />
                 <span style={{ fontSize: FONT.sm, color: COLORS.faint }}>
                   Edit freely — Copy and Send to Slack both use exactly this.
                 </span>
               </motion.section>
-            </>
+              </div>
+            </div>
           )}
         </div>
       </main>

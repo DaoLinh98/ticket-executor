@@ -7,6 +7,7 @@ import {
   pickReviewPr,
   prNumberFromUrl,
   repoNameFromPrUrl,
+  reviewRoundLimit,
   reviewTargets,
 } from "../lib/execution/reviewTargets";
 
@@ -56,4 +57,9 @@ test("the pull request to fix is the primary while it has open threads, then the
   assert.equal(pickReviewPr({ prUrl: RIS, openComments: 3 }, tracked), RIS);
   assert.equal(pickReviewPr({ prUrl: RIS, openComments: 1 }, tracked), RS);
   assert.equal(pickReviewPr({ prUrl: RIS, openComments: 0 }, []), RIS);
+});
+
+test("the round ceiling is per pull request, so a companion keeps its own budget", () => {
+  assert.equal(reviewRoundLimit({ prUrl: RIS, companionPrUrls: [RS] }, 3), 6);
+  assert.equal(reviewRoundLimit({ prUrl: RIS, companionPrUrls: [] }, 3), 3);
 });

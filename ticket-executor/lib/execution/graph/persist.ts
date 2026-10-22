@@ -55,7 +55,7 @@ export async function openStep(live: LiveRun, node: Node): Promise<{ id: string;
     data: {
       runId: live.id,
       nodeId: node.id,
-      label: node.label,
+      label: node.stepLabel?.(live.ctx) ?? node.label,
       attempt: prior + 1,
       effects: node.effects,
       status: "running",
@@ -109,7 +109,7 @@ export async function saveTransition(live: LiveRun, fromNode: string, toNode: st
   await prisma.transition.create({
     data: { runId: live.id, seq: live.seq, fromNode, toNode, reason },
   });
-  live.logLines.push({ text: `→ ${fromNode} → ${toNode}  (${reason})`, kind: "step" });
+  live.logLines.push({ text: `→ ${fromNode} → ${toNode}  (${reason})`, kind: "step", t: Date.now() });
 }
 
 /** Store a human-readable deliverable. A reviewer's edit becomes a new version

@@ -60,21 +60,8 @@ export default function AutomationPanel({
       Number(settings.maxTicketsPerDay) !== stored.maxTicketsPerDay);
 
   return (
-    <div style={{ ...card({ padding: "16px" }), display: "flex", flexDirection: "column", gap: "14px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-        <span style={sectionCaption()}>PLAN &amp; AUTOMATION</span>
-        <div style={{ flex: 1 }} />
-        <ActionButton label={stored ? "Rebuild plan" : "Build plan"} variant="primary" onClick={onBuild} busy={busy.has("plan")} />
-        {stored && stored.status !== "active" && (
-          <ActionButton label="Activate" variant="success" onClick={() => onSetStatus("active")} busy={busy.has("activate")} />
-        )}
-        {stored?.status === "active" && (
-          <ActionButton label="Pause" variant="warning" onClick={() => onSetStatus("draft")} busy={busy.has("activate")} />
-        )}
-        {stored?.status === "active" && <ActionButton label="Run now" variant="outline" onClick={onTick} busy={busy.has("tick")} />}
-      </div>
-
-      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+    <div style={{ ...card({ padding: "8px 10px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         {TOGGLES.map(([field, label, hint]) => {
           const on = !!stored?.[field];
           return (
@@ -84,29 +71,31 @@ export default function AutomationPanel({
               onClick={(e) => { fireBoltFromEvent(e); if (stored) onToggle(field, !on); }}
               disabled={!stored}
               title={hint}
-              style={{ ...ctaButtonStyle(on ? "success" : "ghost", { height: "30px", cornerPx: 7 }), cursor: stored ? "pointer" : "default" }}
+              style={{ ...ctaButtonStyle(on ? "success" : "ghost", { height: "26px", cornerPx: 7 }), padding: "0 9px", fontSize: FONT.sm, cursor: stored ? "pointer" : "default" }}
             >
               {label} {on ? "ON" : "OFF"}
             </button>
           );
         })}
+        <button
+          className="te-action-btn"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          style={{ background: "transparent", border: "none", padding: "0 2px", cursor: "pointer", ...sectionCaption(), color: COLORS.textMuted, display: "inline-flex", alignItems: "center", gap: "6px" }}
+        >
+          <span style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+          SETTINGS
+        </button>
+        <div style={{ flex: 1 }} />
+        <ActionButton compact label={stored ? "Rebuild plan" : "Build plan"} variant="primary" onClick={onBuild} busy={busy.has("plan")} />
+        {stored && stored.status !== "active" && (
+          <ActionButton compact label="Activate" variant="success" onClick={() => onSetStatus("active")} busy={busy.has("activate")} />
+        )}
+        {stored?.status === "active" && (
+          <ActionButton compact label="Pause" variant="warning" onClick={() => onSetStatus("draft")} busy={busy.has("activate")} />
+        )}
+        {stored?.status === "active" && <ActionButton compact label="Run now" variant="outline" onClick={onTick} busy={busy.has("tick")} />}
       </div>
-
-      <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-        The three are separate on purpose: working ahead is private and cheap to undo, releasing notifies a
-        reviewer and moves the work item, and resolving a review writes replies under your name on a pull
-        request somebody is already reading. Nothing is scheduled from a draft plan.
-      </span>
-
-      <button
-        className="te-action-btn"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        style={{ alignSelf: "flex-start", background: "transparent", border: "none", padding: "0 2px", cursor: "pointer", ...sectionCaption(), color: COLORS.textMuted, display: "inline-flex", alignItems: "center", gap: "6px" }}
-      >
-        <span style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
-        PLAN SETTINGS
-      </button>
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>

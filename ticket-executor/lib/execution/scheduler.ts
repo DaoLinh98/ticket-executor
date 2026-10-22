@@ -34,7 +34,7 @@ import { isFixingQa, MAX_QA_ROUNDS } from "../ticketLifecycle";
 import { openQaDraft } from "./qaReply";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
-import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewTargets } from "./reviewTargets";
+import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
 import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
 
@@ -500,7 +500,6 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
       prMerged: false,
       NOT: { prUrl: "" },
       reviewState: { notIn: ["running", "needs-human"] },
-      reviewRounds: { lt: MAX_REVIEW_ROUNDS },
     },
     include: { prReviews: true },
     orderBy: { implementOrder: "asc" },
@@ -509,7 +508,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
   lastReviewScan.set(plan.id, now);
 
   const ready = candidates.filter(
-    (r) => !r.reviewedAt || now - r.reviewedAt.getTime() >= REVIEW_COOLDOWN_MS
+    (r) => r.reviewRounds < reviewRoundLimit(r, MAX_REVIEW_ROUNDS) && (!r.reviewedAt || now - r.reviewedAt.getTime() >= REVIEW_COOLDOWN_MS)
   );
   if (!ready.length) return false;
 
@@ -560,7 +559,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
               mine: isSamePerson("", entry.reviewer, identity),
               approved: entry.approved,
             },
-            MAX_REVIEW_ROUNDS
+            reviewRoundLimit(row, MAX_REVIEW_ROUNDS)
           )
         : null;
       const mark = verdict && verdict.act === "wait" && verdict.advanceTo ? verdict.advanceTo : null;
@@ -592,11 +591,41 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
     detail:
       `${target.open} open thread(s) on ${repoNameFromPrUrl(target.prUrl) || "the pull request"}; ` +
       `newest by ${target.reviewer || "a reviewer"} at ${target.latestAt}. ` +
-      `Round ${target.row.reviewRounds + 1} of ${MAX_REVIEW_ROUNDS}.`,
+      `Round ${target.row.reviewRounds + 1} of ${reviewRoundLimit(target.row, MAX_REVIEW_ROUNDS)}.`,
     lastCommentAt: target.latestAt,
     openComments: target.total,
   });
   return started.ok;
+}
+
+async function pickLiveReviewPr(item: {
+  plan: { provider: string; org: string };
+  ticketId: string;
+  prUrl: string;
+  companionPrUrls: string[];
+  openComments: number;
+  lastCommentAt: string;
+  prReviews: { prUrl: string; openComments: number; lastCommentAt: string }[];
+}): Promise<string> {
+  const fallback = pickReviewPr(item, item.prReviews);
+  const targets = reviewTargets(item);
+  if (targets.length < 2) return fallback;
+  const { org, identity } = await resolveCredential(item.plan.provider);
+  if (!org || org !== item.plan.org) return fallback;
+  const scan = await loadPrReviews(normalizeProvider(item.plan.provider), targets.map((prUrl) => ({ ticketId: item.ticketId, prUrl })));
+  const tracked = new Map(item.prReviews.map((t) => [t.prUrl, t]));
+  for (let i = 0; i < targets.length; i++) {
+    const entry = scan.outcomes[i]?.entry;
+    if (!entry || CLOSED_PR_STATUSES.includes(entry.prStatus)) continue;
+    const seen = targets[i] === item.prUrl ? item.lastCommentAt : tracked.get(targets[i])?.lastCommentAt ?? "";
+    const verdict = reviewVerdict(
+      { lastCommentAt: seen, reviewRounds: 0 },
+      { unresolvedCount: entry.unresolvedCount, latestAt: entry.latestIso, mine: isSamePerson("", entry.reviewer, identity), approved: entry.approved },
+      MAX_REVIEW_ROUNDS
+    );
+    if (verdict.act === "run") return targets[i];
+  }
+  return fallback;
 }
 
 /**
@@ -647,7 +676,7 @@ export async function startReviewRun(
   }
 
   const targetPr =
-    opts.prUrl && reviewTargets(item).includes(opts.prUrl) ? opts.prUrl : pickReviewPr(item, item.prReviews);
+    opts.prUrl && reviewTargets(item).includes(opts.prUrl) ? opts.prUrl : await pickLiveReviewPr(item);
   const isPrimary = targetPr === item.prUrl;
   const repoPath = isPrimary ? rootRepo : localRepoForPr(targetPr, rootRepo, discoverCompanionRepos(rootRepo).repos);
   if (!repoPath) {
@@ -913,7 +942,7 @@ async function reconcileReviews(): Promise<void> {
     const rounds = item.reviewRounds + (answered ? 1 : 0);
     // The ceiling is applied here rather than at the next scan so the row says
     // why it stopped asking at the moment it stopped, not two minutes later.
-    const state = !answered ? "failed" : rounds >= MAX_REVIEW_ROUNDS ? "needs-human" : "resolved";
+    const state = !answered ? "failed" : rounds >= reviewRoundLimit(item, MAX_REVIEW_ROUNDS) ? "needs-human" : "resolved";
 
     await prisma.plannedTicket.update({
       where: { id: item.id },
@@ -945,7 +974,7 @@ async function reconcileReviews(): Promise<void> {
             ? ` ${replied - resolved} left open on purpose — invalid or out of scope.`
             : "") +
           (state === "needs-human"
-            ? ` Round ${rounds} of ${MAX_REVIEW_ROUNDS}: this ticket will not be picked up automatically again.`
+            ? ` Round ${rounds} of ${reviewRoundLimit(item, MAX_REVIEW_ROUNDS)}: this ticket will not be picked up automatically again.`
             : "")
         : "The run did not write to the pull request.",
     });

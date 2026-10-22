@@ -111,6 +111,14 @@ export function actionCount(list: AppNotification[], read: ReadMap): number {
   return list.filter((n) => n.severity === "action" && isUnread(n, read)).length;
 }
 
+const ATTENTION_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>(["ticket.qa-reply-ready", "ticket.qa-failed"]);
+
+/** What interrupts the developer with a popup: the unread QC-reply drafts and
+ *  tickets sent back from QA. Everything else waits in the bell. */
+export function attentionNotifications(list: AppNotification[], read: ReadMap): AppNotification[] {
+  return sortNotifications(list.filter((n) => n.severity === "action" && ATTENTION_KINDS.has(n.kind) && isUnread(n, read)));
+}
+
 /** The badge number: everything unread, actionable or not. */
 export function unreadCount(list: AppNotification[], read: ReadMap): number {
   return list.filter((n) => isUnread(n, read)).length;

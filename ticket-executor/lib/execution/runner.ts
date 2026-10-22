@@ -446,6 +446,7 @@ export async function startRun(params: StartRunInput): Promise<StartRunResult> {
     child: null,
     cancelled: false,
     logLines: [],
+    stepLogStarts: {},
     mcpConfigPath: "",
     parkedAt: null,
     humanWaitMs: 0,
@@ -552,8 +553,10 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
   if (!row) return null;
 
   const logLines: LogLine[] = [];
+  const stepLogStarts: Record<string, number> = {};
   for (const s of row.steps) {
     const ls = Array.isArray(s.logLines) ? (s.logLines as unknown as LogLine[]) : [];
+    stepLogStarts[s.id] = logLines.length;
     logLines.push(...ls);
   }
   const seq = await prisma.transition.count({ where: { runId: id } });
@@ -590,6 +593,7 @@ export async function rehydrate(id: string): Promise<LiveRun | null> {
     child: null,
     cancelled: false,
     logLines,
+    stepLogStarts,
     mcpConfigPath: "",
     parkedAt: row.parkedAt ? row.parkedAt.getTime() : null,
     humanWaitMs: row.humanWaitMs,

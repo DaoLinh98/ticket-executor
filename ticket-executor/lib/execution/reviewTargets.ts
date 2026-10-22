@@ -5,6 +5,10 @@ export function reviewTargets(row: { prUrl: string; companionPrUrls: string[] })
   return urls.filter((u, i) => urls.indexOf(u) === i);
 }
 
+export function reviewRoundLimit(row: { prUrl: string; companionPrUrls: string[] }, perPr: number): number {
+  return perPr * Math.max(1, reviewTargets(row).length);
+}
+
 export function prNumberFromUrl(url: string): string {
   return /\/(?:pullrequest|pull)\/(\d+)/i.exec(url)?.[1] ?? "";
 }

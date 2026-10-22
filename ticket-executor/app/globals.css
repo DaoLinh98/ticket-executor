@@ -106,6 +106,9 @@
   --te-tab-text: #FFFFFF;
   --te-tab-disabled-text: #4A5C64;
 
+  /* Execution flow map (react-flow) */
+  --te-flow-dot: rgba(255,255,255,.09);
+
   /* scrollbars */
   --te-scroll: rgba(255,255,255,.14);
   --te-scroll-hover: rgba(255,255,255,.24);
@@ -138,6 +141,7 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
 .te-scroll:hover::-webkit-scrollbar-thumb{background:var(--te-scroll-hover);}
 .te-scroll::-webkit-scrollbar-thumb:hover{background:var(--te-text-muted);}
 .te-scroll::-webkit-scrollbar-corner{background:transparent;}
+.te-table-scroll{overscroll-behavior:auto;}
 .te-scroll--smooth{scroll-behavior:smooth;}
 @media (prefers-reduced-motion: reduce){.te-scroll--smooth{scroll-behavior:auto;}}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -159,6 +163,8 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
 /* Marching-ants flow along a dashed SVG path — the Guide page's two-lane
    "app REST vs Claude MCP" diagram. Pair with stroke-dasharray:6 4. */
 @keyframes dashFlow{to{stroke-dashoffset:-20;}}
+/* The Execution flow map's live edge: two periods of its 6/6 dash, so the loop is seamless. */
+@keyframes edgeFlow{to{stroke-dashoffset:-24;}}
 @keyframes shrink{from{transform:scaleX(1);}to{transform:scaleX(0);}}
 @keyframes breathe{0%,100%{box-shadow:0 8px 22px -10px var(--accent);}50%{box-shadow:0 12px 32px -8px var(--accent),0 0 22px -3px var(--accent);}}
 @keyframes fireFlow{to{background-position:300% 0;}}
@@ -175,6 +181,30 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
    a flat border without touching a single call site. The spin keeps running on
    --angle; nothing reads it while this is set. */
 html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border),var(--te-btn-outline-border));}
+
+/* Execution flow map — react-flow reads its chrome from --xy-* variables, so
+   the theme is mapped once here onto the app's tokens. */
+.te-flow .react-flow {
+  --xy-background-color-default: transparent;
+  --xy-background-pattern-dots-color-default: var(--te-flow-dot);
+  --xy-edge-stroke-default: var(--te-btn-outline-border);
+  --xy-node-background-color-default: transparent;
+  --xy-node-border-default: none;
+  --xy-node-boxshadow-default: none;
+  --xy-controls-button-background-color-default: var(--te-inset-bg);
+  --xy-controls-button-background-color-hover-default: var(--te-inset-bg-focus);
+  --xy-controls-button-color-default: var(--te-text-soft);
+  --xy-controls-button-color-hover-default: var(--te-text);
+  --xy-controls-button-border-color-default: var(--te-border);
+  --xy-controls-box-shadow-default: 0 10px 26px -14px #000;
+}
+.te-flow .react-flow__node { cursor: pointer; }
+.te-flow .react-flow__controls { border-radius: 9px; overflow: hidden; }
+.te-activity summary::-webkit-details-marker { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .te-flow-particle { display: none; }
+  .te-flow .react-flow__edge-path { animation: none !important; }
+}
 
 /* markdown (Result tab, Plan tab) — inherits prototype palette */
 .md-body{font-size:14.5px;line-height:1.75;color:var(--te-text-soft);}
@@ -428,6 +458,11 @@ button:disabled{cursor:not-allowed;}
     padding: 16px 14px calc(36px + env(safe-area-inset-bottom)) !important;
   }
 
+  .te-sprint-page { flex: none !important; }
+  .te-sprint-split { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
+  .te-sprint-split > * { grid-column: 1 !important; grid-row: auto !important; }
+  .te-sprint-pane { overflow: visible !important; }
+
   /* Fixed-column sections collapse; `auto-fit` grids already do it themselves. */
   .te-grid-2, .te-grid-3 { grid-template-columns: 1fr !important; }
 
@@ -545,6 +580,14 @@ button:disabled{cursor:not-allowed;}
     padding-bottom: env(safe-area-inset-bottom) !important;
   }
   .te-modal-overlay { padding: 0 !important; }
+
+  /* ---- Execution tab -------------------------------------------------- */
+  /* A pan-and-zoom canvas is not a phone control: the flow becomes a vertical
+     rail of the same nodes, tapped to pick a step. */
+  .te-flow-canvas { display: none !important; }
+  .te-flow-rail { display: flex !important; }
+  .te-activity { height: min(60vh, 520px) !important; }
+  .te-exec-hud { gap: 14px 18px !important; }
 
   /* A diff wraps mid-word, so every pixel of column is a character that stays
      on its own line. */

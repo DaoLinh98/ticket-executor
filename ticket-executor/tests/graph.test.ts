@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import { admissionDenial, type AdmissionFacts } from "../lib/execution/admission";
 import { parseLimitReset } from "../lib/execution/claudeCli";
-import { ACCEPTANCE_PARTIAL, graphById, graphForSkill, isTestPath, KNOWN_SKILLS, repoGaps, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
+import { ACCEPTANCE_FIX, ACCEPTANCE_PARTIAL, MAX_FIX_ATTEMPTS, graphById, graphForSkill, isTestPath, KNOWN_SKILLS, repoGaps, resolveSkill, skillOfGraph, testGap } from "../lib/execution/graph/graphs";
 import { companionPathsFromInstructions } from "../lib/repoContext";
 import { DRAFT_RULE, evaluatePrompt, fixPrompt, publishPrompt, reflectPrompt, REVIEW_BRANCH_RULE } from "../lib/execution/graph/prompts";
 import { END, FAIL, type Graph, type NodeResult, type RunContext } from "../lib/execution/graph/types";
@@ -172,7 +172,8 @@ test("check: a passing test gate goes to the reviewer; a gap goes back to fix, b
   for (const g of ALL) {
     assert.equal(route(g, "check", result({ passed: true, blockers: [] })).to, "evaluate");
     assert.equal(route(g, "check", GAP).to, "fix");
-    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, "reflect");
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: MAX_FIX_ATTEMPTS - 1 })).to, "fix");
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: MAX_FIX_ATTEMPTS })).to, "reflect");
     assert.equal(route(g, "check", result({}, false, "could not diff the branch")).to, FAIL);
   }
 });
@@ -181,9 +182,9 @@ test("evaluate: a pass releases the run to publish; blockers go to fix, bounded"
   for (const g of ALL) {
     assert.equal(route(g, "evaluate", PASS).to, "publish");
     assert.equal(route(g, "evaluate", REFUSE).to, "fix");
-    const next = route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 2 }));
+    const next = route(g, "evaluate", REFUSE, ctxWithVisits({ fix: MAX_FIX_ATTEMPTS }));
     assert.equal(next.to, "reflect");
-    assert.match(next.reason, /after 2 fix attempt/);
+    assert.match(next.reason, new RegExp(`after ${MAX_FIX_ATTEMPTS} fix attempt`));
   }
 });
 
@@ -286,6 +287,37 @@ for (const graph of ALL) {
   });
 }
 
+const ROUTE_PROBES: NodeResult[] = [
+  ...PROBES,
+  PASS,
+  REFUSE,
+  GAP,
+  result({ passed: true, blockers: [], rootChanged: true, companions: [] }),
+  result({ ...STEP, verification: { ...CLEAN_VERIFICATION, acceptanceCriteria: "partial" } }),
+  result({ outcome: "no-fix-needed", committed: false, qaReply: "reply", blocked: NOT_BLOCKED }),
+  result({ outcome: "no-fix-needed", committed: true, qaReply: "", blocked: NOT_BLOCKED }),
+  result({ recorded: true, lesson: "l" }),
+];
+
+for (const graph of [...ALL, graphById("implement-v4"), graphById("fix-review-v4"), graphById("fix-qa-v4")]) {
+  test(`invariant: every edge in ${graph.id} routes only to a target its node declares`, () => {
+    for (const node of Object.values(graph.nodes)) {
+      for (const t of node.next) {
+        assert.ok(t === END || t === FAIL || graph.nodes[t], `${graph.id}: "${node.id}" declares "${t}", which is not a node`);
+      }
+      for (const visits of [{}, { fix: 1 }, { fix: MAX_FIX_ATTEMPTS }, { fix: MAX_FIX_ATTEMPTS, [ACCEPTANCE_FIX]: MAX_FIX_ATTEMPTS }] as Record<string, number>[]) {
+        for (const probe of ROUTE_PROBES) {
+          const next = route(graph, node.id, probe, ctxWithVisits(visits));
+          assert.ok(
+            node.next.includes(next.to),
+            `${graph.id}: "${node.id}" routed to "${next.to}" (${next.reason}) but declares only ${node.next.join(", ")}`
+          );
+        }
+      }
+    }
+  });
+}
+
 // ---- resolution ----
 
 test("graphById resolves a persisted run onto its flow, retired shapes included", () => {
@@ -308,8 +340,8 @@ test("a run started on a v4 graph finishes on the v4 shape — no reflect node, 
   for (const id of ["implement-v4", "fix-review-v4", "fix-qa-v4"]) {
     const g = graphById(id);
     assert.equal(g.nodes.reflect, undefined, id);
-    assert.equal(route(g, "evaluate", REFUSE, ctxWithVisits({ fix: 2 })).to, FAIL, id);
-    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: 2 })).to, FAIL, id);
+    assert.equal(route(g, "evaluate", REFUSE, ctxWithVisits({ fix: MAX_FIX_ATTEMPTS })).to, FAIL, id);
+    assert.equal(route(g, "check", GAP, ctxWithVisits({ fix: MAX_FIX_ATTEMPTS })).to, FAIL, id);
   }
 });
 
@@ -558,10 +590,32 @@ const PARTIAL = { ...STEP, verification: { ...CLEAN_VERIFICATION, acceptanceCrit
 
 test("implement: acceptance criteria reported partial go back to fix, then to reflect — never to the test gate", () => {
   assert.deepEqual(route(impl, "implement", result(PARTIAL)), { to: "fix", reason: ACCEPTANCE_PARTIAL });
-  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: 1 })).to, "fix");
-  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: 2 })).to, "reflect");
+  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: 1, [ACCEPTANCE_FIX]: 1 })).to, "fix");
+  assert.equal(route(impl, "fix", result(PARTIAL), ctxWithVisits({ fix: MAX_FIX_ATTEMPTS, [ACCEPTANCE_FIX]: MAX_FIX_ATTEMPTS })).to, "reflect");
   const stopped = { ...CTX, visits: { fix: 2 }, channels: { implement: STEP, fix: PARTIAL } };
   assert.equal(route(impl, "reflect", result({ recorded: false, lesson: "" }), stopped).reason, "acceptance criteria partial after 2 fix attempt(s)");
+});
+
+test("fix budget: acceptance-criteria fixes and refusal fixes are counted apart", () => {
+  const spentOnAcceptance = ctxWithVisits({ fix: MAX_FIX_ATTEMPTS, [ACCEPTANCE_FIX]: MAX_FIX_ATTEMPTS });
+  assert.equal(route(impl, "check", GAP, spentOnAcceptance).to, "fix");
+  assert.equal(route(impl, "evaluate", REFUSE, spentOnAcceptance).to, "fix");
+  const spentOnRefusals = ctxWithVisits({ fix: MAX_FIX_ATTEMPTS });
+  assert.equal(route(impl, "check", GAP, spentOnRefusals).to, "reflect");
+  assert.equal(route(impl, "fix", result(PARTIAL), spentOnRefusals).to, "fix");
+});
+
+test("fix step: labelled and tallied by why it was entered", () => {
+  const fix = impl.nodes.fix;
+  const partial = { ...CTX, channels: { implement: PARTIAL } };
+  const gapped = { ...CTX, channels: { implement: STEP, check: GAP.data } };
+  const refused = { ...CTX, channels: { implement: STEP, check: { passed: true }, evaluate: REFUSE.data } };
+  assert.equal(fix.stepLabel?.(partial), "Complete acceptance criteria");
+  assert.equal(fix.stepLabel?.(gapped), "Fix test gate");
+  assert.equal(fix.stepLabel?.(refused), "Fix review findings");
+  assert.equal(fix.tally?.(partial), ACCEPTANCE_FIX);
+  assert.equal(fix.tally?.(gapped), "");
+  assert.equal(review.nodes.fix.stepLabel?.(partial), "Fix review findings");
 });
 
 test("implement: cannot-verify still reaches the test gate, and the gate is the implement flow's only", () => {

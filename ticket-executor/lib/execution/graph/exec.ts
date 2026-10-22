@@ -97,7 +97,7 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
   }
 
   await prepareMcp(live);
-  live.logLines.push({ text: `▸ ${node.label} — ${prompt.slice(0, 200)}`, kind: "cmd" });
+  live.logLines.push({ text: `▸ ${node.label} — ${prompt.slice(0, 200)}`, kind: "cmd", t: Date.now(), detail: prompt });
 
   const turn = await runTurn(live, [
     "-p",
@@ -141,7 +141,9 @@ async function execAgent(live: LiveRun, node: AgentNode): Promise<NodeResult> {
 
 async function execCheck(live: LiveRun, node: CheckNode): Promise<NodeResult> {
   try {
-    return await node.run(live.ctx);
+    const result = await node.run(live.ctx);
+    for (const l of result.log ?? []) live.logLines.push({ text: l.text, kind: l.kind ?? "step", t: Date.now() });
+    return result;
   } catch (e) {
     return { ok: false, data: {}, error: e instanceof Error ? e.message : String(e), usage: { ...ZERO_USAGE } };
   }
