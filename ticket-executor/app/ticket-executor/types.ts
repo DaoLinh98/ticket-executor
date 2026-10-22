@@ -1,6 +1,7 @@
 import type { CSSProperties, MouseEvent } from "react";
 import type { FileChange, KnowledgeChange, LogLine, RunState } from "@/lib/types";
 import type { ProviderId } from "@/lib/providers";
+import type { StepTrace, TransitionView } from "@/lib/runTrace";
 
 /** One node of the run's graph as the API reports it. The progress list comes
  *  from the graph the run is walking, so the UI no longer owns a step array. */
@@ -11,6 +12,8 @@ export type NodeView = {
    *  of recognising a node by its id. */
   kind: string;
   effects: string;
+  context?: string;
+  next?: string[];
   state: "pending" | "running" | "done" | "failed";
   attempts: number;
 };
@@ -24,8 +27,12 @@ export type ExecView = {
   graphId?: string;
   currentNodeId?: string;
   nodes: NodeView[];
+  steps?: StepTrace[];
+  transitions?: TransitionView[];
   endReason?: string;
   logLines: LogLine[];
+  startedAt?: string;
+  endedAt?: string | null;
   resultText: string;
   error: string;
   prUrl?: string;
@@ -107,19 +114,6 @@ export type Action = {
   onClick: (e?: MouseEvent) => void;
   style: CSSProperties;
   title?: string;
-};
-
-// One pre-styled workflow step for the Execution tab's timeline.
-export type StepView = {
-  label: string;
-  num: number;
-  dotStyle: CSSProperties;
-  connectorStyle: CSSProperties;
-  labelStyle: CSSProperties;
-  showCheck: boolean;
-  showSpinner: boolean;
-  showX: boolean;
-  showNum: boolean;
 };
 
 // One pre-styled terminal line for the Execution tab.

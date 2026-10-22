@@ -89,6 +89,10 @@ export default function PlanTable({
   const movable = rows.filter(isMovable).sort((a, b) => a.implementOrder - b.implementOrder);
   const firstMovable = movable[0]?.id;
   const lastMovable = movable[movable.length - 1]?.id;
+  const knownUrls = [...(data?.tickets ?? []), ...(data?.claimed?.map((c) => c.ticket) ?? [])].map((x) => x.url);
+  const adoBase = knownUrls.map((u) => /^https:\/\/dev\.azure\.com\/[^/]+/.exec(u ?? "")?.[0]).find(Boolean);
+  const ticketHref = (t: PlannedRow, url?: string) =>
+    url || (adoBase && t.project ? `${adoBase}/${encodeURIComponent(t.project)}/_workitems/edit/${t.ticketId}` : undefined);
 
   return (
     <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
@@ -202,7 +206,7 @@ export default function PlanTable({
                     <span key="ticket" className="te-plan-ticket" style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" }}>
                       <span style={{ display: "flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
                       <a
-                        href={ticket?.url}
+                        href={ticketHref(t, ticket?.url)}
                         target="_blank"
                         rel="noreferrer"
                         title={`#${t.ticketId} · ${t.title}`}

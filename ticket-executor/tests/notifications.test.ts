@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 
 import {
   actionCount,
+  attentionNotifications,
   buildNotifications,
   fromAutomation,
   fromLifecycle,
@@ -504,6 +505,19 @@ test("a new pending moment on the same ticket is unread again", () => {
 
 test("an unknown pending action produces nothing", () => {
   assert.deepEqual(fromLifecycle([{ ticketId: "204", pendingAction: "", pendingSince: "" }]), []);
+});
+
+test("the popup holds only unread QC replies and QA failures", () => {
+  const list = [
+    ...fromLifecycle([
+      { ticketId: "301", pendingAction: "fix-qa", pendingSince: "2026-09-30T02:00:00Z" },
+      { ticketId: "302", pendingAction: "qa-reply-ready", pendingSince: "2026-09-30T03:00:00Z" },
+      { ticketId: "303", pendingAction: "move-to-qa", pendingSince: "2026-09-30T04:00:00Z" },
+    ]),
+  ];
+  assert.deepEqual(attentionNotifications(list, {}).map((n) => n.refId), ["302", "301"]);
+  const seen = markRead({}, list[0], "2026-09-30T05:00:00Z");
+  assert.deepEqual(attentionNotifications(list, seen).map((n) => n.refId), ["302"]);
 });
 
 test("a drafted reply to QC is one actionable notification pointing at Flow Runner", () => {

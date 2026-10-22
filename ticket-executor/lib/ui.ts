@@ -130,6 +130,42 @@ export const RUN_COLOR: Record<UiRunState, string> = {
   none: "var(--te-faint)",
 };
 
+export type StepTone = "pending" | "running" | "done" | "failed" | "skipped";
+
+const STEP_TONE_COLOR: Record<StepTone, string> = {
+  pending: "var(--te-faint)",
+  running: "var(--te-warning)",
+  done: "var(--te-success)",
+  failed: "var(--te-danger)",
+  skipped: "var(--te-text-muted)",
+};
+
+export function stepTone(status: string): StepTone {
+  if (status === "running") return "running";
+  if (status === "succeeded" || status === "done") return "done";
+  if (status === "failed") return "failed";
+  if (status === "abandoned" || status === "skipped") return "skipped";
+  return "pending";
+}
+
+export function stepToneColor(status: string): string {
+  return STEP_TONE_COLOR[stepTone(status)];
+}
+
+const EFFECT_COLOR: Record<string, string> = {
+  pure: "var(--te-info)",
+  local: "var(--te-indigo)",
+  external: "var(--te-accent)",
+};
+
+export function effectColor(effects: string): string {
+  return EFFECT_COLOR[effects] ?? "var(--te-text-muted)";
+}
+
+export function toneTint(color: string, pct = 14): string {
+  return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+}
+
 export const RUN_LABEL: Record<UiRunState, string> = {
   running: "Running",
   waiting: "Waiting for you",

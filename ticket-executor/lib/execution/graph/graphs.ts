@@ -15,7 +15,7 @@ import {
   verificationFailed,
   verificationOf,
 } from "./schemas";
-import { END, FAIL, ZERO_USAGE, type Edge, type Graph, type NodeResult, type RunContext } from "./types";
+import { END, FAIL, ZERO_USAGE, type Edge, type Graph, type NodeResult, type RunContext, type Target } from "./types";
 
 // Where the implement phase leaves its plan record, relative to the run's
 // worktree. The file is the agent's drafting surface; the durable copy is an
@@ -133,7 +133,15 @@ export const ACCEPTANCE_PARTIAL = "acceptance criteria partial";
 // loop is the point: an unbounded check/review/fix cycle spends real money
 // arguing with itself, and a refusal that stands after two attempts is telling
 // us a human is needed.
-const MAX_FIX_ATTEMPTS = 2;
+export const MAX_FIX_ATTEMPTS = 5;
+
+export const ACCEPTANCE_FIX = "fix:acceptance";
+
+const FIX_LABELS = {
+  acceptance: "Complete acceptance criteria",
+  check: "Fix test gate",
+  review: "Fix review findings",
+};
 
 export type Flow = "implement" | "review" | "qa";
 
@@ -142,6 +150,11 @@ const FLOWS: Record<Flow, { id: string; legacyId: string; skill: string; label: 
   review: { id: "fix-review-v5", legacyId: "fix-review-v4", skill: "fix-code-review-v4", label: "Resolve review threads", evaluateMode: "review-fix" },
   qa: { id: "fix-qa-v5", legacyId: "fix-qa-v4", skill: "fix-qa-v4", label: "Review QA findings & fix", evaluateMode: "qa-fix" },
 };
+
+function fixCause(c: RunContext, flow: Flow): keyof typeof FIX_LABELS {
+  if (flow === "implement" && acceptancePartial(lastDelivery(c))) return "acceptance";
+  return c.channels.check?.passed === false ? "check" : "review";
+}
 
 function standingRefusal(c: RunContext, flow: Flow): string {
   if (flow === "implement" && acceptancePartial(lastDelivery(c))) return ACCEPTANCE_PARTIAL;
@@ -158,9 +171,12 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
   const { label, evaluateMode } = FLOWS[flow];
   const id = reflect ? FLOWS[flow].id : FLOWS[flow].legacyId;
   const review = flow === "review";
+  const loopOut: Target[] = reflect ? ["reflect"] : [];
+  const partialOut: Target[] = flow === "implement" ? ["fix", ...loopOut] : [];
 
-  const fixBound = (c: RunContext, why: string) => {
-    const attempts = c.visits.fix ?? 0;
+  const fixBound = (c: RunContext, why: string, acceptance = false) => {
+    const acceptanceAttempts = c.visits[ACCEPTANCE_FIX] ?? 0;
+    const attempts = acceptance ? acceptanceAttempts : (c.visits.fix ?? 0) - acceptanceAttempts;
     if (attempts >= MAX_FIX_ATTEMPTS) return { to: reflect ? "reflect" : FAIL, reason: `${why} after ${attempts} fix attempt(s)` };
     return { to: "fix", reason: why };
   };
@@ -170,7 +186,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
     const failed = verificationFailed(verificationOf(r.data));
     if (failed) return { to: FAIL, reason: failed };
     if (!r.data.committed) return { to: FAIL, reason: "nothing was committed" };
-    if (flow === "implement" && acceptancePartial(r.data)) return fixBound(c, ACCEPTANCE_PARTIAL);
+    if (flow === "implement" && acceptancePartial(r.data)) return fixBound(c, ACCEPTANCE_PARTIAL, true);
     return { to: "check", reason: "committed, verification clear" };
   };
 
@@ -182,6 +198,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         kind: "agent",
         id: "implement",
         label,
+        next: ["check", ...partialOut, ...(review ? ["publish"] : []), ...(flow === "qa" ? [END] : []), FAIL],
         // Local: source edits and a local commit. Undone by discarding the
         // worktree/branch, so re-entering this node costs nothing outside.
         effects: "local",
@@ -198,6 +215,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         id: "check",
         label: "Check tests",
         effects: "pure",
+        next: ["evaluate", "fix", ...loopOut, FAIL],
         run: async (c) => {
           const exemption = String((c.channels.fix ?? c.channels.implement)?.testExemption ?? "");
           let repos: RepoChange[];
@@ -208,11 +226,21 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
           }
           const blockers = repoGaps(repos, exemption);
           const companions = repos.filter((r) => !r.root && r.files.length).map(({ name, cwd, branch }) => ({ name, cwd, branch }));
+          const log: { text: string; kind?: string }[] = [{ text: `Test gate — reading the committed diff against the base commit (the project's test suite is not executed here)` }];
+          for (const r of repos) {
+            const files = r.files.filter((f) => !f.startsWith(".te/"));
+            const tests = files.filter(isTestPath);
+            log.push({ text: `${r.name}: ${files.length} file(s) changed, ${tests.length} test file(s)${tests.length ? ` — ${tests.join(", ")}` : ""}` });
+          }
+          if (exemption.trim()) log.push({ text: `test exemption given: ${exemption.trim()}` });
+          for (const b of blockers) log.push({ text: `refused: ${b.issue}`, kind: "err" });
+          log.push({ text: blockers.length ? "Test gate refused" : "Test gate passed", kind: blockers.length ? "err" : "ok" });
           return {
             ok: true,
             data: { passed: !blockers.length, blockers, rootChanged: repos[0].files.length > 0, companions },
             error: "",
             usage: ZERO_USAGE,
+            log,
           };
         },
       },
@@ -220,6 +248,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         kind: "agent",
         id: "evaluate",
         label: "Independent review",
+        next: ["publish", "fix", ...loopOut, FAIL],
         // Reads only. Safe to re-run, and safe to sit on a cycle.
         effects: "pure",
         // The single most important field on this node. A reviewer that
@@ -232,7 +261,10 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
       fix: {
         kind: "agent",
         id: "fix",
-        label: "Fix review findings",
+        label: "Fix findings",
+        stepLabel: (c) => FIX_LABELS[fixCause(c, flow)],
+        tally: (c) => (fixCause(c, flow) === "acceptance" ? ACCEPTANCE_FIX : ""),
+        next: ["check", ...partialOut, FAIL],
         effects: "local",
         context: "resume",
         prompt: (c) => fixPrompt(c, flow === "implement"),
@@ -242,6 +274,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
         kind: "agent",
         id: "publish",
         label: review ? "Push & answer threads" : "Push & open PR",
+        next: [END, FAIL],
         // The one node that leaves this machine. Leaf by construction.
         effects: "external",
         // Asymmetric on purpose. Opening a PR needs facts the harness already
@@ -258,6 +291,7 @@ function loopGraph(flow: Flow, reflect: boolean): Graph {
           kind: "agent" as const,
           id: "reflect",
           label: "Record lesson",
+          next: [FAIL],
           effects: "local" as const,
           context: "resume" as const,
           prompt: reflectPrompt,
@@ -365,9 +399,22 @@ export function skillOfGraph(graphId: string): string {
 /** The progress list for a skill: node ids + labels, in declaration order.
  *  The UI renders this instead of a hand-maintained STEPS array, so adding a
  *  node to a graph adds a step to the UI with no second place to update. */
-export function graphOutline(skill: string): { id: string; label: string; effects: string }[] {
+export type NodeOutline = { id: string; label: string; kind: string; effects: string; context: string; next: Target[] };
+
+export function outlineOf(g: Graph): NodeOutline[] {
+  return Object.values(g.nodes).map((n) => ({
+    id: n.id,
+    label: n.label,
+    kind: n.kind,
+    effects: n.effects,
+    context: n.kind === "agent" ? n.context : "",
+    next: n.next,
+  }));
+}
+
+export function graphOutline(skill: string): NodeOutline[] {
   const g = graphForSkill(skill);
-  return g ? Object.values(g.nodes).map((n) => ({ id: n.id, label: n.label, effects: n.effects })) : [];
+  return g ? outlineOf(g) : [];
 }
 
 /** The skill a run executes, decided **server-side**: one per flow, so the

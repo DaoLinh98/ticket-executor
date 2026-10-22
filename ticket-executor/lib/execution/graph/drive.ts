@@ -166,6 +166,8 @@ async function parkForLimit(live: LiveRun, node: Node, resetAt: Date) {
   // (`visits.fix` against MAX_FIX_ATTEMPTS) without a single fix being tried,
   // and walk a long run towards MAX_HOPS one outage at a time.
   live.ctx.visits[node.id] = Math.max(0, (live.ctx.visits[node.id] ?? 1) - 1);
+  const tally = node.tally?.(live.ctx);
+  if (tally) live.ctx.visits[tally] = Math.max(0, (live.ctx.visits[tally] ?? 1) - 1);
   live.hops = Math.max(0, live.hops - 1);
 
   live.state = "waiting";
@@ -275,10 +277,13 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
       }
       live.currentNodeId = node.id;
       live.ctx.visits[node.id] = (live.ctx.visits[node.id] ?? 0) + 1;
+      const tally = node.tally?.(live.ctx);
+      if (tally) live.ctx.visits[tally] = (live.ctx.visits[tally] ?? 0) + 1;
 
       live.state = "running";
       await saveRun(live);
       const step = await openStep(live, node);
+      (live.stepLogStarts ??= {})[step.id] = step.logStart;
       const t0 = Date.now();
       const result = await execNode(live, node);
       const logs = live.logLines.slice(step.logStart);
@@ -332,7 +337,10 @@ export async function drive(live: LiveRun, graph: Graph, from: Target) {
         await finish(live, "failed", `Graph ${graph.id} has no edge out of "${node.id}"`);
         return;
       }
-      const next = edge(live.ctx, result);
+      let next = edge(live.ctx, result);
+      if (!node.next.includes(next.to)) {
+        next = { to: FAIL, reason: `graph ${graph.id} routed "${node.id}" to "${next.to}", which the node does not declare` };
+      }
       if (next.to === FAIL) failReason = next.reason;
       await saveTransition(live, node.id, next.to, next.reason);
       target = next.to;

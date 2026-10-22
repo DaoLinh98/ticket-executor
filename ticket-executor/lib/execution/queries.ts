@@ -2,8 +2,9 @@ import { prisma } from "../prisma";
 import { cached, DB_CACHE_PREFIX } from "../redis";
 import type { FileChange, KnowledgeChange, LogLine, RunState } from "../types";
 import { asLogLines, fmtDuration, safeParseJson } from "./format";
-import { graphById, graphOutline } from "./graph/graphs";
+import { graphById, graphOutline, type NodeOutline } from "./graph/graphs";
 import { reviewEscapes } from "./loopMetrics";
+import { cumulativeStarts, logRanges, type StepStatus, type StepTrace, type TransitionView } from "../runTrace";
 import type { Graph } from "./graph/types";
 import { store } from "./store";
 
@@ -19,6 +20,8 @@ export type NodeView = {
    *  than recognising it by name. */
   kind: string;
   effects: string;
+  context: string;
+  next: string[];
   state: "pending" | "running" | "done" | "failed";
   attempts: number;
 };
@@ -44,7 +47,16 @@ function nodeViews(graph: Graph, steps: StepRow[], currentNodeId: string, runSta
     if (state === "pending" && n.id === currentNodeId && (runState === "running" || runState === "waiting")) {
       state = "running";
     }
-    return { id: n.id, label: n.label, kind: n.kind, effects: n.effects, state, attempts: attempts.get(n.id) ?? 0 };
+    return {
+      id: n.id,
+      label: n.label,
+      kind: n.kind,
+      effects: n.effects,
+      context: n.kind === "agent" ? n.context : "",
+      next: n.next,
+      state,
+      attempts: attempts.get(n.id) ?? 0,
+    };
   });
 }
 
@@ -59,6 +71,8 @@ export type RunView = {
   state: RunState;
   currentNodeId: string;
   nodes: NodeView[];
+  steps: StepTrace[];
+  transitions: TransitionView[];
   endReason: string;
   logLines: LogLine[];
   resultText: string;
@@ -81,6 +95,52 @@ export type RunView = {
   endedAt: string | null;
 };
 
+const STEP_SELECT = {
+  id: true, nodeId: true, label: true, attempt: true, status: true, effects: true, output: true, errorMessage: true,
+  costUsd: true, inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheCreationTokens: true,
+  numTurns: true, durationMs: true, startedAt: true, endedAt: true,
+} as const;
+
+type StepRowFull = {
+  id: string; nodeId: string; label: string; attempt: number; status: string; effects: string; output: unknown;
+  errorMessage: string; costUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number;
+  cacheCreationTokens: number; numTurns: number; durationMs: number; startedAt: Date; endedAt: Date | null;
+};
+
+function stepTraces(rows: StepRowFull[], froms: (number | undefined)[], total: number): StepTrace[] {
+  const ranges = logRanges(froms, total);
+  return rows.map((s, i) => ({
+    id: s.id,
+    nodeId: s.nodeId,
+    label: s.label,
+    attempt: s.attempt,
+    status: s.status as StepStatus,
+    effects: s.effects,
+    startedAt: s.startedAt.toISOString(),
+    endedAt: s.endedAt ? s.endedAt.toISOString() : null,
+    durationMs: s.durationMs,
+    costUsd: s.costUsd,
+    inputTokens: s.inputTokens,
+    outputTokens: s.outputTokens,
+    cacheReadTokens: s.cacheReadTokens,
+    cacheCreationTokens: s.cacheCreationTokens,
+    numTurns: s.numTurns,
+    errorMessage: s.errorMessage,
+    output: s.output && typeof s.output === "object" ? (s.output as Record<string, unknown>) : {},
+    logFrom: ranges[i].from,
+    logTo: ranges[i].to,
+  }));
+}
+
+async function loadTransitions(runId: string): Promise<TransitionView[]> {
+  const rows = await prisma.transition.findMany({
+    where: { runId },
+    orderBy: { seq: "asc" },
+    select: { seq: true, fromNode: true, toNode: true, reason: true, createdAt: true },
+  });
+  return rows.map((t) => ({ seq: t.seq, fromNode: t.fromNode, toNode: t.toNode, reason: t.reason, at: t.createdAt.toISOString() }));
+}
+
 async function loadExtras(runId: string) {
   const [plan, diff, knowledge] = await Promise.all([
     prisma.artifact.findFirst({ where: { runId, kind: "plan" }, orderBy: { version: "desc" } }),
@@ -100,9 +160,10 @@ export async function getRun(id: string): Promise<RunView | null> {
   const live = store.get(id);
   if (!live) return getPersistedRun(id);
 
-  const [steps, extras] = await Promise.all([
-    prisma.step.findMany({ where: { runId: id }, select: { nodeId: true, status: true, attempt: true } }),
+  const [steps, extras, transitions] = await Promise.all([
+    prisma.step.findMany({ where: { runId: id }, orderBy: { startedAt: "asc" }, select: STEP_SELECT }),
     loadExtras(id),
+    loadTransitions(id),
   ]);
   const graph = graphById(live.graphId);
   const agg = await prisma.step.aggregate({
@@ -119,6 +180,8 @@ export async function getRun(id: string): Promise<RunView | null> {
     state: live.state,
     currentNodeId: live.currentNodeId,
     nodes: nodeViews(graph, steps, live.currentNodeId, live.state),
+    steps: stepTraces(steps, steps.map((s) => live.stepLogStarts?.[s.id]), live.logLines.length),
+    transitions,
     endReason: live.endReason,
     logLines: live.logLines,
     resultText: live.resultText,
@@ -145,11 +208,16 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     include: { steps: { orderBy: { startedAt: "asc" } } },
   });
   if (!row) return null;
-  const extras = await loadExtras(id);
+  const [extras, transitions] = await Promise.all([loadExtras(id), loadTransitions(id)]);
   const graph = graphById(row.graphId);
 
   const logLines: LogLine[] = [];
-  for (const s of row.steps) logLines.push(...asLogLines(s.logLines));
+  const lengths: number[] = [];
+  for (const s of row.steps) {
+    const ls = asLogLines(s.logLines);
+    lengths.push(ls.length);
+    logLines.push(...ls);
+  }
 
   return {
     id: row.id,
@@ -160,6 +228,8 @@ export async function getPersistedRun(id: string): Promise<RunView | null> {
     state: row.state as RunState,
     currentNodeId: row.currentNodeId,
     nodes: nodeViews(graph, row.steps, row.currentNodeId, row.state as RunState),
+    steps: stepTraces(row.steps, cumulativeStarts(lengths), logLines.length),
+    transitions,
     endReason: row.endReason,
     logLines,
     resultText: row.resultText,
@@ -223,7 +293,7 @@ export async function listRuns(ticketId: string) {
 }
 
 /** The graph a skill will run on, for the UI's pre-run progress preview. */
-export function outlineForSkill(skill: string): { id: string; label: string; effects: string }[] {
+export function outlineForSkill(skill: string): NodeOutline[] {
   return graphOutline(skill);
 }
 

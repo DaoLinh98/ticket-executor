@@ -173,6 +173,33 @@ export type TurnResult = {
   sessionId: string;
 };
 
+const DETAIL_MAX = 4000;
+
+function clip(s: string): string {
+  return s.length > DETAIL_MAX ? `${s.slice(0, DETAIL_MAX)}\n… (${s.length - DETAIL_MAX} more characters)` : s;
+}
+
+function toolInputDetail(name: string, input: Record<string, unknown>): string {
+  if (name.toLowerCase() === "bash" && typeof input.command === "string") return clip(input.command);
+  return clip(JSON.stringify(input, null, 2));
+}
+
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((c) => (c && typeof c === "object" && (c as { type?: string }).type === "text" ? String((c as { text?: unknown }).text ?? "") : ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resultSummary(text: string, isError: boolean): string {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return isError ? "↳ error (no output)" : "↳ (no output)";
+  const head = lines[0].trim().slice(0, 160);
+  return `↳ ${head}${lines.length > 1 ? `  (+${lines.length - 1} lines)` : ""}`;
+}
+
 // Parse one NDJSON line from `--output-format stream-json`, updating the live run.
 function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResult) {
   const type = obj.type;
@@ -183,7 +210,7 @@ function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResul
     // Trust the CLI's own id over the one we pre-assigned — --resume must use
     // exactly what the session was actually recorded under.
     if (sid) out.sessionId = sid;
-    live.logLines.push({ text: `● Session started${model ? " — " + model : ""}`, kind: "step" });
+    live.logLines.push({ text: `● Session started${model ? " — " + model : ""}`, kind: "step", t: Date.now() });
     return;
   }
 
@@ -192,7 +219,11 @@ function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResul
     for (const block of msg?.content ?? []) {
       if (block.type === "text" && typeof block.text === "string") {
         const text = block.text.trim();
-        if (text) text.split(/\r?\n/).forEach((l) => l.trim() && live.logLines.push({ text: l, kind: "muted" }));
+        const t = Date.now();
+        if (text) text.split(/\r?\n/).forEach((l) => l.trim() && live.logLines.push({ text: l, kind: "muted", t }));
+      } else if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
+        const thought = block.thinking.trim();
+        live.logLines.push({ text: thought.split(/\r?\n/)[0].slice(0, 200), kind: "thinking", detail: clip(thought), t: Date.now() });
       } else if (block.type === "tool_use") {
         const name = String(block.name ?? "");
         const input = (block.input ?? {}) as Record<string, unknown>;
@@ -211,9 +242,35 @@ function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResul
         // a rejected StructuredOutput is retried, and the log filled with copies.
         const prev = live.logLines[live.logLines.length - 1];
         if (!prev || prev.text !== label) {
-          live.logLines.push({ text: label, kind: name.toLowerCase() === "bash" ? "cmd" : "file" });
+          live.logLines.push({
+            text: label,
+            kind: name.toLowerCase() === "bash" ? "cmd" : "file",
+            t: Date.now(),
+            tool: name,
+            ref: typeof block.id === "string" ? block.id : undefined,
+            detail: toolInputDetail(name, input),
+          });
         }
       }
+    }
+    return;
+  }
+
+  if (type === "user") {
+    const msg = obj.message as { content?: unknown } | undefined;
+    if (!Array.isArray(msg?.content)) return;
+    for (const block of msg.content as Array<Record<string, unknown>>) {
+      if (block?.type !== "tool_result") continue;
+      const isError = block.is_error === true;
+      const text = toolResultText(block.content);
+      live.logLines.push({
+        text: resultSummary(text, isError),
+        kind: "result",
+        t: Date.now(),
+        ref: typeof block.tool_use_id === "string" ? block.tool_use_id : undefined,
+        detail: clip(text),
+        isError,
+      });
     }
     return;
   }

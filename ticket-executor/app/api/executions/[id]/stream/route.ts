@@ -21,12 +21,17 @@ export async function GET(
     start(controller) {
       const encoder = new TextEncoder();
       let lastPayload = "";
+      let sent = 0;
 
-      const send = (run: unknown) => {
-        const payload = JSON.stringify({ run });
-        if (payload === lastPayload) return;
-        lastPayload = payload;
-        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      const send = (run: NonNullable<Awaited<ReturnType<typeof getRun>>>) => {
+        const { logLines, ...rest } = run;
+        const from = logLines.length < sent ? 0 : sent;
+        const lines = logLines.slice(from);
+        const head = JSON.stringify(rest);
+        if (head === lastPayload && !lines.length) return;
+        lastPayload = head;
+        sent = logLines.length;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ run: rest, log: { from, lines } })}\n\n`));
       };
 
       const tick = async () => {
