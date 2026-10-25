@@ -39,7 +39,7 @@ import { providerMeta } from "./providers";
 import { companionNote, companionPathsFromInstructions, INSTRUCTION_FILES } from "./repoContext";
 
 export type CheckStatus = "pass" | "warn" | "fail";
-export type CheckGroup = "environment" | "skills" | "connection" | "agent-access" | "repo";
+export type CheckGroup = "environment" | "skills" | "agents" | "connection" | "agent-access" | "repo";
 
 export type Check = {
   id: string;
@@ -68,6 +68,7 @@ export type PreflightResult = {
 // existing import sites keep working.
 export { REQUIRED_SKILLS, findSkill, skillDirs } from "./skillPack";
 import { REQUIRED_SKILLS, findSkill, skillDirs, skillStates } from "./skillPack";
+import { agentInstallDir, agentStates } from "./agentPack";
 
 // There is deliberately no app-wide default Root repo: one connection serves many
 // projects, so the repo a run executes in is chosen per ticket (Overview tab) and
@@ -286,6 +287,36 @@ function skillChecks(): Check[] {
       ...base, level: "blocker" as const, status: "pass" as const,
       message: `${s.installedVersion} — ${s.installedPath}`,
     };
+  });
+}
+
+// Only the D-Agent workflow spawns these, and its startRun() refuses a missing or
+// older copy before the spawn — so nothing here blocks the Ticket Execution flow.
+function agentChecks(): Check[] {
+  return agentStates().map((s) => {
+    const base = { id: `agent-${s.name}`, group: "agents" as const, label: s.name, level: "warning" as const };
+    if (s.status === "missing") {
+      return {
+        ...base, status: "warn" as const,
+        message: `Not found in ${agentInstallDir()}. A D-Agent workflow run would be refused up front.`,
+        fix: "Install it from the Guide or with the Install button here — this repo ships a copy.",
+      };
+    }
+    if (s.status === "outdated") {
+      return {
+        ...base, status: "warn" as const,
+        message: `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion} — a D-Agent workflow run would be refused.`,
+        fix: "Update it: an older agent answers an older contract.",
+      };
+    }
+    if (s.status === "modified") {
+      return {
+        ...base, status: "warn" as const,
+        message: `Version ${s.installedVersion}, but the file differs from the bundled copy.`,
+        fix: "Yours was edited locally. Leave it if that was deliberate; otherwise overwrite it with the bundled copy.",
+      };
+    }
+    return { ...base, status: "pass" as const, message: `${s.installedVersion} — ${s.installedPath}` };
   });
 }
 
@@ -817,7 +848,7 @@ export async function runPreflight(opts?: { rootRepo?: string; deep?: boolean })
   // start of every run — cache its verdict for the implement route to read.
   if (deep) setMcpProbe(agent.probe.key, agent.probe.ok, agent.probe.reason);
   return summarize(
-    [...env, ...skillChecks(), ...conn, ...agent.checks, ...repoChecks(rootRepo, deep)],
+    [...env, ...skillChecks(), ...agentChecks(), ...conn, ...agent.checks, ...repoChecks(rootRepo, deep)],
     rootRepo,
     deep
   );

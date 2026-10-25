@@ -18,6 +18,7 @@ import DesktopOnly from "../DesktopOnly";
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
   { id: "environment", title: "ENVIRONMENT", blurb: "Local tooling and database the app itself needs." },
   { id: "skills", title: "SKILLS", blurb: "The four skills a run can be started with. They live on your machine; this repo ships a copy you can install from here." },
+  { id: "agents", title: "AGENTS", blurb: "The subagents a D-Agent workflow run spawns. They live in ~/.claude/agents; this repo ships a copy you can install from here." },
   { id: "connection", title: "PROVIDER CONNECTION", blurb: "The organization-level connection tickets are read from." },
   { id: "agent-access", title: "CLAUDE'S PROVIDER ACCESS", blurb: "How the Claude CLI itself reaches the provider — its MCP path, separate from the app's connection above. Without it a skill cannot read the ticket." },
   // No "repo" section: Root repo belongs to a ticket, not to this page. It is
@@ -29,6 +30,7 @@ const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
 const GUIDE_ANCHOR: Partial<Record<CheckGroup, string>> = {
   environment: "cli",
   skills: "skills",
+  agents: "agents",
   connection: "connection",
   "agent-access": "mcp",
 };
@@ -197,6 +199,7 @@ function SystemCheckPageInner() {
                     {/* The skills ship in this repo, so this group is the one
                         thing on this page the user can fix without leaving it. */}
                     {g.id === "skills" && <SkillInstaller onChanged={() => load()} />}
+                    {g.id === "agents" && <SkillInstaller pack="agents" onChanged={() => load()} />}
                   </div>
                 </div>
               );

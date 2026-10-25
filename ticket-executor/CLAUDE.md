@@ -16,6 +16,24 @@ and a release calendar) and a server-side scheduler acts on both with the browse
 closed. Runs cost money and touch real repositories, so guards fail *before* a spawn,
 never after.
 
+## Two engines — keep them apart
+
+The app carries two independent run engines. They share only the shell, preflight
+(`validateRootRepo()` / `validateAgentAccess()`), credentials and the MCP config
+writer — no graph, table, prompt or contract.
+
+| | **Ticket Execution** | **D-Agent workflow** |
+|---|---|---|
+| Page | Ticket Execution screen, My Sprint, Flow Runner | `/workflow` |
+| Engine | `lib/execution/` via `lib/executionStore.ts` | `lib/dagent/` |
+| Step runs | a **skill** (`implement-ticket-v4`, …) | a **subagent** from `~/.claude/agents/` |
+| Tables | `Run`, `Step`, … | `DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact` |
+| Rules | [Engine invariants](#engine-invariants--ticket-execution-libexecution) | [D-Agent workflow engine](#d-agent-workflow-engine-workflow-libdagent) |
+
+**When asked about one flow, read and answer from that flow's code only.** Do not
+compare it with the other engine, borrow its rules, or "align" one with the other
+unless explicitly asked. A rule stated for one engine does not bind the other.
+
 ## Commands
 
 ```bash
@@ -47,6 +65,10 @@ React `19.2.4`: read `node_modules/next/dist/docs/` before writing framework cod
   `lib/execution/` (`graph/*`, `runner.ts`, `admission.ts`, `claudeCli.ts`, `git.ts`,
   `queries.ts`, `triage.ts`, `planStore.ts`, `release.ts`,
   `scheduler.ts`). **API routes import from `lib/executionStore` only.**
+- **D-Agent workflow** — page `app/(app)/workflow` → `app/ticket-executor/workflow/`
+  (`WorkflowView.tsx` is the stateful container; the rest is presentational), canvas
+  layout/presentation in `lib/workflow/`, engine in `lib/dagent/`. **API routes
+  (`app/api/dagent/runs/*`) import from `lib/dagent` (`index.ts`) only.**
 - **Pure rule modules** — `admission.ts`, `identity.ts`, `sprintPlan.ts`,
   `notifications.ts`, `execution/loopMetrics.ts`: no Prisma, no provider, covered by
   `tests/*.test.ts` in ~1s. A rule the machine acts on unattended belongs here, not in
@@ -57,15 +79,15 @@ React `19.2.4`: read `node_modules/next/dist/docs/` before writing framework cod
 - **Auth** — one shared password (`APP_ACCESS_PASSWORD`), no accounts: `lib/auth.ts`
   is the HMAC cookie, `proxy.ts` the gate, `/login` + `/api/auth/*` the only public
   paths. An empty password disables the gate (the local-dev default).
-- **Boot and push** — `instrumentation.ts` installs bundled `skills/`, runs
+- **Boot and push** — `instrumentation.ts` installs bundled `skills/` and `agents/`, runs
   `recoverInterruptedRuns()`, then starts the scheduler and the push watcher
   (`lib/push.ts`, `lib/pushWatcher.ts`, `app/api/push/*`, `public/sw.js`,
   `app/manifest.ts` — iOS grants push only to a Home-Screen install of a
   `display: "standalone"` manifest).
 
-## Engine invariants
+## Engine invariants — Ticket Execution (`lib/execution/`)
 
-Nine rules bind any change under `lib/execution/`.
+Nine rules bind any change under `lib/execution/`. They do not apply to `lib/dagent/`.
 
 1. **Every agent node declares a JSON Schema; edges route only on the validated
    `structured_output`.** Never parse prose or scrape the log.
@@ -105,6 +127,68 @@ Nine rules bind any change under `lib/execution/`.
 
 **Run `npm run test` after touching a graph, an edge, a node contract,
 `resolveSkill()`, or any pure rule module.**
+
+## D-Agent workflow engine (`/workflow`, `lib/dagent/`)
+
+One graph, `dagent-implement-v2` (`graph.ts`), driven by `engine.ts`. Every agent step
+is a subagent spawned by `cli.ts` as `claude -p --agent <name> --json-schema …`;
+**no skill is invoked**. Behaviour lives in the agent's system prompt
+(`~/.claude/agents/<name>.md`) plus the brief from `prompts.ts`.
+
+| Node | Kind | Runs | Does | Next |
+|---|---|---|---|---|
+| `setup` | harness | git | exclude run files, set identity, pick base (`origin` default or retry seed), one **worktree** per repo, restore `.te/plan.md` on retry | readiness / FAIL |
+| `readiness` | agent | `analyst` | ready?, acceptance criteria, `delivery` (none/partial/done) checked on base | plan / END (done) / NEEDS_INPUT / FAIL |
+| `plan` | agent | `planner` | `planMd` (harness writes `.te/plan.md`), `branch`, `acMap`, `repos`; ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
+| `planCheck` | check | `planIssues()` | plan file, branch, every AC → files + test, repos in scope | implement / plan / FAIL |
+| `implement` | agent | `implementer` | code the plan, build/test, **commit locally, no push** | syncBase / FAIL (nothing committed) |
+| `syncBase` | harness | git | fetch + rebase onto origin default; conflict → abort + warning | diffGuard |
+| `diffGuard` | check | `diffViolations()` | agent/secret/unplanned-config files, credential-like lines; records `changed` + `heads` | evaluate |
+| `evaluate` | agent | `reviewer` | review `base..HEAD` against AC + plan + harness warnings → `blockers` | prePublish / fix / reflect |
+| `fix` | agent | `fixer` | fix exactly the blockers, commit; ≤ `MAX_FIX_ATTEMPTS` (5) | syncBase / reflect (blocked) |
+| `reflect` | agent | `reflector` | maybe record a lesson in Root repo `KNOWLEDGE.md`; no code, no commit | FAIL |
+| `prePublish` | check | git | clean tree, right branch, HEAD = verified, base unmoved (else re-sync ≤ `MAX_PRE_PUBLISH` 3) | publish / syncBase / FAIL |
+| `publish` | agent | `publisher` | push + open/reuse **draft PR** per changed repo; `maxVisits: 1` | verifyPublish / FAIL |
+| `verifyPublish` | check | git + provider | remote head = local HEAD, draft, ticket linked (ADO: tracker read-back) | END / NEEDS_REVIEW |
+
+Rules that bind any change under `lib/dagent/`:
+
+1. **Edges route only on validated `structured_output`** (`schemas.ts`); an edge may
+   only target a node listed in that node's `next` (or a `retryEntries` node from
+   `setup`). `MAX_HOPS` (60) fails a looping run.
+2. **`publish` is the only `external` node and is never on a cycle.**
+3. **Every agent turn is `context: "fresh"`**, with the `Agent` tool and every
+   pipeline skill (`Skill(<name>)` for each of `DENIED_SKILLS` in `cli.ts`: the
+   `BUNDLED_SKILLS` plus the hand-run `implement-ticket`, `fix-code-review`,
+   `dev-team`) disallowed,
+   plugins disabled, a per-turn MCP config (`lib/mcp.ts`, deleted after the turn) and
+   related repos passed via `--add-dir`.
+4. **Admission is `startRun()`**: preflight (`validateRootRepo`, `validateAgentAccess`,
+   `checkAgents()` — every agent the graph uses must be installed, named correctly,
+   allow `StructuredOutput`, have a body and not be older than the bundled copy),
+   then under the
+   `ticket-executor:dagent-admission` advisory lock: no active D-Agent run for the
+   ticket, no active main-flow `Run` for it, and a free slot (`concurrentRuns`).
+5. **Parking, not failing, for humans**: `NEEDS_INPUT` (ticket not ready) resumes with
+   `recheck-readiness`; `NEEDS_REVIEW` (PR read-back mismatch) resumes with `accept`.
+   A failed/cancelled run is retried as a new run from `plan`, `implement` or
+   `syncBase`, seeded with the old base, branches and plan.
+6. **Worktrees are per run and always removed** in `finish()`; a `running` row not
+   held by this process is failed by `reconcileOrphans()` ("Interrupted by a server
+   restart").
+7. **`KNOWLEDGE.md` is audited**: content at start is stored on the run and the line
+   diff is saved as artifact kind `knowledge` at finish.
+8. **The agents ship in the repo.** `agents/<name>.md` is the source of truth,
+   `lib/agentPack.ts` (`BUNDLED_AGENTS`, kept equal to `agentsOf()` by a test) installs
+   them into `~/.claude/agents` on boot and from System Check / Guide, the same way
+   `lib/skillPack.ts` does skills. **Changing an agent's prompt or contract bumps its
+   `version:`** — an older installed copy is then replaced on boot and refused at
+   admission; a same-version copy edited by hand is reported, never overwritten.
+9. **A graph shape change gets a new graph id**, and `graphById()` keeps serving the
+   old id, so a parked run (`rehydrate()`) finishes on the shape it started on.
+
+After touching a node, edge, contract or rule in `lib/dagent/` or `lib/workflow/`, run
+`node --import ./tests/register.mjs --test tests/dagent.test.ts tests/workflowLayout.test.ts`.
 
 ## Credentials — one source, no fallbacks
 

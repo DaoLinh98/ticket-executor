@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import { agentVersionProblem } from "../agentPack";
 
 export type AgentDef = {
   name: string;
@@ -55,6 +56,8 @@ function read(file: string): AgentDef | null {
 }
 
 export function checkAgents(names: string[]): { problems: string[] } {
-  const problems = names.map((name) => agentProblem(name, read(path.join(installedDir(), `${name}.md`)))).filter(Boolean);
+  const problems = names
+    .map((name) => agentProblem(name, read(path.join(installedDir(), `${name}.md`))) || agentVersionProblem(name))
+    .filter(Boolean);
   return { problems };
 }

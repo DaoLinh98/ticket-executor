@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
+import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
 import { agentsOf, GRAPH, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS } from "../lib/dagent/graph";
 import { implementPrompt, readinessPrompt } from "../lib/dagent/prompts";
 import { bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, warningsOf } from "../lib/dagent/rules";
 import { companionNote } from "../lib/repoContext";
+import { readFileSync } from "fs";
+import path from "path";
+import { BUNDLED_AGENTS } from "../lib/agentPack";
+import { BUNDLED_SKILLS, readVersion } from "../lib/skillPack";
 import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, TERMINALS, ZERO_USAGE, type Ctx, type NodeResult } from "../lib/dagent/types";
 import { outputOf } from "../lib/dagent/view";
 
@@ -202,4 +207,20 @@ test("the view maps engine outputs onto the workflow UI shapes", () => {
   const pub = outputOf("publish", { prs: [{ repo: "api", prUrl: "https://x/pullrequest/7", isDraft: true, reusedExisting: false }] }, 1, "");
   assert.deepEqual(pub, { node: "publish", prs: [{ repo: "api", number: 7, url: "https://x/pullrequest/7", draft: true, reusedExisting: false }] });
   assert.equal(outputOf("implement", {}, 1, ""), null);
+});
+
+test("an agent turn cannot invoke a Ticket Execution or hand-run skill, or spawn a subagent", () => {
+  const args = turnArgs({ agent: "implementer", prompt: "p", schema: {}, mcpConfigPath: "", model: "", effort: "", cwd: "/nowhere", addDirs: [] }, "s1");
+  const denied = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--json-schema"));
+  assert.deepEqual(denied, ["Agent", ...DENIED_SKILLS.map((s) => `Skill(${s})`)]);
+  for (const s of [...BUNDLED_SKILLS, "implement-ticket", "fix-code-review", "dev-team"]) assert.ok(denied.includes(`Skill(${s})`), s);
+});
+
+test("the repo ships every agent the graph runs, each valid and versioned", () => {
+  assert.deepEqual([...BUNDLED_AGENTS].sort(), agentsOf().sort());
+  for (const name of BUNDLED_AGENTS) {
+    const file = path.join(process.cwd(), "agents", `${name}.md`);
+    assert.equal(agentProblem(name, parseAgent(readFileSync(file, "utf8"))), "", name);
+    assert.notEqual(readVersion(file), "0.0.0", `${name} has no version`);
+  }
 });
