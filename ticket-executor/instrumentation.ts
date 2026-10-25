@@ -39,11 +39,27 @@ async function installBundledSkills() {
   if (installed.length) console.log(`[ticket-executor] installed skills: ${installed.join(", ")}`);
 }
 
+/** The same, for the D-Agent subagents in `agents/` → `~/.claude/agents`. */
+async function installBundledAgents() {
+  const { agentStates, installAgent } = await import("./lib/agentPack");
+  const installed: string[] = [];
+  for (const { name, status } of agentStates()) {
+    try {
+      const outcome = installAgent(name, { force: status === "outdated" });
+      if (outcome.ok && !outcome.detail.startsWith("Already")) installed.push(name);
+    } catch {
+      /* reported by System Check, which reads the same state */
+    }
+  }
+  if (installed.length) console.log(`[ticket-executor] installed agents: ${installed.join(", ")}`);
+}
+
 export async function register() {
   // Only the Node.js runtime can spawn processes or reach Postgres; the edge
   // runtime also evaluates this file.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   await installBundledSkills();
+  await installBundledAgents();
   const { recoverInterruptedRuns } = await import("./lib/executionStore");
   try {
     const n = await recoverInterruptedRuns();

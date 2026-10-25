@@ -83,7 +83,7 @@ export function installDir(): string {
   return path.join(homedir(), ".claude", "skills");
 }
 
-function readVersion(file: string): string {
+export function readVersion(file: string): string {
   try {
     // Frontmatter only: stop at the closing --- so a `version:` line in the
     // body can't be mistaken for the skill's version.
@@ -111,7 +111,7 @@ function filesOf(dir: string, base = dir): string[] {
   return out;
 }
 
-function sameContent(a: string, b: string): boolean {
+export function sameContent(a: string, b: string): boolean {
   try {
     return readFileSync(a).equals(readFileSync(b));
   } catch {
@@ -120,7 +120,7 @@ function sameContent(a: string, b: string): boolean {
 }
 
 /** Compare dotted numeric versions. Returns >0 when a is newer than b. */
-function cmpVersion(a: string, b: string): number {
+export function cmpVersion(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {

@@ -178,8 +178,8 @@ export function Bullets({ items }: { items: ReactNode[] }) {
  *  and System Check both listen and re-run their preflight fetch. */
 export const SKILLS_CHANGED_EVENT = "te:skills-changed";
 
-export function SkillInstallerSlot() {
-  return <SkillInstaller onChanged={() => window.dispatchEvent(new Event(SKILLS_CHANGED_EVENT))} />;
+export function SkillInstallerSlot({ pack }: { pack?: "skills" | "agents" }) {
+  return <SkillInstaller pack={pack} onChanged={() => window.dispatchEvent(new Event(SKILLS_CHANGED_EVENT))} />;
 }
 
 export function Code({ children }: { children: ReactNode }) {

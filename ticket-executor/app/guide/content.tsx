@@ -25,6 +25,19 @@ const SKILL_BLURB: Record<(typeof SKILLS)[number], string> = {
   "review-changes-v4": "the independent reviewer every run calls before publishing. Read-only; it never sees the implementer's reasoning.",
 };
 
+// Mirrors BUNDLED_AGENTS in lib/agentPack.ts (server-only, like REQUIRED_SKILLS).
+const AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher"] as const;
+
+const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
+  analyst: "readiness — reads the ticket, derives its acceptance criteria and checks what the base already delivers. Read-only.",
+  planner: "writes the plan that maps every acceptance criterion to files and a test. Read-only.",
+  implementer: "implements the plan and commits locally. Never pushes.",
+  reviewer: "the independent review of the committed diff, in a fresh context. Read-only.",
+  fixer: "fixes exactly the reviewer's blockers and commits locally.",
+  reflector: "when the fix loop is exhausted, decides whether to record a lesson in KNOWLEDGE.md.",
+  publisher: "pushes the verified branches and opens a draft PR linked to the ticket.",
+};
+
 export type GuideSection = {
   id: string;
   title: string;
@@ -114,6 +127,36 @@ git --version`}</Cmd>
         </Callout>
         <P>
           You can also verify from a terminal: run <Code>claude</Code>, then <Code>/skills</Code>.
+        </P>
+      </>
+    ),
+  },
+
+  // 2b ---------------------------------------------------------------------
+  {
+    id: "agents",
+    title: "Install the D-Agent subagents",
+    blurb: "The Workflow page runs each step as a subagent, not a skill. This repo ships all seven — install them onto your machine in one click.",
+    checkGroup: "agents",
+    docs: [{ label: "Subagents", href: "https://docs.claude.com/en/docs/claude-code/sub-agents" }],
+    body: (
+      <>
+        <P>
+          Each agent is a single <Code>{"<name>.md"}</Code> file under <Code>~/.claude/agents/</Code>, spawned by the D-Agent engine as <Code>{"claude -p --agent <name>"}</Code>. Only the Workflow page needs them; the skill-based Ticket Execution flow does not.
+        </P>
+        <Bullets
+          items={AGENTS.map((a) => (
+            <>
+              <Code>{a}</Code> — {AGENT_BLURB[a]}
+            </>
+          ))}
+        />
+        <SkillInstallerSlot pack="agents" />
+        <Callout tone="accent" title="Versioned like the skills">
+          The app installs missing or older agents on start. A copy older than the one this repo ships is refused when a Workflow run starts, and one you have edited yourself is never overwritten without an explicit confirmation.
+        </Callout>
+        <P>
+          You can also verify from a terminal: run <Code>claude</Code>, then <Code>/agents</Code>.
         </P>
       </>
     ),
