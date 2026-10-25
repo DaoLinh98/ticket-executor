@@ -509,6 +509,11 @@ model PlannedTicket {
   // confirm what the repo makes obvious is a day lost for nothing.
   unblockedByUser Boolean   @default(false)
   addedByUser     Boolean   @default(false)
+  // The developer stopped tracking this ticket. The row stays as the record of
+  // what was done, but nothing reads it any more: no queue, release, review or
+  // QA watch, no bell, no capacity, and a rebuild leaves it alone. Adding the
+  // ticket by hand clears it.
+  untracked       Boolean   @default(false)
   // Where the developer's claim on this ticket stands — see `lib/sprintClaim.ts`.
   // mine | handed-off | dropped. The row outlives the assignment that created
   // it: a ticket moved to QA under somebody else's name is still part of the

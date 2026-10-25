@@ -160,6 +160,7 @@ async function planReviewSources(provider: ProviderId, org: string, identity: De
   const planned = await prisma.plannedTicket.findMany({
     where: {
       prUrl: { not: "" },
+      untracked: false,
       plan: { provider, org, identityEmail: identity.email, status: "active" },
     },
     select: { ticketId: true, prUrl: true },
@@ -237,6 +238,7 @@ async function lifecycleSources(provider: ProviderId, org: string, identity: Dev
     where: {
       pendingAction: { not: "" },
       pendingSince: { not: null },
+      untracked: false,
       plan: { provider, org, identityEmail: identity.email, status: "active" },
     },
     select: {

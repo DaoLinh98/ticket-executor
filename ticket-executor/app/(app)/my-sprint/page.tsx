@@ -32,6 +32,7 @@ import { isFixingQa, MAX_QA_ROUNDS } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
 import ActionButton from "./ActionButton";
+import { ActionLegend, IconAction } from "./actionIcons";
 import AutomationPanel, { type PlanSettings } from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import RunOptionsDialog from "./RunOptionsDialog";
@@ -330,7 +331,7 @@ export default function MySprintPage() {
     act("add-" + t.id, async () => {
       const d = await post(
         "/api/my-sprint/plan",
-        { addToRelease: { ticketId: t.id, title: t.title, project: t.project, points: t.storyPoints, estimateHours: t.estimateHours } },
+        { addToRelease: { ticketId: t.id, title: t.title, project: t.project, points: t.storyPoints, estimateHours: t.estimateHours, status: t.status } },
         "PUT"
       );
       if (d.plan) setStored(d.plan);
@@ -341,7 +342,7 @@ export default function MySprintPage() {
     act("remove-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { removeFromRelease: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
-      setMessage(`#${ticketId} removed from the release plan.`);
+      setMessage(`#${ticketId} is no longer tracked.`);
     }, (plan) => ({ ...plan, items: plan.items.filter((i) => i.id !== plannedId) }));
 
   const moveNow = (plannedId: string, move: QueueMove) =>
@@ -492,6 +493,23 @@ export default function MySprintPage() {
       run: () => postReplyNow(draft),
     });
 
+  const askRemove = (plannedId: string, ticketId: string) =>
+    setConfirm({
+      title: `Stop tracking #${ticketId}?`,
+      confirmLabel: "Remove",
+      busyKey: "remove-" + plannedId,
+      body: (
+        <>
+          <span>#{ticketId} · {stored?.items.find((i) => i.id === plannedId)?.title ?? ""}</span>
+          <span>
+            It leaves the plan: no runs, release, review or QA watch, and a rebuild will not bring it back. Its runs and
+            pull requests stay as they are. Search for it and add it to track it again.
+          </span>
+        </>
+      ),
+      run: () => removeNow(plannedId, ticketId),
+    });
+
   const runConfirm = async () => {
     if (!confirm) return;
     await confirm.run();
@@ -507,7 +525,7 @@ export default function MySprintPage() {
   const projectCount = new Set((data?.tickets ?? []).map((t) => t.project).filter(Boolean)).size;
   const rows: PlannedRow[] =
     stored?.items?.length
-      ? stored.items
+      ? stored.items.filter((i) => !i.untracked)
       : (data?.plan?.tickets ?? []).map((t) => ({
           id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
@@ -534,7 +552,7 @@ export default function MySprintPage() {
     const base = { ticketId: t.ticketId, title: t.title };
     const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
     const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
-    const result = <ActionButton label="Result" variant="ghost" onClick={() => openExecution(t.ticketId, "result")} />;
+    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId, "result")} />;
     if (t.reviewState === "needs-human") {
       attention.push({ ...base, key: "nh-" + t.id, tone: "warning", text: `${t.reviewRounds} rounds of automatic review fixes did not close it — the rest needs a decision.`, action: result });
     }
@@ -542,14 +560,14 @@ export default function MySprintPage() {
       attention.push({
         ...base, key: "rf-" + t.id, tone: "danger", text: "The review fix run failed.",
         action: t.prPublished && !t.prMerged && t.openComments > 0
-          ? <ActionButton label="Fix review" variant="outline" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
+          ? <IconAction action="fixReview" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
           : result,
       });
     }
     if (t.releaseError) {
       attention.push({
         ...base, key: "re-" + t.id, tone: "danger", text: t.releaseError,
-        action: due ? <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} /> : undefined,
+        action: due ? <IconAction action="release" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} /> : undefined,
       });
     }
     if (t.implementState === "failed") {
@@ -557,14 +575,14 @@ export default function MySprintPage() {
         ...base, key: "if-" + t.id, tone: "danger",
         text: t.prUrl ? "The run failed after opening a pull request — look at the result." : "The implement run failed.",
         action: !t.prUrl && t.implementOrder > 0
-          ? <ActionButton label="Retry" variant="warning" onClick={() => retryNow(t.id)} busy={busy.has("retry-" + t.id)} />
+          ? <IconAction action="retry" onClick={() => retryNow(t.id)} busy={busy.has("retry-" + t.id)} />
           : result,
       });
     }
     if (t.pendingAction === "move-to-qa") {
       attention.push({
         ...base, key: "mq-" + t.id, tone: "accent", text: "Pull request merged — confirm to move it to In QA.",
-        action: <ActionButton label="Move to In QA" variant="primary" onClick={() => moveToQaNow(t.id)} busy={busy.has("qa-" + t.id)} />,
+        action: <IconAction action="moveToQa" onClick={() => moveToQaNow(t.id)} busy={busy.has("qa-" + t.id)} />,
       });
     }
     if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.implementState !== "running" && t.reviewState !== "running") {
@@ -573,14 +591,14 @@ export default function MySprintPage() {
       } else if (!replyWaiting) {
         attention.push({
           ...base, key: "qf-" + t.id, tone: "warning", text: "Came back from QA — start the QA fix.",
-          action: <ActionButton label="Start QA fix" variant="warning" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />,
+          action: <IconAction action="qaFix" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />,
         });
       }
     }
     if (due && !stored?.autoRelease && data?.today && t.releaseDay && t.releaseDay <= data.today && !t.releaseError) {
       attention.push({
         ...base, key: "rd-" + t.id, tone: "accent", text: "Its release day has come and auto-release is off.",
-        action: <ActionButton label="Release" variant="primary" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} />,
+        action: <IconAction action="release" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} />,
       });
     }
   }
@@ -590,7 +608,7 @@ export default function MySprintPage() {
     attention.push({
       key: "dr-" + d.id, ticketId: d.ticketId, title: row?.title ?? "", tone: "warning",
       text: d.needsHuman ? "A reply to QC is drafted and needs your decision." : "A reply to QC is drafted — post or dismiss it.",
-      action: <ActionButton label="Read draft" variant="outline" onClick={() => document.getElementById("qc-replies")?.scrollIntoView({ behavior: "smooth" })} />,
+      action: <IconAction action="readDraft" onClick={() => document.getElementById("qc-replies")?.scrollIntoView({ behavior: "smooth" })} />,
     });
   }
   attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
@@ -672,7 +690,7 @@ export default function MySprintPage() {
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
-        <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+        <div className="te-sprint-page" style={{ maxWidth: "1820px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
           {initialLoading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
           ) : data && !data.configured ? (
@@ -725,7 +743,7 @@ export default function MySprintPage() {
 
               <div
                 className="te-sprint-split"
-                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 460px", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}
+                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 460px 200px", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}
               >
               <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
@@ -897,7 +915,7 @@ export default function MySprintPage() {
                     draftReply: draftReplyNow,
                     startQaFix: startQaFixNow,
                     moveToQa: moveToQaNow,
-                    remove: removeNow,
+                    remove: askRemove,
                     move: moveNow,
                     setReleaseDay: setReleaseDayNow,
                     hold: holdNow,
@@ -906,6 +924,9 @@ export default function MySprintPage() {
                   }}
                 />
                 </div>
+              </div>
+              <div className="te-scroll te-sprint-pane" style={{ gridColumn: 3, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <ActionLegend />
               </div>
               </div>
             </>

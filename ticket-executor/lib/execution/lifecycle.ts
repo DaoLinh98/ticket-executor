@@ -131,7 +131,7 @@ export async function rolloverPlans(now = new Date()): Promise<number> {
       (await prisma.plannedTicket.findMany({ where: { planId: next.id }, select: { ticketId: true } })).map((r) => r.ticketId)
     );
     const unfinished = await prisma.plannedTicket.findMany({
-      where: { planId: plan.id, claim: "mine", NOT: { stage: "done" } },
+      where: { planId: plan.id, claim: "mine", untracked: false, NOT: { stage: "done" } },
       select: { id: true, ticketId: true },
     });
     const moving = unfinished.filter((r) => !taken.has(r.ticketId));
@@ -159,7 +159,7 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
   if (!org || org !== plan.org || !hasIdentity(identity) || identity.email !== plan.identityEmail) return 0;
 
   const provider = normalizeProvider(plan.provider);
-  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id } });
+  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id, untracked: false } });
   if (!rows.length) return 0;
   const fetched = await loadTicketsByIds(provider, rows.map((r) => r.ticketId)).catch(() => []);
   if (!fetched.length) return 0;

@@ -65,6 +65,8 @@ export type PlannedRow = {
   prMerged: boolean;
   pendingAction: string;
   qaRounds: number;
+  /** Stopped tracking by the developer — kept as a record, never shown. */
+  untracked?: boolean;
 };
 
 export type StoredPlan = {

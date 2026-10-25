@@ -175,8 +175,8 @@ export async function PATCH(req: Request) {
 //   { release: "<plannedTicketId>" }  hand one finished ticket over now
 //   { retry:   "<plannedTicketId>" }  put a stopped ticket back in the queue
 //   { tick: true }                    run one scheduler pass immediately
-//   { addToRelease: { ticketId, ... } }  append a ticket to the plan, last in the implement queue
-//   { removeFromRelease: "<plannedTicketId>" }  take an unstarted ticket out of the plan
+//   { addToRelease: { ticketId, ..., status } }  add or re-track a ticket; queued only before review
+//   { removeFromRelease: "<plannedTicketId>" }  stop tracking a ticket (the row stays as a record)
 //
 // The button and the timer call exactly the same code on purpose: an automation
 // nobody can trigger by hand is one nobody can check.
@@ -256,6 +256,7 @@ export async function PUT(req: Request) {
         project: String(t.project ?? ""),
         points: number(t.points),
         estimateHours: number(t.estimateHours),
+        status: String(t.status ?? ""),
       },
       new Date().toISOString().slice(0, 10)
     );

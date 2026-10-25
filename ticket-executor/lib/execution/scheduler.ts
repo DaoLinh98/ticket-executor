@@ -279,7 +279,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
   // and this function's whole cost is a provider read. A finished sprint should
   // not keep paying for one every two minutes.
   const actionable = await prisma.plannedTicket.count({
-    where: { planId: plan.id, implementState: { in: ["pending", "running"] } },
+    where: { planId: plan.id, untracked: false, implementState: { in: ["pending", "running"] } },
   });
   if (!actionable) return 0;
 
@@ -336,7 +336,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
   );
   const claimById = new Map(claimed.map((c) => [String(c.ticket.id), c]));
 
-  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id } });
+  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id, untracked: false } });
   let aborted = 0;
 
   for (const row of rows) {
@@ -410,6 +410,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   const queue = await prisma.plannedTicket.findMany({
     where: {
       planId: plan.id,
+      untracked: false,
       implementState: "pending",
       claim: "mine",
       implementOrder: { gt: 0 },
@@ -426,7 +427,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // than every two minutes, which is what the `today` marker in the detail is
   // for — a log nobody can read is not evidence.
   const blockedCount = await prisma.plannedTicket.count({
-    where: { planId: plan.id, implementState: "pending", blocked: true, unblockedByUser: false },
+    where: { planId: plan.id, untracked: false, implementState: "pending", blocked: true, unblockedByUser: false },
   });
 
   // The root repo the project was last run with. The scheduler must not invent
@@ -522,6 +523,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
   const candidates = await prisma.plannedTicket.findMany({
     where: {
       planId: plan.id,
+      untracked: false,
       claim: "mine",
       implementState: "implemented",
       runId: { not: "" },
