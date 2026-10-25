@@ -126,11 +126,13 @@ function GuidePageInner() {
         </Link>
       </PageToolbar>
 
-      <main className="te-scroll te-scroll--smooth te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
-          <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+          <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto" }}>
+          <div className="te-sprint-split" style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(280px, 340px) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "24px" }}>
+          <div className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             {banner && (
               <div style={{ ...tintedCard(banner.tone), display: "flex", flexDirection: "column", gap: "5px", animation: "fadeUp .32s both" }}>
                 <span style={{ fontSize: FONT.md, fontWeight: 700, color: banner.color }}>{banner.title}</span>
@@ -141,7 +143,7 @@ function GuidePageInner() {
             {/* Stepper — jump list with the live verdict per step */}
             <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
               <span style={fieldLabel()}>SETUP PATH</span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
                 {SECTIONS.map((s, i) => {
                   const v = verdicts[i];
                   const color =
@@ -154,7 +156,7 @@ function GuidePageInner() {
                       key={s.id}
                       onClick={(e) => { fireBoltFromEvent(e); jump(s.id); }}
                       title={s.title}
-                      style={{ ...pill({ color, border: COLORS.border, size: "sm", weight: 600 }), cursor: "pointer", maxWidth: "230px", animation: "fadeUp .3s both", animationDelay: `${i * 45}ms` }}
+                      style={{ ...pill({ color, border: COLORS.border, size: "sm", weight: 600 }), cursor: "pointer", maxWidth: "100%", animation: "fadeUp .3s both", animationDelay: `${i * 45}ms` }}
                     >
                       <span style={{ color: COLORS.faint, fontWeight: 700 }}>{i + 1}</span>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
@@ -164,6 +166,8 @@ function GuidePageInner() {
               </div>
             </div>
 
+          </div>
+          <div className="te-scroll te-scroll--smooth te-sprint-pane" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px", paddingRight: "4px" }}>
             {/* Sections */}
             {SECTIONS.map((s, i) => {
               const v = verdicts[i];
@@ -260,6 +264,8 @@ function GuidePageInner() {
                 </span>
               )}
             </div>
+          </div>
+          </div>
           </div>
         )}
       </main>

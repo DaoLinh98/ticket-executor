@@ -184,6 +184,7 @@ export default function TicketExecutor() {
   // different query at the provider (lib/ticketScope.ts), so switching it
   // reloads rather than re-filtering.
   const [scope, setScope] = useState<TicketScope>("sprint");
+  const [listHidden, setListHidden] = useState(true);
   // Mirror of `scope` for the stable (empty-dep) `reloadTickets` callback, same
   // reason as `selectedIdRef` below.
   const scopeRef = useRef<TicketScope>(scope);
@@ -2144,7 +2145,7 @@ export default function TicketExecutor() {
         activeCount={activeCount}
       />
 
-      <div className="te-split" data-pane={mobilePane} style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
+      <div className="te-split" data-pane={mobilePane} data-list-hidden={listHidden} style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", minHeight: 0 }}>
         <TicketSidebar
           tickets={tickets}
           filtered={filtered}
@@ -2191,6 +2192,25 @@ export default function TicketExecutor() {
 
         {/* Main */}
         <main className="te-pane-detail" style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, background: "var(--te-page-veil)" }}>
+          <button
+            type="button"
+            className="te-list-toggle"
+            aria-label={listHidden ? "Show ticket list" : "Hide ticket list"}
+            aria-pressed={listHidden}
+            title={listHidden ? "Show ticket list" : "Hide ticket list"}
+            onClick={(e) => { fireBoltFromEvent(e); setListHidden((v) => !v); }}
+            style={{
+              position: "absolute", top: "50%", left: 0, zIndex: 6, transform: "translateY(-50%)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: "18px", height: "56px", padding: 0, cursor: "pointer",
+              color: "var(--te-text-soft, currentColor)", background: "var(--te-sidebar-bg)",
+              border: "1px solid rgba(255,255,255,.08)", borderLeft: "none", borderRadius: "0 8px 8px 0",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d={listHidden ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} />
+            </svg>
+          </button>
           {!t ? (
             <div style={{ margin: "auto" }}>{loading ? <LoadingRing size={140} /> : <span style={{ color: "var(--te-faint)", fontSize: FONT.md }}></span>}</div>
           ) : (
