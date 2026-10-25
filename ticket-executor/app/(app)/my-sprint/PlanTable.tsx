@@ -7,7 +7,7 @@ import type { QueueMove } from "@/lib/sprintPlan";
 import type { TriagedTicket } from "@/lib/execution/triage";
 import { CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelLabel, resolveModelId } from "@/lib/claudeOptions";
 import { useClaudeModels } from "../../queries";
-import ActionButton from "./ActionButton";
+import { IconAction } from "./actionIcons";
 import {
   CLAIM,
   READINESS,
@@ -284,44 +284,44 @@ export default function PlanTable({
                 <span className="te-plan-actions" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "7px", flexWrap: "nowrap" }}>
                   {canOverride &&
                     (t.unblockedByUser ? (
-                      <ActionButton label="Overridden" variant="success" onClick={() => h.setUnblocked(t.id, false)} busy={busy.has("unblock-" + t.id)} />
+                      <IconAction action="overridden" onClick={() => h.setUnblocked(t.id, false)} busy={busy.has("unblock-" + t.id)} />
                     ) : (
-                      <ActionButton label="Force ready" variant="outline" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
+                      <IconAction action="forceReady" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
                     ))}
                   {t.implementState === "running" || t.reviewState === "running" ? (
-                    <ActionButton label="Watch" variant="outline" onClick={() => h.openExecution(t.ticketId, "execution")} />
+                    <IconAction action="watch" onClick={() => h.openExecution(t.ticketId, "execution")} />
                   ) : t.runId || t.reviewRunId ? (
-                    <ActionButton label="Result" variant="ghost" onClick={() => h.openExecution(t.ticketId, "result")} />
+                    <IconAction action="result" onClick={() => h.openExecution(t.ticketId, "result")} />
                   ) : null}
                   {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
                     (t.reviewState === "resolved" ? (
-                      <ActionButton label="Waiting for reviewer" variant="ghost" onClick={() => {}} disabled />
+                      <IconAction action="waitingReviewer" onClick={() => {}} disabled />
                     ) : (
-                      <ActionButton label="Fix review" variant="outline" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
+                      <IconAction action="fixReview" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
                     ))}
                   {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
                     (t.implementState === "failed" || t.implementState === "skipped") && (
-                      <ActionButton label={held ? "Resume" : "Retry"} variant="warning" onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />
+                      <IconAction action={held ? "resume" : "retry"} onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />
                     )}
-                  {due && t.id && <ActionButton label="Release" variant="primary" onClick={() => h.release(t)} busy={busy.has("release-" + t.id)} />}
+                  {due && t.id && <IconAction action="release" onClick={() => h.release(t)} busy={busy.has("release-" + t.id)} />}
                   {t.id && QA_STAGES.has(stage) && t.pendingAction !== "fix-qa" && stage !== "qa-failed" && claim !== "dropped" && !replyWaiting && (
-                    <ActionButton label="Draft reply" variant="outline" onClick={() => h.draftReply(t.id)} busy={busy.has("draft-" + t.id)} />
+                    <IconAction action="draftReply" onClick={() => h.draftReply(t.id)} busy={busy.has("draft-" + t.id)} />
                   )}
                   {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < MAX_QA_ROUNDS && !replyWaiting &&
                     t.implementState !== "running" && t.reviewState !== "running" && claim === "mine" && (
-                      <ActionButton label="Start QA fix" variant="warning" onClick={() => h.startQaFix(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />
+                      <IconAction action="qaFix" onClick={() => h.startQaFix(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />
                     )}
                   {t.id && t.pendingAction === "move-to-qa" && (
-                    <ActionButton label="Move to In QA" variant="primary" onClick={() => h.moveToQa(t.id)} busy={busy.has("qa-" + t.id)} />
+                    <IconAction action="moveToQa" onClick={() => h.moveToQa(t.id)} busy={busy.has("qa-" + t.id)} />
                   )}
                   {canMove && t.id !== firstMovable && (
-                    <ActionButton label="Do next" variant="ghost" onClick={() => h.move(t.id, "top")} busy={busy.has("move-" + t.id)} />
+                    <IconAction action="doNext" onClick={() => h.move(t.id, "top")} busy={busy.has("move-" + t.id)} />
                   )}
                   {t.id && t.implementState === "pending" && t.implementOrder > 0 && claim === "mine" && !t.runId && !t.prUrl && !t.releasedAt && (
-                    <ActionButton label="Hold" variant="ghost" onClick={() => h.hold(t.id)} busy={busy.has("hold-" + t.id)} />
+                    <IconAction action="hold" onClick={() => h.hold(t.id)} busy={busy.has("hold-" + t.id)} />
                   )}
-                  {t.id && t.implementState === "pending" && !t.runId && !t.prUrl && !t.releasedAt && (
-                    <ActionButton label="Remove" variant="ghost" onClick={() => h.remove(t.id, t.ticketId)} busy={busy.has("remove-" + t.id)} />
+                  {t.id && t.implementState !== "running" && t.reviewState !== "running" && (
+                    <IconAction action="remove" onClick={() => h.remove(t.id, t.ticketId)} busy={busy.has("remove-" + t.id)} />
                   )}
                 </span>
               </div>

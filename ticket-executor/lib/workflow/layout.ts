@@ -199,8 +199,21 @@ export function layoutRun(defs: FlowNodeDef[], dir: Dir, extraPairs: [string, st
   };
 
   const edges: LayoutEdge[] = [];
+  // Side exits to a terminal share one rail per (side, terminal): a node drops a short
+  // stub onto its rail instead of drawing its own track across the canvas.
+  const isPark = (A: LayoutNode, B: LayoutNode, pr: Pair) => B.kind === "terminal" && !(pr.from === lastHappy && pr.to === A.def.next[0]);
+  const rails = new Map<string, { c: number; g: number }>();
   let nOver = 0;
   let nBelow = 0;
+  pairs.forEach((pr) => {
+    const A = nmap.get(pr.from);
+    const B = nmap.get(pr.to);
+    if (!A || !B || !isPark(A, B, pr)) return;
+    const above = A.row === 0 && A.lane !== "pre-run";
+    const k = `${above ? "a" : "b"}:${pr.to}`;
+    if (rails.has(k)) return;
+    rails.set(k, { c: above ? -22 - nOver++ * 14 : laneC + 22 + nBelow++ * 14, g: rails.size });
+  });
   pairs.forEach((pr) => {
     const A = nmap.get(pr.from);
     const B = nmap.get(pr.to);
@@ -210,21 +223,14 @@ export function layoutRun(defs: FlowNodeDef[], dir: Dir, extraPairs: [string, st
     let cls: EdgeClass;
     let d: string;
     let lab: [number, number];
-    if (B.kind === "terminal" && !(pr.from === lastHappy && pr.to === A.def.next[0])) {
+    if (isPark(A, B, pr)) {
       cls = "park";
-      if (A.row === 0 && A.lane !== "pre-run") {
-        const cT = -22 - nOver * 14;
-        nOver++;
-        const mx = b.ms - 26 - nOver * 6;
-        d = rpath([[a.mm, a.cs], [a.mm, cT], [mx, cT], [mx, b.cm], [b.ms, b.cm]], 12);
-        lab = [(a.mm + mx) / 2, cT];
-      } else {
-        const cB = laneC + 22 + nBelow * 14;
-        nBelow++;
-        const mx = b.ms - 26 - nBelow * 6;
-        d = rpath([[a.mm, a.ce], [a.mm, cB], [mx, cB], [mx, b.cm], [b.ms, b.cm]], 12);
-        lab = [(a.mm + mx) / 2, cB];
-      }
+      const above = A.row === 0 && A.lane !== "pre-run";
+      const rail = rails.get(`${above ? "a" : "b"}:${pr.to}`)!;
+      const sm = LR ? a.ms + 28 : a.mm;
+      const mx = b.ms - 26 - rail.g * 8;
+      d = rpath([[sm, above ? a.cs : a.ce], [sm, rail.c], [mx, rail.c], [mx, b.cm], [b.ms, b.cm]], 12);
+      lab = [sm, rail.c];
     } else if (b.cs >= a.ce - 1) {
       cls = "down";
       const dy = Math.max(24, (b.cs - a.ce) / 2);

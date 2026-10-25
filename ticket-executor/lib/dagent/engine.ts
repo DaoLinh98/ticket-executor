@@ -9,11 +9,11 @@ import { resolveCredential } from "../providerCredentials";
 import { checkAgents } from "./agents";
 import { runAgentTurn } from "./cli";
 import { CHECKS, companionDirs, deliveryFacts, removeWorktrees, type CheckEnv, type RetrySeed } from "./checks";
-import { agentsOf, graphById, GRAPH, MAX_HOPS } from "./graph";
+import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS } from "./graph";
 import { PLAN_FILE } from "./prompts";
 import { deliveryOf, knowledgeDiff } from "./rules";
 import { closeStep, nextSeq, openStep, saveArtifact, saveRun, saveTransition } from "./store";
-import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo } from "./types";
+import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo } from "./types";
 
 type Live = {
   id: string;
@@ -143,7 +143,7 @@ async function park(live: Live, waitReason: string, reason: string) {
 
 function promote(live: Live, node: Node, data: Record<string, unknown>): Record<string, string> {
   const patch: Record<string, string> = {};
-  if (node.id === "readiness" && typeof data.title === "string") patch.ticketTitle = data.title;
+  if ((node.id === "readiness" || node.id === "qaTriage") && typeof data.title === "string") patch.ticketTitle = data.title;
   if ((node.id === "implement" || node.id === "fix") && typeof data.branch === "string" && data.branch) patch.branch = data.branch;
   if (node.id === "publish" && Array.isArray(data.prs)) {
     const root = path.basename(live.ctx.rootRepo);
@@ -190,11 +190,11 @@ async function drive(live: Live, from: string) {
       await closeStep(step.id, live.cancelled ? "abandoned" : stepStatus(node, r), r, live.logs);
       if (live.cancelled) return await abort(live, node.id);
 
-      if (node.id === "plan" && r.ok) await capturePlan(live, r.data);
+      if (r.ok && typeof r.data.planMd === "string" && r.data.planMd.trim()) await capturePlan(live, r.data);
       live.ctx.channels[node.id] = input ? { ...r.data, input } : r.data;
 
       let next = live.graph.edges[node.id](live.ctx, r);
-      if (node.id === "setup" && next.to === "readiness" && live.entry !== "readiness") next = { to: live.entry, reason: `retry from ${live.entry}` };
+      if (node.id === "setup" && next.to !== FAIL && live.graph.retryEntries.includes(live.entry)) next = { to: live.entry, reason: `retry from ${live.entry}` };
       const allowed = node.next.includes(next.to) || (node.id === "setup" && live.graph.retryEntries.includes(next.to));
       if (!allowed) next = { to: FAIL, reason: `routed "${node.id}" to undeclared "${next.to}"` };
       if (node.id === "readiness" && next.to === END) await saveArtifact(live.id, "delivery", JSON.stringify(deliveryOf(live.ctx)));
@@ -215,6 +215,8 @@ async function abort(live: Live, nodeId: string) {
 }
 
 export type StartInput = {
+  flow?: Flow;
+  prUrl?: string;
   ticketId: string;
   ticketUrl?: string;
   project: string;
@@ -234,11 +236,13 @@ class Refused extends Error {
   }
 }
 
-async function retrySeed(retryOf: string, from: string): Promise<{ seed: RetrySeed; channels: Record<string, Record<string, unknown>> }> {
+async function retrySeed(graph: Graph, retryOf: string, from: string): Promise<{ seed: RetrySeed; channels: Record<string, Record<string, unknown>> }> {
   const prev = await prisma.dagentRun.findUnique({ where: { id: retryOf } });
   if (!prev) throw new Refused(`Run ${retryOf} does not exist.`, 404);
   if (!["failed", "cancelled"].includes(prev.state)) throw new Refused(`Only a failed or cancelled run can be retried (this one is ${prev.state}).`, 409);
-  if (!GRAPH.retryEntries.includes(from)) throw new Refused(`A run can only be retried from ${GRAPH.retryEntries.join(", ")}.`, 400);
+  if (prev.graphId !== graph.id || !graph.retryEntries.includes(from)) {
+    throw new Refused(graph.retryEntries.length && prev.graphId === graph.id ? `A run can only be retried from ${graph.retryEntries.join(", ")}.` : "This run cannot be retried from a node — start it again.", 400);
+  }
   const old = (prev.channels ?? {}) as Record<string, Record<string, unknown>>;
   const branches: Record<string, string> = {};
   const changed = old.diffGuard?.changed ?? old.testGate?.results;
@@ -257,7 +261,10 @@ export async function startRun(input: StartInput): Promise<StartResult> {
   const ticketId = input.ticketId.trim();
   const rootRepo = input.rootRepo.trim();
   const provider = (input.provider || "azure-devops").trim();
-  const from = input.retryOf ? (input.from || "syncBase") : "readiness";
+  const flow = input.flow ?? "implement";
+  const graph = GRAPHS[flow];
+  const prUrl = (input.prUrl ?? "").trim();
+  const from = input.retryOf ? (input.from || "syncBase") : graph.nodes.setup.next[0];
   const gates: GateResult[] = [];
 
   const problems: string[] = [];
@@ -267,13 +274,14 @@ export async function startRun(input: StartInput): Promise<StartResult> {
     const access = await validateAgentAccess(provider, rootRepo);
     if (!access.ok) problems.push(access.error ?? "The agent cannot reach the provider.");
   }
-  const agents = checkAgents(agentsOf());
+  const agents = checkAgents(agentsOf(graph));
   problems.push(...agents.problems);
   if (!ticketId) problems.push("Ticket id is required.");
+  if (flow === "review" && !prUrl) problems.push("A review fix needs the pull request URL.");
   gates.push({
     gate: "preflight",
     status: problems.length ? "refused" : "passed",
-    reason: problems.length ? problems.join(" ") : `Root repo ok · agent access ok · ${agentsOf().length} agents found in ~/.claude/agents`,
+    reason: problems.length ? problems.join(" ") : `Root repo ok · agent access ok · ${agentsOf(graph).length} agents found in ~/.claude/agents`,
     at: clock(),
     howTo: problems.length ? "Fix the items above, then start the run again." : undefined,
   });
@@ -284,7 +292,7 @@ export async function startRun(input: StartInput): Promise<StartResult> {
   let seeded: Awaited<ReturnType<typeof retrySeed>> | null = null;
   let row;
   try {
-    if (input.retryOf) seeded = await retrySeed(input.retryOf, from);
+    if (input.retryOf) seeded = await retrySeed(graph, input.retryOf, from);
     row = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('ticket-executor:dagent-admission'))`;
       const [dup, legacy, running] = await Promise.all([
@@ -304,9 +312,10 @@ export async function startRun(input: StartInput): Promise<StartResult> {
           org,
           project: input.project.trim(),
           rootRepo,
-          graphId: GRAPH.id,
+          graphId: graph.id,
+          prUrl,
           state: "running",
-          currentNodeId: GRAPH.entry,
+          currentNodeId: graph.entry,
           model: (input.model ?? "").trim(),
           effort: (input.effort ?? "").trim(),
           retryOfId: input.retryOf ?? "",
@@ -326,9 +335,11 @@ export async function startRun(input: StartInput): Promise<StartResult> {
 
   const live: Live = {
     id: row.id,
-    graph: GRAPH,
+    graph,
     ctx: {
       runId: row.id,
+      flow,
+      prUrl,
       ticketId,
       ticketUrl: row.ticketUrl,
       provider,
@@ -353,7 +364,7 @@ export async function startRun(input: StartInput): Promise<StartResult> {
     knowledgeAtStart: row.knowledgeAtStart,
   };
   LIVE.set(row.id, live);
-  void drive(live, GRAPH.entry);
+  void drive(live, graph.entry);
   return { ok: true, runId: row.id };
 }
 
@@ -367,6 +378,8 @@ async function rehydrate(id: string): Promise<Live | null> {
     graph,
     ctx: {
       runId: id,
+      flow: flowOf(graph.id),
+      prUrl: row.prUrl,
       ticketId: row.ticketId,
       ticketUrl: row.ticketUrl,
       provider: row.provider,

@@ -2,9 +2,40 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { layoutRun } from "../lib/workflow/layout";
-import { DEFAULT_DEFS, buildScenarios } from "../lib/workflow/mock";
+import type { Effects, FlowNodeDef, NodeKind } from "../lib/workflow/types";
+import { GRAPHS } from "../lib/dagent/graph";
+import { flowDefs } from "../lib/dagent/view";
 
-const NOW = Date.parse("2026-10-23T02:42:00Z");
+const D = (id: string, label: string, phase: string, kind: NodeKind, effects: Effects, context: "" | "fresh" | "resume", next: string[], maxVisits?: number): FlowNodeDef => ({
+  id,
+  label,
+  phase,
+  kind,
+  effects,
+  context,
+  next,
+  maxVisits,
+});
+
+// A fixed shape for the layout rules, independent of how the live graphs evolve.
+const DEFAULT_DEFS: FlowNodeDef[] = [
+  D("preflight", "Preflight", "pre-run", "gate", "pure", "", ["admission"]),
+  D("admission", "Admission", "pre-run", "gate", "pure", "", ["setup"]),
+  D("setup", "Prepare workspace", "prepare", "harness", "local", "", ["readiness"]),
+  D("readiness", "Ticket readiness", "understand", "agent", "pure", "fresh", ["plan", "NEEDS_INPUT"]),
+  D("plan", "Plan the change", "understand", "agent", "local", "fresh", ["planCheck"], 2),
+  D("planCheck", "Plan check", "understand", "check", "pure", "", ["implement", "plan"]),
+  D("implement", "Implement", "build", "agent", "local", "fresh", ["syncBase"]),
+  D("syncBase", "Sync with base", "build", "check", "local", "", ["testGate", "fix"]),
+  D("testGate", "Test gate", "verify", "check", "pure", "", ["diffGuard", "fix"]),
+  D("diffGuard", "Diff guard", "verify", "check", "pure", "", ["evaluate", "fix"]),
+  D("evaluate", "Independent review", "verify", "agent", "pure", "fresh", ["prePublish", "fix"]),
+  D("fix", "Fix refusals", "verify", "agent", "local", "resume", ["syncBase", "reflect"], 5),
+  D("reflect", "Record lesson", "verify", "agent", "local", "fresh", ["FAIL"]),
+  D("prePublish", "Pre-publish check", "publish", "check", "pure", "", ["publish", "syncBase"]),
+  D("publish", "Push & open draft PR", "publish", "harness", "external", "", ["verifyPublish"], 1),
+  D("verifyPublish", "Verify PR", "publish", "check", "pure", "", ["END", "NEEDS_REVIEW"]),
+];
 
 test("layout is deterministic", () => {
   assert.deepEqual(layoutRun(DEFAULT_DEFS, "LR"), layoutRun(DEFAULT_DEFS, "LR"));
@@ -25,6 +56,15 @@ test("terminals are laid out and routed around the lanes", () => {
   assert.deepEqual(ids, ["END", "NEEDS_REVIEW", "NEEDS_INPUT", "FAIL"]);
   assert.equal(lay.edges.find((e) => e.key === "readiness>NEEDS_INPUT")!.cls, "park");
   assert.equal(lay.edges.find((e) => e.key === "syncBase>fix")!.cls, "down");
+});
+
+test("exits to the same terminal share one rail", () => {
+  const defs = DEFAULT_DEFS.map((d) => (d.id === "implement" ? { ...d, next: [...d.next, "NEEDS_INPUT"] } : d));
+  const lay = layoutRun(defs, "LR");
+  // The rail is the path's third point: M stub, L…Q… into the rail, then along it.
+  const railY = (key: string) => lay.edges.find((e) => e.key === key)!.d.match(/Q\S+ (-?[\d.]+) /)![1];
+  assert.equal(railY("readiness>NEEDS_INPUT"), railY("implement>NEEDS_INPUT"));
+  assert.notEqual(railY("readiness>NEEDS_INPUT"), railY("verifyPublish>NEEDS_REVIEW"));
 });
 
 test("a retry edge back to an earlier node is a loop", () => {
@@ -48,15 +88,11 @@ test("an implicit traversed edge is drawn once", () => {
   assert.equal(e[0].implicit, true);
 });
 
-test("every scenario run lays out and its steps stay on known nodes", () => {
-  const scenarios = buildScenarios(NOW);
-  for (const sc of Object.values(scenarios)) {
-    for (const make of Object.values(sc.runs)) {
-      const run = make();
-      const lay = layoutRun(run.defs, "LR", run.transitions.map((t): [string, string] => [t.fromNode, t.toNode]));
-      const ids = new Set(lay.nodes.map((n) => n.id));
-      for (const s of run.steps) assert.ok(ids.has(s.nodeId), `${sc.key}:${s.nodeId}`);
-      assert.ok(ids.has(run.currentNodeId), `${sc.key}:current`);
-    }
+test("every D-Agent graph lays out with every node and its entry on the canvas", () => {
+  for (const g of Object.values(GRAPHS)) {
+    const lay = layoutRun(flowDefs(g), "LR");
+    const ids = new Set(lay.nodes.map((n) => n.id));
+    for (const id of Object.keys(g.nodes)) assert.ok(ids.has(id), `${g.id}:${id}`);
+    assert.ok(lay.edges.some((e) => e.key === `admission>${g.entry}`), `${g.id}:entry`);
   }
 });

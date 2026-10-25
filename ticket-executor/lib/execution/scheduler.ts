@@ -36,7 +36,8 @@ import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
-import { cancelRun, resumeRateLimitedRuns, startRun } from "./runner";
+import { cancelRun, resumeRateLimitedRuns, startRun, type StartRunInput } from "./runner";
+import { cancelRun as cancelDagentRun, runOutcomes, startRun as startDagentRun } from "../dagent";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
  *  faster than a Claude turn finishes, and a tighter loop would only add
@@ -57,6 +58,34 @@ const TICK_TX_TIMEOUT_MS = 600_000;
  *  would re-read the same threads and reach the same conclusion, at full price.
  *  Hitting the ceiling is a state (`needs-human`), not a failure. */
 const MAX_REVIEW_ROUNDS = 3;
+
+/** The engine a plan starts its runs on: `Run` + skills, or `DagentRun` + subagents. */
+type Engine = "classic" | "dagent";
+
+const engineOf = (plan: { engine: string }): Engine => (plan.engine === "dagent" ? "dagent" : "classic");
+
+const DAGENT_FLOW = { [IMPLEMENT_SKILL]: "implement", [REVIEW_FIX_SKILL]: "review", [QA_FIX_SKILL]: "qa" } as const;
+
+/**
+ * Start one run on the plan's engine. The plan row stamps which engine it went to
+ * (`runEngine` / `reviewEngine`), so reconcile and cancel read the right table even
+ * after the plan is switched mid-flight.
+ */
+async function startOn(engine: Engine, input: StartRunInput): Promise<{ ok: true; runId: string } | { ok: false; error: string; blocked?: string }> {
+  if (engine === "classic") return startRun(input);
+  const result = await startDagentRun({
+    flow: DAGENT_FLOW[input.requestedSkill as keyof typeof DAGENT_FLOW] ?? "implement",
+    prUrl: input.prUrl,
+    ticketId: input.ticketId,
+    ticketUrl: input.ticketUrl,
+    project: input.project,
+    rootRepo: input.rootRepo,
+    provider: input.provider,
+    model: input.model,
+    effort: input.effort,
+  });
+  return result.ok ? result : { ok: false, error: result.error };
+}
 
 const CLOSED_PR_STATUSES = ["Completed", "Abandoned"];
 
@@ -183,7 +212,7 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
   }
 }
 
-type ActivePlan = { id: string; provider: string; org: string; project: string };
+type ActivePlan = { id: string; provider: string; org: string; project: string; engine: string };
 
 type ClaimPlan = ActivePlan & {
   sprint: string;
@@ -250,7 +279,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
   // and this function's whole cost is a provider read. A finished sprint should
   // not keep paying for one every two minutes.
   const actionable = await prisma.plannedTicket.count({
-    where: { planId: plan.id, implementState: { in: ["pending", "running"] } },
+    where: { planId: plan.id, untracked: false, implementState: { in: ["pending", "running"] } },
   });
   if (!actionable) return 0;
 
@@ -307,7 +336,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
   );
   const claimById = new Map(claimed.map((c) => [String(c.ticket.id), c]));
 
-  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id } });
+  const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id, untracked: false } });
   let aborted = 0;
 
   for (const row of rows) {
@@ -344,7 +373,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
     // `cancelRun` answers false when the run is not live in this process — after
     // a restart, say. The row is marked either way: a run this process cannot
     // reach is not one it should keep waiting for.
-    const stopped = await cancelRun(row.runId);
+    const stopped = row.runEngine === "dagent" ? await cancelDagentRun(row.runId) : await cancelRun(row.runId);
     await prisma.plannedTicket.update({
       where: { id: row.id },
       data: { implementState: "skipped" },
@@ -381,6 +410,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   const queue = await prisma.plannedTicket.findMany({
     where: {
       planId: plan.id,
+      untracked: false,
       implementState: "pending",
       claim: "mine",
       implementOrder: { gt: 0 },
@@ -397,7 +427,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // than every two minutes, which is what the `today` marker in the detail is
   // for — a log nobody can read is not evidence.
   const blockedCount = await prisma.plannedTicket.count({
-    where: { planId: plan.id, implementState: "pending", blocked: true, unblockedByUser: false },
+    where: { planId: plan.id, untracked: false, implementState: "pending", blocked: true, unblockedByUser: false },
   });
 
   // The root repo the project was last run with. The scheduler must not invent
@@ -415,7 +445,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   }
   if (!next) return false;
 
-  const result = await startRun({
+  const result = await startOn(engineOf(plan), {
     ticketId: next.ticketId,
     ticketUrl: "",
     provider: plan.provider,
@@ -437,7 +467,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
 
   await prisma.plannedTicket.update({
     where: { id: next.id },
-    data: { implementState: "running", runId: result.runId },
+    data: { implementState: "running", runId: result.runId, runEngine: engineOf(plan) },
   });
   await logAutomation({
     planId: plan.id, ticketId: next.ticketId, action: "implement", outcome: "started",
@@ -493,6 +523,7 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
   const candidates = await prisma.plannedTicket.findMany({
     where: {
       planId: plan.id,
+      untracked: false,
       claim: "mine",
       implementState: "implemented",
       runId: { not: "" },
@@ -690,7 +721,7 @@ export async function startReviewRun(
     return { ok: false, error };
   }
 
-  const result = await startRun({
+  const result = await startOn(engineOf(item.plan), {
     ticketId: item.ticketId,
     ticketUrl: "",
     provider: item.plan.provider,
@@ -715,6 +746,7 @@ export async function startReviewRun(
     data: {
       reviewState: "running",
       reviewRunId: result.runId,
+      reviewEngine: engineOf(item.plan),
       reviewError: "",
       ...(opts.openComments === undefined ? {} : { openComments: opts.openComments }),
       ...(opts.lastCommentAt && isPrimary ? { lastCommentAt: opts.lastCommentAt } : {}),
@@ -764,7 +796,7 @@ export async function startQaFix(plannedId: string): Promise<{ ok: boolean; erro
     return { ok: false, error, blocked: "no-root-repo" };
   }
 
-  const result = await startRun({
+  const result = await startOn(engineOf(item.plan), {
     ticketId: item.ticketId,
     ticketUrl: "",
     provider: item.plan.provider,
@@ -785,6 +817,7 @@ export async function startQaFix(plannedId: string): Promise<{ ok: boolean; erro
     data: {
       implementState: "running",
       runId: result.runId,
+      runEngine: engineOf(item.plan),
       qaRounds: item.qaRounds + 1,
     },
   });
@@ -812,12 +845,20 @@ async function reconcileImplement(): Promise<void> {
     where: { id: { in: inFlight.map((i) => i.runId) } },
     select: { id: true, state: true, prUrl: true, companionPrUrls: true, endReason: true, skill: true },
   });
-  const byId = new Map(runs.map((r) => [r.id, r]));
   const steps = await prisma.step.findMany({
     where: { runId: { in: inFlight.map((i) => i.runId) }, nodeId: { in: ["deliver", "implement"] } },
     select: { runId: true, output: true },
   });
-  const outputByRun = new Map(steps.map((st) => [st.runId, (st.output ?? {}) as Record<string, unknown>]));
+  // D-Agent runs answer the same questions from their own tables, shaped like a classic run.
+  const dagent = await runOutcomes(inFlight.filter((i) => i.runEngine === "dagent").map((i) => i.runId));
+  const byId = new Map([
+    ...runs.map((r) => [r.id, r] as const),
+    ...dagent.map((d) => [d.id, { ...d, skill: d.flow === "qa" ? QA_FIX_SKILL : IMPLEMENT_SKILL }] as const),
+  ]);
+  const outputByRun = new Map([
+    ...steps.map((st) => [st.runId, (st.output ?? {}) as Record<string, unknown>] as const),
+    ...dagent.map((d) => [d.id, d.output] as const),
+  ]);
 
   for (const item of inFlight) {
     const run = byId.get(item.runId);
@@ -921,7 +962,8 @@ async function reconcileReviews(): Promise<void> {
     where: { id: { in: inFlight.map((i) => i.reviewRunId) } },
     select: { id: true, state: true, endReason: true },
   });
-  const byId = new Map(runs.map((r) => [r.id, r]));
+  const dagent = await runOutcomes(inFlight.filter((i) => i.reviewEngine === "dagent").map((i) => i.reviewRunId));
+  const byId = new Map([...runs.map((r) => [r.id, r] as const), ...dagent.map((d) => [d.id, d] as const)]);
   // What the run reported, read from the node contract rather than from its
   // prose. `deliver` is the one-shot review node; a v3 run reports the same two
   // fields from `publish`, so both are accepted and whichever exists wins.
@@ -929,7 +971,10 @@ async function reconcileReviews(): Promise<void> {
     where: { runId: { in: inFlight.map((i) => i.reviewRunId) }, nodeId: { in: ["deliver", "publish"] } },
     select: { runId: true, output: true },
   });
-  const outputByRun = new Map(steps.map((st) => [st.runId, st.output as Record<string, unknown>]));
+  const outputByRun = new Map([
+    ...steps.map((st) => [st.runId, st.output as Record<string, unknown>] as const),
+    ...dagent.map((d) => [d.id, d.output] as const),
+  ]);
 
   for (const item of inFlight) {
     const run = byId.get(item.reviewRunId);

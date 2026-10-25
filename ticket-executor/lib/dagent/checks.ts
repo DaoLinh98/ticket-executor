@@ -2,9 +2,9 @@ import { execFileSync } from "child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { discoverCompanionRepos } from "../preflight";
-import { loadLinkedPullRequest, normalizeProvider } from "../tickets";
+import { loadLinkedPullRequest, loadPullRequestBranch, normalizeProvider } from "../tickets";
 import { PLAN_FILE } from "./prompts";
-import { diffViolations, isScratch, LOCAL_INSTRUCTIONS, planIssues, scopeOf, violationWarnings, type AddedLine, type ChangedFile } from "./rules";
+import { diffViolations, isScratch, LOCAL_INSTRUCTIONS, planIssues, plannedFiles, scopeOf, violationWarnings, type AddedLine, type ChangedFile } from "./rules";
 import { ZERO_USAGE, type Ctx, type LogEntry, type NodeResult, type Refusal, type Repo } from "./types";
 
 export type RetrySeed = { baseSha: string; branches: Record<string, string>; companionBases: Record<string, string>; planMd: string };
@@ -108,11 +108,26 @@ export function removeWorktrees(c: Ctx) {
 
 const rootName = (c: Ctx) => path.basename(c.rootRepo);
 
+async function setupOnPrBranch(c: Ctx, L: ReturnType<typeof logger>): Promise<NodeResult> {
+  const branch = await loadPullRequestBranch(normalizeProvider(c.provider), c.ticketId, c.prUrl).catch(() => "");
+  if (!branch) return failure(`Could not read the source branch of ${c.prUrl || "the pull request"} from ${c.provider}.`, L.log);
+  const fetched = git(c.rootRepo, ["fetch", "origin", branch], 90000);
+  if (!fetched.ok) return failure(`Could not fetch origin/${branch}: ${fetched.err}`, L.log);
+  const wt = worktreeOf(c.rootRepo, c.runId);
+  const added = git(c.rootRepo, ["worktree", "add", "-B", branch, wt, `origin/${branch}`]);
+  if (!added.ok) return failure(`Could not check out ${branch} in the worktree ${wt}: ${added.err}`, L.log);
+  c.cwd = wt;
+  c.baseSha = git(wt, ["rev-parse", "HEAD"]).out;
+  L.info(`worktree ${wt} on ${branch} @ ${c.baseSha.slice(0, 7)} — the pull request's head`);
+  return result({ mode: "worktree", branch, baseSha: c.baseSha, repos: [{ name: rootName(c), path: wt }] }, L.log);
+}
+
 export async function setup(c: Ctx, env: CheckEnv): Promise<NodeResult> {
   const L = logger();
   const retry = env.retry;
   excludeRunFiles(c.rootRepo);
   applyIdentity(c.rootRepo, env);
+  if (c.flow === "review") return setupOnPrBranch(c, L);
   const start = retry?.baseSha || startPoint(c.rootRepo, rootName(c), L);
   if (!start) return failure(`${c.rootRepo} has no commit to start from.`, L.log);
   c.baseSha = start;
@@ -241,8 +256,7 @@ function addedLines(repo: string, cwd: string, base: string): AddedLine[] {
 
 export async function diffGuard(c: Ctx): Promise<NodeResult> {
   const L = logger();
-  const acMap = Array.isArray(c.channels.plan?.acMap) ? (c.channels.plan.acMap as { files?: string[] }[]) : [];
-  const planned = acMap.flatMap((a) => a.files ?? []);
+  const planned = plannedFiles(c);
   const files: ChangedFile[] = [];
   const added: AddedLine[] = [];
   const changed: { repo: string; branch: string; files: number }[] = [];
@@ -289,6 +303,8 @@ export async function prePublish(c: Ctx): Promise<NodeResult> {
     if (!row.branch) issues.push(`${r.name}: the commits are not on a branch`);
     else if (branchOf(r.cwd) !== row.branch) issues.push(`${r.name}: not on branch ${row.branch}`);
     if (git(r.cwd, ["rev-parse", "HEAD"]).out !== heads[r.name]) issues.push(`${r.name}: HEAD changed after it was verified`);
+    // A review fix stays on the published PR branch; catching up with the default branch would need a force-push.
+    if (c.flow === "review") continue;
     const up = upstream(r.cwd);
     if (up && up.behind) {
       baseMoved = true;

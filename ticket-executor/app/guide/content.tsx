@@ -26,7 +26,7 @@ const SKILL_BLURB: Record<(typeof SKILLS)[number], string> = {
 };
 
 // Mirrors BUNDLED_AGENTS in lib/agentPack.ts (server-only, like REQUIRED_SKILLS).
-const AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher"] as const;
+const AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher", "review-triager", "qa-triager", "responder"] as const;
 
 const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
   analyst: "readiness — reads the ticket, derives its acceptance criteria and checks what the base already delivers. Read-only.",
@@ -36,6 +36,9 @@ const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
   fixer: "fixes exactly the reviewer's blockers and commits locally.",
   reflector: "when the fix loop is exhausted, decides whether to record a lesson in KNOWLEDGE.md.",
   publisher: "pushes the verified branches and opens a draft PR linked to the ticket.",
+  "review-triager": "review fix — judges every open thread on the PR: fix, answer without a change, or informational. Read-only.",
+  "qa-triager": "QA fix — judges which QC findings are real defects, then plans the fix or drafts the reply to QA. Read-only.",
+  responder: "review fix — pushes the fix to the PR branch and answers the judged threads. Never resolves one.",
 };
 
 export type GuideSection = {

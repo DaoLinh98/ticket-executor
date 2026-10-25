@@ -113,8 +113,32 @@ export function warningsOf(c: Pick<Ctx, "channels">): Refusal[] {
 }
 
 export function scopeOf(c: Pick<Ctx, "channels">): string[] {
-  const repos = c.channels.plan?.repos;
+  const repos = c.channels.plan?.repos ?? c.channels.qaTriage?.repos;
   return Array.isArray(repos) ? (repos as string[]) : [];
+}
+
+export type Thread = { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string };
+
+export function threadsOf(c: Pick<Ctx, "channels">): Thread[] {
+  const t = c.channels.reviewTriage?.threads;
+  return Array.isArray(t) ? (t as Thread[]) : [];
+}
+
+export type QaFinding = { finding: string; defect: boolean; reason: string; files: string[] };
+
+export function findingsOf(c: Pick<Ctx, "channels">): QaFinding[] {
+  const f = c.channels.qaTriage?.findings;
+  return Array.isArray(f) ? (f as QaFinding[]) : [];
+}
+
+/** Files a run declared it would change: the plan's AC map, the QA fixes, or the review threads it fixes. */
+export function plannedFiles(c: Pick<Ctx, "channels">): string[] {
+  const acMap = Array.isArray(c.channels.plan?.acMap) ? (c.channels.plan.acMap as { files?: string[] }[]) : [];
+  return [
+    ...acMap.flatMap((a) => a.files ?? []),
+    ...findingsOf(c).flatMap((f) => (f.defect ? f.files : [])),
+    ...threadsOf(c).filter((t) => t.decision === "fix" && t.file).map((t) => t.file.replace(/:\d+.*$/, "")),
+  ];
 }
 
 export type Delivery = { status: "none" | "partial" | "done"; evidence: { ac: string; repo: string; proof: string }[] };

@@ -42,6 +42,7 @@ export type PlannedRow = {
   unblockedByUser: boolean;
   implementState: string;
   runId: string;
+  runEngine: string;
   prUrl: string;
   prPublished: boolean;
   reviewersSet: boolean;
@@ -50,6 +51,7 @@ export type PlannedRow = {
   releaseError: string;
   reviewState: string;
   reviewRunId: string;
+  reviewEngine: string;
   openComments: number;
   threadsReplied: number;
   threadsResolved: number;
@@ -63,6 +65,8 @@ export type PlannedRow = {
   prMerged: boolean;
   pendingAction: string;
   qaRounds: number;
+  /** Stopped tracking by the developer — kept as a record, never shown. */
+  untracked?: boolean;
 };
 
 export type StoredPlan = {
@@ -72,6 +76,7 @@ export type StoredPlan = {
   autoRelease: boolean;
   autoResolveReview: boolean;
   autoDraftQaReply: boolean;
+  engine: "classic" | "dagent";
   includeWider: boolean;
   reviewers: string[];
   pointsPerDay: number;

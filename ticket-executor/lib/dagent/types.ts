@@ -35,10 +35,14 @@ export type NodeResult = {
   log?: LogEntry[];
 };
 
+export type Flow = "implement" | "review" | "qa";
+
 export type Repo = { name: string; path: string; cwd: string; baseSha: string; note?: string };
 
 export type Ctx = {
   runId: string;
+  flow: Flow;
+  prUrl: string;
   ticketId: string;
   ticketUrl: string;
   provider: string;

@@ -454,6 +454,9 @@ model SprintPlan {
   // their reviewer, so it gets its own switch rather than riding on autoRelease.
   autoResolveReview Boolean @default(false)
   autoDraftQaReply Boolean @default(false)
+  // Which engine starts this plan's runs — implement, review fix and QA fix alike:
+  // "classic" (lib/execution, skills) or "dagent" (lib/dagent, subagents).
+  engine        String   @default("classic")
   // Reviewers every pull request from this plan is assigned when it is released.
   // Held per plan rather than per ticket: the team a sprint is delivered to is
   // the same team all fortnight.
@@ -506,6 +509,11 @@ model PlannedTicket {
   // confirm what the repo makes obvious is a day lost for nothing.
   unblockedByUser Boolean   @default(false)
   addedByUser     Boolean   @default(false)
+  // The developer stopped tracking this ticket. The row stays as the record of
+  // what was done, but nothing reads it any more: no queue, release, review or
+  // QA watch, no bell, no capacity, and a rebuild leaves it alone. Adding the
+  // ticket by hand clears it.
+  untracked       Boolean   @default(false)
   // Where the developer's claim on this ticket stands — see `lib/sprintClaim.ts`.
   // mine | handed-off | dropped. The row outlives the assignment that created
   // it: a ticket moved to QA under somebody else's name is still part of the
@@ -518,6 +526,10 @@ model PlannedTicket {
   implementState String     @default("pending") // pending | running | implemented | failed | skipped
   // The run that implemented it, when one has.
   runId          String     @default("")
+  // Which engine `runId` / `reviewRunId` belong to — `Run` (classic) or `DagentRun` (dagent). Stamped when the
+  // run starts, so a run outlives a switch of the plan's engine.
+  runEngine      String     @default("classic")
+  reviewEngine   String     @default("classic")
   prUrl          String     @default("")
   companionPrUrls String[] @default([])
   // ---- release: one column per provider write ----

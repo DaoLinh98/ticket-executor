@@ -8,8 +8,8 @@ import { homedir } from "os";
 import path from "path";
 import { cmpVersion, readVersion, sameContent } from "./skillPack";
 
-/** Every agent the D-Agent graph runs — kept equal to `agentsOf()` by a test. */
-export const BUNDLED_AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher"] as const;
+/** Every agent the D-Agent graphs run — kept equal to `allAgents()` by a test. */
+export const BUNDLED_AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher", "review-triager", "qa-triager", "responder"] as const;
 
 export type AgentName = (typeof BUNDLED_AGENTS)[number];
 

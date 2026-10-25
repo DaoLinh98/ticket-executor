@@ -105,6 +105,15 @@ const FlowCard = memo(function FlowCard({ data }: NodeProps<Node<CardData>>) {
           </span>
         </div>
       </div>
+      {view.exits.length ? (
+        <span aria-hidden="true" style={{ position: "absolute", right: 0, bottom: "100%", marginBottom: 4, display: "flex", gap: 4, pointerEvents: "none" }}>
+          {view.exits.map((c, i) => (
+            <Badge key={i} tone={c.tone} icon={c.icon} size="xs">
+              {c.text}
+            </Badge>
+          ))}
+        </span>
+      ) : null}
       <Handle type="target" position={inPos} id="in" isConnectable={false} style={{ ...PORT, opacity: isGate ? 0 : 1 }} />
       {!isTerm ? <Handle type="source" position={outPos} id="out" isConnectable={false} style={PORT} /> : null}
     </div>
@@ -197,10 +206,12 @@ type Props = {
   live: boolean;
   layoutKey: string;
   edgePop: string | null;
+  allPaths: boolean;
   steps: string[];
   onPick: (id: string) => void;
   onFollow: (on: boolean) => void;
   onPill: (key: string) => void;
+  onAllPaths: () => void;
   onClosePop: () => void;
 };
 
@@ -217,14 +228,20 @@ function Canvas(p: Props) {
       style: { width: l.w, height: l.h },
       initialWidth: l.w,
       initialHeight: l.h,
+      measured: { width: l.w, height: l.h },
       data: { lane: p.laneViews[i] } satisfies LaneData,
       draggable: false,
       selectable: false,
       focusable: false,
       zIndex: -1,
     }));
+    // Nodes are rebuilt on every poll; without `measured` + `handles` React Flow drops
+    // their handle bounds and hides every edge until the DOM is re-measured.
+    const inPos = p.vertical ? Position.Top : Position.Left;
+    const outPos = p.vertical ? Position.Bottom : Position.Right;
     const cards: Node[] = p.layout.nodes.map((n) => {
       const view = viewById.get(n.id)!;
+      const at = (pos: Position) => (pos === Position.Left ? { x: -5, y: n.h / 2 - 5 } : pos === Position.Right ? { x: n.w - 5, y: n.h / 2 - 5 } : pos === Position.Top ? { x: n.w / 2 - 5, y: -5 } : { x: n.w / 2 - 5, y: n.h - 5 });
       return {
         id: n.id,
         type: n.kind === "card" ? "run" : n.kind,
@@ -232,6 +249,11 @@ function Canvas(p: Props) {
         style: { width: n.w, height: n.h },
         initialWidth: n.w,
         initialHeight: n.h,
+        measured: { width: n.w, height: n.h },
+        handles: [
+          { id: "in", type: "target", position: inPos, width: 10, height: 10, ...at(inPos) },
+          ...(n.kind === "terminal" ? [] : [{ id: "out", type: "source" as const, position: outPos, width: 10, height: 10, ...at(outPos) }]),
+        ],
         data: { view, selected: n.id === p.selectedId, vertical: p.vertical } satisfies CardData,
         ariaLabel: view.aria,
         draggable: false,
@@ -291,6 +313,9 @@ function Canvas(p: Props) {
         <Controls position="bottom-left" showInteractive={false} onFitView={() => p.onFollow(false)}>
           <ControlButton aria-label={p.follow ? "Following live (on)" : "Follow live"} title={p.follow ? "Following live (on)" : "Follow live"} onClick={() => p.onFollow(!p.follow)} style={{ color: p.follow ? "var(--te-accent)" : undefined, background: p.follow ? "var(--te-accent-soft)" : undefined }}>
             <Ico d={IC.target} size={16} />
+          </ControlButton>
+          <ControlButton aria-label={p.allPaths ? "Showing all paths (on)" : "Show all paths"} title={p.allPaths ? "Showing all paths (on)" : "Show all paths"} onClick={p.onAllPaths} style={{ color: p.allPaths ? "var(--te-accent)" : undefined, background: p.allPaths ? "var(--te-accent-soft)" : undefined }}>
+            <Ico d={IC.git} size={16} />
           </ControlButton>
         </Controls>
         <MiniMap

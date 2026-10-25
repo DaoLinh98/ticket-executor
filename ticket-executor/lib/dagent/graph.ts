@@ -1,9 +1,35 @@
-import { evaluatePrompt, fixInput, fixPrompt, implementPrompt, planPrompt, publishPrompt, readinessPrompt, reflectPrompt } from "./prompts";
-import { bundleOf, deliveryOf } from "./rules";
-import { EVALUATE_OUTPUT, PLAN_OUTPUT, PUBLISH_OUTPUT, READINESS_OUTPUT, REFLECT_OUTPUT, STEP_OUTPUT } from "./schemas";
-import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type Edge, type Graph, type Node, type NodeResult } from "./types";
+import {
+  evaluatePrompt,
+  fixInput,
+  fixPrompt,
+  implementPrompt,
+  planPrompt,
+  publishPrompt,
+  qaImplementPrompt,
+  qaTriagePrompt,
+  readinessPrompt,
+  reflectPrompt,
+  respondPrompt,
+  reviewImplementPrompt,
+  reviewTriagePrompt,
+} from "./prompts";
+import { bundleOf, deliveryOf, threadsOf } from "./rules";
+import {
+  EVALUATE_OUTPUT,
+  PLAN_OUTPUT,
+  PUBLISH_OUTPUT,
+  QA_TRIAGE_OUTPUT,
+  READINESS_OUTPUT,
+  REFLECT_OUTPUT,
+  RESPOND_OUTPUT,
+  REVIEW_TRIAGE_OUTPUT,
+  STEP_OUTPUT,
+} from "./schemas";
+import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
 
 export const GRAPH_ID = "dagent-implement-v2";
+export const REVIEW_GRAPH_ID = "dagent-fix-review-v1";
+export const QA_GRAPH_ID = "dagent-fix-qa-v1";
 export const MAX_FIX_ATTEMPTS = 5;
 export const MAX_PLAN_ATTEMPTS = 2;
 export const MAX_PRE_PUBLISH = 3;
@@ -151,8 +177,113 @@ export const GRAPH: Graph = {
   retryEntries: ["plan", "implement", "syncBase"],
 };
 
+const nodeOf = (id: string) => NODES.find((n) => n.id === id)!;
+const agentOf = (id: string) => nodeOf(id) as AgentNode;
+
+// fix-review: the pull request already exists and has a reviewer, so its branch is never rebased (that would
+// need a force-push) and nothing opens a pull request — the run commits on the PR branch, pushes, and answers
+// the threads it judged. Base is the PR head at setup, so the review sees only this run's fixes.
+const REVIEW_NODES: Node[] = [
+  { ...nodeOf("setup"), next: ["reviewTriage", FAIL] },
+  {
+    id: "reviewTriage", label: "Judge review threads", phase: "understand", kind: "agent", agent: "review-triager", effects: "pure",
+    next: ["implement", "respond", FAIL], output: schema(REVIEW_TRIAGE_OUTPUT), prompt: reviewTriagePrompt,
+  },
+  { ...agentOf("implement"), label: "Fix valid threads", prompt: reviewImplementPrompt, next: ["diffGuard", FAIL] },
+  nodeOf("diffGuard"),
+  nodeOf("evaluate"),
+  { ...nodeOf("fix"), next: ["diffGuard", "reflect", FAIL] },
+  nodeOf("reflect"),
+  { ...nodeOf("prePublish"), next: ["respond", FAIL] },
+  {
+    id: "respond", label: "Push & answer threads", phase: "publish", kind: "agent", agent: "responder", effects: "external",
+    next: [END, FAIL], output: schema(RESPOND_OUTPUT), prompt: respondPrompt, maxVisits: 1,
+  },
+];
+
+const onPrBranch = (e: { to: string; reason: string }) => (e.to === "syncBase" ? { ...e, to: "diffGuard" } : e);
+
+const REVIEW_EDGES: Record<string, Edge> = {
+  ...EDGES,
+  setup: (_c, r) => (r.ok ? { to: "reviewTriage", reason: `on ${String(r.data.branch || "the PR branch")}` } : { to: FAIL, reason: r.error || "workspace setup failed" }),
+  reviewTriage: (_c, r) => {
+    const bad = guard(r);
+    if (bad) return bad;
+    const threads = threadsOf({ channels: { reviewTriage: r.data } });
+    if (!threads.length) return { to: FAIL, reason: "no open review thread to answer" };
+    const fix = threads.filter((t) => t.decision === "fix").length;
+    if (!fix) return { to: "respond", reason: `${threads.length} thread(s) · none needs a code change` };
+    return { to: "implement", reason: `${fix} of ${threads.length} thread(s) to fix` };
+  },
+  implement: (c, r) => onPrBranch(delivered(c, r)),
+  fix: (c, r) => onPrBranch(fixed(c, r)),
+  prePublish: (_c, r) => {
+    if (!r.ok) return { to: FAIL, reason: r.error || "pre-publish check failed" };
+    if (r.data.passed) return { to: "respond", reason: "branch clean · verified HEAD unchanged" };
+    const issues = Array.isArray(r.data.issues) ? (r.data.issues as string[]) : [];
+    return { to: FAIL, reason: issues[0] ?? "pre-publish check refused" };
+  },
+  respond: (c, r) => {
+    const bad = guard(r);
+    if (bad) return bad;
+    const changed = count(c.channels.diffGuard?.changed) > 0;
+    if (changed && !r.data.pushed) return { to: FAIL, reason: "the fix was not pushed" };
+    const replied = Number(r.data.threadsReplied ?? 0) || 0;
+    if (!replied) return { to: FAIL, reason: "no thread was answered" };
+    return { to: END, reason: `${replied} thread(s) answered${changed ? " · fix pushed" : ""}` };
+  },
+};
+
+export const REVIEW_GRAPH: Graph = {
+  id: REVIEW_GRAPH_ID,
+  entry: "setup",
+  nodes: Object.fromEntries(REVIEW_NODES.map((n) => [n.id, n])),
+  edges: REVIEW_EDGES,
+  retryEntries: [],
+};
+
+// fix-qa: QA sends a ticket back after its pull request merged, so the fix is new work on a new branch from the
+// default branch and ships as a new draft PR — the implement loop, entered through a triage of QA's findings.
+const QA_NODES: Node[] = [
+  { ...nodeOf("setup"), next: ["qaTriage", FAIL] },
+  {
+    id: "qaTriage", label: "Judge QA findings", phase: "understand", kind: "agent", agent: "qa-triager", effects: "pure",
+    next: ["implement", END, FAIL], output: schema(QA_TRIAGE_OUTPUT), prompt: qaTriagePrompt,
+  },
+  { ...agentOf("implement"), label: "Fix QA defects", prompt: qaImplementPrompt },
+  ...NODES.filter((n) => !["setup", "readiness", "plan", "planCheck", "implement"].includes(n.id)),
+];
+
+const QA_EDGES: Record<string, Edge> = {
+  ...EDGES,
+  setup: (_c, r) => (r.ok ? { to: "qaTriage", reason: "workspace ready" } : { to: FAIL, reason: r.error || "workspace setup failed" }),
+  qaTriage: (_c, r) => {
+    const bad = guard(r);
+    if (bad) return bad;
+    if (r.data.outcome === "no-fix-needed") return { to: END, reason: "no finding is a defect · reply to QA drafted" };
+    const defects = (Array.isArray(r.data.findings) ? (r.data.findings as { defect?: boolean }[]) : []).filter((f) => f.defect).length;
+    if (!defects) return { to: FAIL, reason: "outcome is fix but no finding is marked a defect" };
+    if (!String(r.data.branch ?? "").trim()) return { to: FAIL, reason: "no branch was proposed for the fix" };
+    return { to: "implement", reason: `${defects} defect(s) to fix` };
+  },
+};
+
+export const QA_GRAPH: Graph = {
+  id: QA_GRAPH_ID,
+  entry: "setup",
+  nodes: Object.fromEntries(QA_NODES.map((n) => [n.id, n])),
+  edges: QA_EDGES,
+  retryEntries: [],
+};
+
+export const GRAPHS: Record<Flow, Graph> = { implement: GRAPH, review: REVIEW_GRAPH, qa: QA_GRAPH };
+
 export function graphById(id: string): Graph | null {
-  return id === GRAPH_ID ? GRAPH : null;
+  return Object.values(GRAPHS).find((g) => g.id === id) ?? null;
+}
+
+export function flowOf(graphId: string): Flow {
+  return (Object.keys(GRAPHS) as Flow[]).find((f) => GRAPHS[f].id === graphId) ?? "implement";
 }
 
 export type NodeOutline = {
@@ -183,4 +314,9 @@ export function outline(g: Graph = GRAPH): NodeOutline[] {
 
 export function agentsOf(g: Graph = GRAPH): string[] {
   return [...new Set(Object.values(g.nodes).flatMap((n) => (n.kind === "agent" ? [n.agent] : [])))];
+}
+
+/** Every agent any D-Agent graph runs — what the repo must ship. */
+export function allAgents(): string[] {
+  return [...new Set(Object.values(GRAPHS).flatMap((g) => agentsOf(g)))];
 }

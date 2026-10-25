@@ -34,6 +34,13 @@ writer — no graph, table, prompt or contract.
 compare it with the other engine, borrow its rules, or "align" one with the other
 unless explicitly asked. A rule stated for one engine does not bind the other.
 
+**The one junction is Flow Runner's scheduler.** `SprintPlan.engine` (`classic` |
+`dagent`, the ENGINE switch on Flow Runner) picks which engine `startNextTicket`,
+`startReviewRun` and `startQaFix` start on (`startOn()` in `scheduler.ts`). The planned
+ticket stamps `runEngine` / `reviewEngine` at start, and reconcile/cancel read the
+matching table — D-Agent outcomes via `runOutcomes()` (`lib/dagent/index.ts`) — so a run
+outlives a switch. A D-Agent row's Watch/Result opens `/workflow?ticket=<id>`.
+
 ## Commands
 
 ```bash
@@ -151,6 +158,21 @@ is a subagent spawned by `cli.ts` as `claude -p --agent <name> --json-schema …
 | `publish` | agent | `publisher` | push + open/reuse **draft PR** per changed repo; `maxVisits: 1` | verifyPublish / FAIL |
 | `verifyPublish` | check | git + provider | remote head = local HEAD, draft, ticket linked (ADO: tracker read-back) | END / NEEDS_REVIEW |
 
+Two more graphs share these nodes (`GRAPHS` keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
+
+- **`dagent-fix-review-v1`** — `setup` checks out the PR's source branch
+  (`loadPullRequestBranch()`; base = PR head) → `reviewTriage` (`review-triager`:
+  fix / reject / informational per open thread) → `implement` → `diffGuard` ⇄
+  `evaluate` ⇄ `fix` → `prePublish` (no base-moved re-sync) → `respond` (`responder`,
+  the external leaf: push, one reply per thread, **never resolve**). No `syncBase`: a
+  published PR branch is never rebased.
+- **`dagent-fix-qa-v1`** — `setup` (new branch from origin default) → `qaTriage`
+  (`qa-triager`; `no-fix-needed` → END with `qaReply`) → the implement loop from
+  `implement` through `verifyPublish` (a new draft PR).
+
+`/workflow` has no run picker and no start form: it shows the run in flight (else the
+latest) for `?ticket=`, or overall, derived from the live runs list.
+
 Rules that bind any change under `lib/dagent/`:
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`); an edge may
@@ -179,7 +201,7 @@ Rules that bind any change under `lib/dagent/`:
 7. **`KNOWLEDGE.md` is audited**: content at start is stored on the run and the line
    diff is saved as artifact kind `knowledge` at finish.
 8. **The agents ship in the repo.** `agents/<name>.md` is the source of truth,
-   `lib/agentPack.ts` (`BUNDLED_AGENTS`, kept equal to `agentsOf()` by a test) installs
+   `lib/agentPack.ts` (`BUNDLED_AGENTS`, kept equal to `allAgents()` by a test) installs
    them into `~/.claude/agents` on boot and from System Check / Guide, the same way
    `lib/skillPack.ts` does skills. **Changing an agent's prompt or contract bumps its
    `version:`** — an older installed copy is then replaced on boot and refused at
@@ -281,6 +303,48 @@ GET route, or a new provider/DB read behind an existing one, is unfinished until
 6. **Exempt, by design:** live execution state (runs, steps, SSE streams), watermark /
    delta polls (notification activity), the System Check probe, the fresh re-read after a
    failed write (`getWorkItemState`), and local-only reads (files, in-memory lists).
+
+## Data fetching and live state — mandatory
+
+**A screen never needs a refresh to be right.** Every new feature is built to these
+rules; they are part of "done", not a follow-up.
+
+1. **Server reads in a client component are TanStack Query**, never `useEffect` +
+   `fetch` + `setState`. A key read by more than one component lives in
+   `app/queries.ts` with its fetcher and hook (`useConnections`, `useProjects`,
+   `usePreflight`, `SETTINGS_KEY`, …) so every consumer shares one request and one
+   cache. A fetcher throws on a failed response (or carries the server's `error` field
+   through); it never invents a placeholder for one.
+2. **Keys are exact on purpose.** A key that is a prefix of another (`["my-sprint"]`
+   vs `["my-sprint", "plan"]`) invalidates both — pass `exact: true`, or invalidate by
+   the prefix only when that is the intent. Anything with refresh semantics keeps
+   `staleTime: 0`; only static reads (models, graphs) get a long one.
+3. **Writes update the cache in the same change.** Use `useMutation` (the My Sprint
+   `act()` is the model: per-key pending set, `onMutate` / `onError` / `onSettled`).
+   A write with bespoke error handling may stay imperative, but it must
+   `setQueryData` or `invalidateQueries` every key it can stale. Optimistic updates
+   are allowed only where a pure function already decides the result (`reorderQueue`
+   in `lib/sprintPlan.ts`), and must roll back on error — never re-implement a rule
+   the server owns.
+4. **State that changes without the user must reach the screen on its own.** Anything
+   the scheduler, a run or another tab can change (plan rows, run state, drafts,
+   dashboard numbers) is pushed: a route returns `liveStream(req, fingerprint)`
+   (`lib/liveStream.ts`) and the page subscribes with `useLive` / `useLiveInvalidate`
+   (`app/useLive.ts`, one shared `EventSource` per URL). Existing channels:
+   `/api/live/runs` (any run starts, ends or changes state) and
+   `/api/my-sprint/plan/stream?plan=`. A fingerprint is **DB-only and flat in cost** —
+   never a provider call. Polling stays as the fallback; provider-owned data (the
+   board) cannot be pushed, so it revalidates in the background on focus.
+5. **An organization switch is handled once**, by `QueryProvider`, which invalidates
+   every query on `CONNECTION_CHANGED_EVENT`. A page does not add its own listener for
+   query data.
+6. **Not converted, by design — extend, do not rewrite:** `SettingsProvider` and
+   `NotificationsProvider` (single owners with visibility / `pageshow` / read-state
+   convergence; `SettingsProvider` reads through the query client for dedupe),
+   `settings/PushNotifications` (browser-device state), and the sequential loaders in
+   `TicketExecutor.tsx` (`loadWorkspace`, `reloadTickets`, run SSE/polling). A new read
+   there goes through `queryClient.fetchQuery` (the `readJson` helper); a new live
+   behaviour is an additive `useLive` effect, never a rewrite of a flow.
 
 ## Mobile first — mandatory
 

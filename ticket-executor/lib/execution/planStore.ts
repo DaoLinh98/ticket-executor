@@ -21,7 +21,7 @@ import {
   type QueueMove,
   type SprintPlanResult,
 } from "../sprintPlan";
-import { pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
+import { isQueueable, pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
 import type { TriageResult, TriagedTicket } from "./triage";
 import type { Ticket } from "../types";
 
@@ -105,7 +105,8 @@ export async function claimedSprint(
   live: Ticket[],
   identity: DevIdentity
 ): Promise<ClaimedTicket[]> {
-  return claimSprint(live, await rememberSprint(key), identity);
+  const untracked = new Set((await findPlan(key))?.items.filter((i) => i.untracked).map((i) => i.ticketId));
+  return claimSprint(live, await rememberSprint(key), identity).filter((c) => !untracked.has(String(c.ticket.id)));
 }
 
 export async function findPlan(key: PlanKey) {
@@ -251,7 +252,7 @@ export async function previewRebuild(
   cfg: PlanConfig
 ): Promise<PlanDiff & { overflowPoints: number; titles: Record<string, string> }> {
   const { computed, existing } = await computePlan(key, live, identity, triage, window, today, cfg);
-  const diff = planDiff(existing?.items ?? [], computed.tickets);
+  const diff = planDiff((existing?.items ?? []).filter((i) => !i.untracked), computed.tickets);
   return {
     ...diff,
     overflowPoints: computed.overflowPoints,
@@ -298,7 +299,7 @@ export async function setPlanStatus(id: string, status: "draft" | "active" | "ar
 
 export async function setPlanAutomation(
   id: string,
-  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[] }
+  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[]; engine?: string }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
 }
@@ -418,65 +419,79 @@ export async function retryPlannedTicket(
   return { ok: true };
 }
 
-/** Take an unstarted ticket out of the plan. A row the queue has touched, or that
- *  has a run, a pull request or a release, is history and stays. */
+/** Stop tracking a ticket. The row stays — it is the record of what was done —
+ *  but `untracked` takes it out of everything that acts on the plan, and a
+ *  rebuild leaves it alone. Refused while a run is in flight: cancel it first. */
 export async function removeTicketFromPlan(plannedId: string): Promise<{ ok: boolean; error?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId } });
   if (!item) return { ok: false, error: "No such planned ticket." };
-  if (item.implementState !== "pending" || item.runId || item.prUrl || item.releasedAt) {
-    return { ok: false, error: "This ticket has already been worked, so it stays in the plan as a record." };
+  if (item.implementState === "running" || item.reviewState === "running") {
+    return { ok: false, error: "A run is in progress for this ticket — cancel it before you stop tracking it." };
   }
-  await prisma.plannedTicket.delete({ where: { id: plannedId } });
+  await prisma.plannedTicket.update({ where: { id: plannedId }, data: { untracked: true, implementOrder: 0 } });
   await logAutomation({
     planId: item.planId,
     ticketId: item.ticketId,
     action: "implement",
     outcome: "skipped",
     reason: "removed-by-user",
-    detail: "Removed from the plan by hand.",
+    detail: "No longer tracked — removed from the plan by hand.",
   });
   return { ok: true };
 }
 
-/** Append a ticket to the plan, last in the implement queue.
+/** Add a ticket to the plan by hand — new, or one that was untracked.
  *
- *  Nothing has been built yet: the row is `pending`, so the queue works it after
- *  everything already planned, and it is released on the last release day the
- *  plan already uses (or the first one left, when the plan is empty). A rebuild
- *  re-dates it like any other unstarted row. */
+ *  Only a ticket whose status is still before review and that nothing has worked
+ *  yet joins the implement queue, last, released on the last release day the
+ *  plan already uses (or the first one left). One already in Code Review or QA is
+ *  tracked from where it stands: review comments, QA sending it back. */
 export async function addTicketToPlan(
   plan: { id: string; startDate: string; finishDate: string },
-  ticket: { ticketId: string; title: string; project: string; points: number; estimateHours: number },
+  ticket: { ticketId: string; title: string; project: string; points: number; estimateHours: number; status: string },
   today: string
 ): Promise<{ ok: boolean; error?: string }> {
   const existing = await prisma.plannedTicket.findUnique({
     where: { planId_ticketId: { planId: plan.id, ticketId: ticket.ticketId } },
   });
-  if (existing) return { ok: false, error: "This ticket is already in the plan." };
+  if (existing && !existing.untracked) return { ok: false, error: "This ticket is already in the plan." };
 
+  const stage = stageOf(ticket.status);
+  const worked = !!existing && (existing.implementState !== "pending" || !!existing.runId || !!existing.prUrl || !!existing.releasedAt);
+  const queued = isQueueable(stage) && !worked;
   const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id }, select: { implementOrder: true, releaseDay: true } });
   const days = releaseDays({ startDate: plan.startDate, finishDate: plan.finishDate }, today);
   const lastDay = rows.map((r) => r.releaseDay).filter(Boolean).sort().pop() ?? days[0] ?? today;
-  await prisma.plannedTicket.create({
-    data: {
-      planId: plan.id,
-      ticketId: ticket.ticketId,
-      title: ticket.title,
-      project: ticket.project,
-      points: ticket.points,
-      estimateHours: ticket.estimateHours,
-      implementOrder: Math.max(0, ...rows.map((r) => r.implementOrder)) + 1,
-      releaseDay: lastDay,
-      addedByUser: true,
-    },
-  });
+  const placed = queued ? { implementOrder: Math.max(0, ...rows.map((r) => r.implementOrder)) + 1, releaseDay: lastDay } : {};
+  if (existing) {
+    await prisma.plannedTicket.update({
+      where: { id: existing.id },
+      data: { untracked: false, addedByUser: true, stage, ...placed },
+    });
+  } else {
+    await prisma.plannedTicket.create({
+      data: {
+        planId: plan.id,
+        ticketId: ticket.ticketId,
+        title: ticket.title,
+        project: ticket.project,
+        points: ticket.points,
+        estimateHours: ticket.estimateHours,
+        stage,
+        ...placed,
+        addedByUser: true,
+      },
+    });
+  }
   await logAutomation({
     planId: plan.id,
     ticketId: ticket.ticketId,
     action: "implement",
     outcome: "skipped",
     reason: "added-by-user",
-    detail: `Added to the plan by hand, last in the implement queue, release day ${lastDay}.`,
+    detail: queued
+      ? `Added to the plan by hand, last in the implement queue, release day ${lastDay}.`
+      : `Added to the plan by hand at "${ticket.status}" — tracked, not queued.`,
   });
   return { ok: true };
 }

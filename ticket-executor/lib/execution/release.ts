@@ -218,6 +218,7 @@ export async function dueForRelease(planId: string, day: string) {
   return prisma.plannedTicket.findMany({
     where: {
       planId,
+      untracked: false,
       releasedAt: null,
       implementState: "implemented",
       prUrl: { not: "" },

@@ -43,6 +43,7 @@ export type NodeView = {
   kindIcon: string;
   kindTone: Tone;
   chips: NodeChip[];
+  exits: NodeChip[];
   dots: string;
   dotsAria: string;
   timer: string;
@@ -181,6 +182,14 @@ export function oneLine(out: NodeOutput | null): string {
       return out.prs.map((p) => `${p.repo} #${p.number}`).join(" · ");
     case "verifyPublish":
       return `${out.checks.filter((c) => c.ok).length}/${out.checks.length} checks`;
+    case "reviewTriage": {
+      const fix = out.threads.filter((t) => t.decision === "fix").length;
+      return `${fix} to fix · ${plural(out.threads.length - fix, "answer-only thread")}`;
+    }
+    case "qaTriage":
+      return out.outcome === "no-fix-needed" ? "No defect · reply drafted" : plural(out.findings.filter((f) => f.defect).length, "defect");
+    case "respond":
+      return `${plural(out.threadsReplied, "thread")} answered${out.pushed ? " · pushed" : ""}`;
   }
 }
 
@@ -330,6 +339,31 @@ export function outSections(out: NodeOutput | null): Section[] {
           items: out.checks.map((c) => ({ icon: c.ok ? IC.check : IC.x, tone: (c.ok ? "success" : "danger") as Tone, text: c.name, textTone: c.ok ? undefined : ("danger" as Tone) })),
         },
       ];
+    case "reviewTriage":
+      return [
+        {
+          kind: "table",
+          title: "Thread decisions",
+          cols: ["Thread", "Decision", "Why"],
+          rows: out.threads.map((t): Cell[] => [{ t: t.file || t.comment, mono: !!t.file }, { t: t.decision, tone: t.decision === "fix" ? "warning" : "muted" }, t.reason]),
+        },
+        { kind: "md", title: "Plan", text: out.planMd },
+      ];
+    case "qaTriage": {
+      const S: Section[] = [
+        {
+          kind: "table",
+          title: "QA findings",
+          cols: ["Finding", "Defect", "Why"],
+          rows: out.findings.map((f): Cell[] => [f.finding, { t: f.defect ? "yes" : "no", tone: f.defect ? "danger" : "success" }, { t: f.reason, mono: true }]),
+        },
+      ];
+      if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", text: out.qaReply });
+      if (out.planMd) S.push({ kind: "md", title: "Plan", text: out.planMd });
+      return S;
+    }
+    case "respond":
+      return [kv("Result", [["Pushed", out.pushed ? "yes" : "no"], ["Threads answered", out.threadsReplied, out.threadsReplied ? "success" : "danger"], ["Resolved", "never — the reviewer decides"]])];
   }
 }
 
@@ -353,7 +387,23 @@ export function nodeStatus(run: Run | null, gates: GateResult[], n: NodeLike): N
   return last.status;
 }
 
-export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, now: number): NodeView {
+const EXIT_TEXT: Record<string, string> = { END: "end", FAIL: "fail", NEEDS_INPUT: "input", NEEDS_REVIEW: "review" };
+
+// Side exits (to a terminal, or a loop back) are chips on the card instead of long lines:
+// a taken exit in its tone, the rest only on the selected node and muted, so a possible
+// exit never reads as a status.
+function exitsOf(run: Run | null, layout: Layout, id: string, selected: boolean): NodeChip[] {
+  const taken = (to: string) => !!run?.transitions.some((t) => t.fromNode === id && t.toNode === to);
+  return layout.edges
+    .filter((e) => e.from === id && (e.cls === "park" || e.cls === "loop") && (selected || taken(e.to)))
+    .map((e) => {
+      const text = e.cls === "park" ? `→ ${EXIT_TEXT[e.to] ?? e.to}` : `↺ ${layout.nodes.find((n) => n.id === e.to)?.def.label ?? e.to}`;
+      if (!taken(e.to)) return { text, tone: "muted" };
+      return e.cls === "park" ? { text, icon: TERMS[e.to]?.icon ?? IC.flag, tone: TERMS[e.to]?.tone ?? "muted" } : { text, tone: "accent" };
+    });
+}
+
+export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, now: number, layout: Layout, selectedId: string): NodeView {
   const d: FlowNodeDef = n.def;
   const isTerm = n.kind === "terminal";
   const isGate = n.kind === "gate";
@@ -457,7 +507,8 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
     if (status === "refused") outcomeColor = "var(--te-danger)";
     if (lastOut.node === "readiness" && !lastOut.ready) outcomeColor = "var(--te-warning)";
   } else if (status === "pending") {
-    outcome = "not reached";
+    // A run that succeeded early (e.g. already delivered) never needed the rest.
+    outcome = run?.state === "succeeded" ? "not needed" : "not reached";
     outcomeColor = "var(--te-text-muted)";
   }
 
@@ -470,6 +521,7 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
     kindIcon: km.icon,
     kindTone: km.tone,
     chips,
+    exits: isTerm ? [] : exitsOf(run, layout, n.id, n.id === selectedId),
     dots,
     dotsAria,
     timer,
@@ -484,7 +536,7 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
   };
 }
 
-export function edgeViews(run: Run | null, layout: Layout): EdgeView[] {
+export function edgeViews(run: Run | null, layout: Layout, focusId: string, allPaths: boolean): EdgeView[] {
   const trans = run?.transitions ?? [];
   const byKey: Record<string, typeof trans> = {};
   trans.forEach((t) => {
@@ -498,6 +550,8 @@ export function edgeViews(run: Run | null, layout: Layout): EdgeView[] {
     const ts = byKey[e.key] ?? [];
     const traversed = ts.length > 0;
     if (e.implicit && !traversed) return;
+    const side = e.cls === "park" || e.cls === "loop";
+    if (side && !traversed && !allPaths && e.from !== focusId && e.to !== focusId) return;
     let tone: Tone | "faint" = "faint";
     if (traversed) {
       tone = e.to === "FAIL" ? "danger" : e.to === "END" ? "success" : e.to === "NEEDS_INPUT" || e.to === "NEEDS_REVIEW" ? "warning" : "accent";
@@ -521,7 +575,8 @@ export function edgeViews(run: Run | null, layout: Layout): EdgeView[] {
       reasons: ts.map((t) => ({ seq: t.seq, at: hhmm(t.at), reason: t.reason })),
     });
   });
-  return out;
+  // Exits share rails, so a taken path is painted over the faint ones on the same rail.
+  return out.sort((x, y) => Number(x.traversed) - Number(y.traversed));
 }
 
 export function laneViews(run: Run | null, gates: GateResult[], layout: Layout, now: number): LaneView[] {
