@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { COLORS, FONT, chipShape, ctaButtonStyle, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, chipShape, ctaButtonStyle, tintedCard } from "@/lib/ui";
 import { layoutRun } from "@/lib/workflow/layout";
 import { STAGES, STATUS } from "@/lib/workflow/meta";
-import { DEFAULT_DEFS, SCENARIO_KEYS, buildScenarios } from "@/lib/workflow/mock";
 import {
   bannerOf,
   edgeViews,
@@ -20,7 +19,7 @@ import {
   timelineOf,
   type BannerAction,
 } from "@/lib/workflow/present";
-import type { GateResult, LifecycleStage } from "@/lib/workflow/types";
+import type { FlowNodeDef, GateResult, LifecycleStage } from "@/lib/workflow/types";
 import type { RunListItem, RunView } from "@/lib/dagent/view";
 import PageHeading from "../../(app)/PageHeading";
 import NotificationCenter from "../../(app)/NotificationCenter";
@@ -29,21 +28,17 @@ import PageToolbar from "../../(app)/PageToolbar";
 import { useResolvedIsMobile } from "../../(app)/MobileNav";
 import { useToast } from "../../(app)/ToastProvider";
 import { copyText } from "../../(app)/report/copyText";
-import SelectMenu from "../../SelectMenu";
 import { useLiveInvalidate } from "../../useLive";
 import LoadingRing from "../LoadingRing";
 import { useNow } from "../execution/useNow";
 import { RefusalCard, StateBanner, WorkflowHud, type WorkflowMode } from "./Chrome";
 import NodeInspector, { type InspectorTab, type LogFilter, type SheetState } from "./NodeInspector";
 import { MONO } from "./parts";
-import StartRunPanel, { type StartForm } from "./StartRunPanel";
 import TicketLifecycle from "./TicketLifecycle";
 import { RawLog, TimelineView } from "./Views";
 import WorkflowCanvas from "./WorkflowCanvas";
 
 type Ui = {
-  scenario: string;
-  runKey: string | null;
   sel: string | null;
   follow: boolean;
   mode: WorkflowMode;
@@ -54,19 +49,16 @@ type Ui = {
   logFilter: LogFilter;
   query: string;
   edgePop: string | null;
-  cancelled: boolean;
   retryFrom: string | null;
-  retried: string | null;
   copied: boolean;
   fixOpen: boolean;
   lcOpen: boolean;
   hudOpen: boolean;
   mLcOpen: boolean;
+  allPaths: boolean;
 };
 
 const INITIAL: Ui = {
-  scenario: "C",
-  runKey: null,
   sel: null,
   follow: true,
   mode: "flow",
@@ -77,22 +69,27 @@ const INITIAL: Ui = {
   logFilter: "all",
   query: "",
   edgePop: null,
-  cancelled: false,
   retryFrom: null,
-  retried: null,
   copied: false,
   fixOpen: false,
   lcOpen: true,
   hudOpen: false,
   mLcOpen: false,
+  allPaths: false,
 };
 
-type RunsPayload = { runs: RunListItem[]; defaults: { rootRepo: string; project: string; provider: string } };
+type RunsPayload = { runs: RunListItem[] };
 
 const RUNS_KEY = ["dagent", "runs"] as const;
 const runKeyOf = (id: string | null) => ["dagent", "run", id] as const;
 
-const DEMO = "Demo scenarios";
+const ACTIVE = ["running", "waiting"];
+
+// The canvas shape while no run is loaded, so every derived view always has a node to select.
+const IDLE_DEFS: FlowNodeDef[] = [
+  { id: "preflight", label: "Preflight", phase: "pre-run", kind: "gate", effects: "pure", context: "", next: ["admission"] },
+  { id: "admission", label: "Admission", phase: "pre-run", kind: "gate", effects: "pure", context: "", next: [] },
+];
 
 async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, { cache: "no-store", ...init });
@@ -106,19 +103,13 @@ const post = <T,>(url: string, body: unknown = {}) =>
 
 const EMPTY_LIFECYCLE: LifecycleStage[] = STAGES.map(([id, label]) => ({ id, label, status: "todo", at: "", detail: "", runs: [] }));
 
-const EMPTY_FORM: StartForm = { ticketId: "", ticketUrl: "", project: "", rootRepo: "", provider: "" };
-
 export default function WorkflowView() {
   const mobile = useResolvedIsMobile();
   const showToast = useToast();
-  const router = useRouter();
   const params = useSearchParams();
   const qc = useQueryClient();
-  const runId = params.get("run");
-  const [scenarios] = useState(() => buildScenarios(Date.now()));
+  const ticketParam = params.get("ticket");
   const [ui, setUi] = useState<Ui>(INITIAL);
-  const [startOpen, setStartOpen] = useState(false);
-  const [form, setForm] = useState<StartForm | null>(null);
   const [refusedGates, setRefusedGates] = useState<GateResult[] | null>(null);
   const now = useNow(true);
 
@@ -127,25 +118,22 @@ export default function WorkflowView() {
 
   const runsQ = useQuery({ queryKey: RUNS_KEY, queryFn: () => readJson<RunsPayload>("/api/dagent/runs"), staleTime: 0 });
   useLiveInvalidate("/api/dagent/runs/stream", RUNS_KEY);
+  // The run on screen is derived, never stored: the ticket's run in flight (or its latest), so a run the
+  // scheduler starts takes the screen over through the list stream alone.
+  const runs = runsQ.data?.runs ?? [];
+  const pool = ticketParam ? runs.filter((r) => r.ticketId === ticketParam) : runs;
+  const runId = (pool.find((r) => ACTIVE.includes(r.state)) ?? pool[0])?.id ?? null;
   const viewQ = useQuery({ queryKey: runKeyOf(runId), queryFn: () => readJson<RunView>(`/api/dagent/runs/${runId}`), enabled: !!runId, staleTime: 0 });
   useLiveInvalidate(runId ? `/api/dagent/runs/${runId}/stream` : null, runKeyOf(runId));
 
   const real = runId ? (viewQ.data ?? null) : null;
-  const demo = !runId && !refusedGates;
-  const sc = scenarios[ui.scenario];
-  const runKey = ui.runKey ?? sc.runKey;
-  const baseRun = useMemo(() => {
-    if (demo) return runKey && sc.runs[runKey] ? sc.runs[runKey]() : null;
-    return real?.run ?? null;
-  }, [demo, sc, runKey, real]);
-  const run = useMemo(() => (demo && baseRun && ui.cancelled ? { ...baseRun, state: "cancelled" as const, waitReason: undefined } : baseRun), [demo, baseRun, ui.cancelled]);
-  const gates = demo ? sc.gates : (refusedGates ?? real?.gates ?? []);
-  const lifecycle = demo ? sc.lifecycle : (real?.lifecycle ?? EMPTY_LIFECYCLE);
+  const run = real?.run ?? null;
+  const gates = refusedGates ?? real?.gates ?? [];
+  const lifecycle = real?.lifecycle ?? EMPTY_LIFECYCLE;
   const vertical = mobile === true;
-
   const layout = useMemo(
-    () => layoutRun(baseRun?.defs ?? DEFAULT_DEFS, vertical ? "TB" : "LR", baseRun ? baseRun.transitions.map((t): [string, string] => [t.fromNode, t.toNode]) : []),
-    [baseRun, vertical],
+    () => layoutRun(run?.defs ?? IDLE_DEFS, vertical ? "TB" : "LR", run ? run.transitions.map((t): [string, string] => [t.fromNode, t.toNode]) : []),
+    [run, vertical],
   );
 
   const live = !!run && (run.state === "running" || run.state === "preparing");
@@ -154,11 +142,11 @@ export default function WorkflowView() {
   const selected = layout.nodes.find((n) => n.id === (ui.sel ?? curId)) ?? layout.nodes.find((n) => n.id === curId) ?? layout.nodes[0];
   const tab: InspectorTab = ui.tab ?? (run && (run.state === "failed" || run.state === "succeeded") && !ui.sel ? "run" : "node");
 
-  const nodeViews = useMemo(() => layout.nodes.map((n) => nodeView(run, gates, n, now)), [run, gates, layout, now]);
-  const edges = useMemo(() => edgeViews(run, layout), [run, layout]);
+  const nodeViews = useMemo(() => layout.nodes.map((n) => nodeView(run, gates, n, now, layout, selected.id)), [run, gates, layout, now, selected.id]);
+  const edges = useMemo(() => edgeViews(run, layout, selected.id, ui.allPaths), [run, layout, selected.id, ui.allPaths]);
   const lanes = useMemo(() => laneViews(run, gates, layout, now), [run, gates, layout, now]);
   const hud = useMemo(() => hudOf(run, now), [run, now]);
-  const banner = useMemo(() => bannerOf(run, now, ui.retried), [run, now, ui.retried]);
+  const banner = useMemo(() => bannerOf(run, now, null), [run, now]);
   const timeline = useMemo(() => timelineOf(run, now), [run, now]);
   const allLogs = useMemo(() => logLinesOf(run, now, gates), [run, now, gates]);
   const inspector = useMemo(() => inspectNode(run, gates, selected, ui.attempt, now), [run, gates, selected, ui.attempt, now]);
@@ -176,15 +164,6 @@ export default function WorkflowView() {
   const onFollow = useCallback((on: boolean) => setUi((u) => (u.follow === on ? u : { ...u, follow: on, sel: on ? null : u.sel })), []);
   const onPill = useCallback((key: string) => setUi((u) => ({ ...u, edgePop: u.edgePop === key ? null : key })), []);
 
-  const openRun = useCallback(
-    (id: string | null) => {
-      setRefusedGates(null);
-      reset();
-      router.replace(id ? `/workflow?run=${id}` : "/workflow");
-    },
-    [reset, router],
-  );
-
   const refreshRun = () => {
     qc.invalidateQueries({ queryKey: runKeyOf(runId), exact: true });
     qc.invalidateQueries({ queryKey: RUNS_KEY, exact: true });
@@ -192,16 +171,15 @@ export default function WorkflowView() {
 
   const startM = useMutation({
     mutationFn: (body: Record<string, string>) => post<{ runId: string }>("/api/dagent/runs", body),
-    onSuccess: (d) => {
-      setStartOpen(false);
+    onSuccess: () => {
+      setRefusedGates(null);
+      reset();
       qc.invalidateQueries({ queryKey: RUNS_KEY, exact: true });
-      openRun(d.runId);
     },
     onError: (e: Error & { body?: { gates?: GateResult[] } }) => {
       if (e.body?.gates?.length) {
         reset();
         setRefusedGates(e.body.gates);
-        router.replace("/workflow");
       }
       showToast(e.message, "error");
     },
@@ -212,9 +190,6 @@ export default function WorkflowView() {
     onSuccess: refreshRun,
     onError: (e: Error) => showToast(e.message, "error"),
   });
-
-  const formValue = form ?? { ...EMPTY_FORM, ...(runsQ.data?.defaults ?? {}) };
-  const submitStart = () => startM.mutate({ ...formValue });
 
   const draftedQuestions = (): string[] => {
     for (const s of run?.steps ?? []) if (s.output?.node === "readiness" && s.output.questions.length) return s.output.questions;
@@ -245,33 +220,24 @@ export default function WorkflowView() {
     else patch({ tab: "node", sel: null });
   };
 
-  const onRetry = (label: string) => {
-    if (demo) {
-      patch({ retried: label });
-      showToast(`Retry queued from ${label}.`);
-      return;
-    }
+  const onRetry = () => {
     const from = ui.retryFrom ?? run?.failure?.retryableFrom[0];
     if (!real || !from) return;
     startM.mutate({ ticketId: real.ticket.id, ticketUrl: real.ticket.url, project: real.ticket.project, rootRepo: real.ticket.rootRepo, provider: real.ticket.provider, retryOf: real.run.id, from });
   };
 
   const onCancel = () => {
-    if (demo) patch({ cancelled: true });
-    else if (runId) actM.mutate({ url: `/api/dagent/runs/${runId}/cancel` });
+    if (runId) actM.mutate({ url: `/api/dagent/runs/${runId}/cancel` });
   };
 
   const refused = gates.find((g) => g.status === "refused");
-  const scenarioOptions = SCENARIO_KEYS.map((k) => `${k} · ${scenarios[k].label}`);
-  const runs = runsQ.data?.runs ?? [];
-  const runLabel = (r: RunListItem) => `${r.ticketId}${r.title ? ` · ${r.title}` : ""} · ${r.state}`;
-  const sourceOptions = [DEMO, ...runs.map(runLabel)];
-  const current = runs.find((r) => r.id === runId);
-  const sourceValue = current ? runLabel(current) : runId ? `Run ${runId.slice(0, 8)}` : DEMO;
-  const ticket = demo
-    ? { id: "AB#4182", title: "Export invoices as CSV with ledger filters", meta: "Azure DevOps · billing" }
-    : { id: real?.ticket.id ?? (refusedGates ? formValue.ticketId : "…"), title: real?.ticket.title || (refusedGates ? "Refused before a run existed" : "Loading run…"), meta: real ? `${real.ticket.provider} · ${real.ticket.project}` : "" };
-  const waiting = !demo && run?.state === "waiting" ? run.waitReason : undefined;
+  const ticket = {
+    id: real?.ticket.id ?? ticketParam ?? "…",
+    title: real?.ticket.title || (refusedGates ? "Refused before a run existed" : "Loading run…"),
+    meta: real ? `${real.ticket.provider} · ${real.ticket.project}` : "",
+  };
+  const waiting = run?.state === "waiting" ? run.waitReason : undefined;
+  const empty = !runId;
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
@@ -282,52 +248,31 @@ export default function WorkflowView() {
         <ProviderBadge />
       </header>
 
-      <PageToolbar>
-        <span style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Run</span>
-        <SelectMenu
-          variant="filter"
-          alwaysGlow
-          value={sourceValue}
-          onChange={(v) => {
-            if (!v || v === sourceValue) return;
-            const idx = sourceOptions.indexOf(v);
-            openRun(idx > 0 ? runs[idx - 1].id : null);
-          }}
-          options={sourceOptions}
-          ariaLabel="Run"
-        />
-        {demo ? (
-          <SelectMenu
-            variant="filter"
-            value={scenarioOptions[SCENARIO_KEYS.indexOf(ui.scenario as (typeof SCENARIO_KEYS)[number])]}
-            onChange={(v) => v && reset({ scenario: v.slice(0, 1) })}
-            options={scenarioOptions}
-            ariaLabel="Demo scenario"
-          />
-        ) : null}
-        {waiting === "needs-input" ? (
-          <button type="button" className="te-action-btn" disabled={actM.isPending} onClick={() => actM.mutate({ url: `/api/dagent/runs/${runId}/resume`, body: { action: "recheck-readiness" } })} style={ctaButtonStyle("ghost")}>
-            Re-check readiness
-          </button>
-        ) : null}
-        {waiting === "needs-review" ? (
-          <button type="button" className="te-action-btn" disabled={actM.isPending} onClick={() => actM.mutate({ url: `/api/dagent/runs/${runId}/resume`, body: { action: "accept" } })} style={ctaButtonStyle("ghost")}>
-            Accept PRs
-          </button>
-        ) : null}
-        <button type="button" className="te-action-btn" onClick={() => setStartOpen((o) => !o)} style={ctaButtonStyle(startOpen ? "outline" : "primary")}>
-          New run
-        </button>
-      </PageToolbar>
+      {waiting ? (
+        <PageToolbar>
+          {waiting === "needs-input" ? (
+            <button type="button" className="te-action-btn" disabled={actM.isPending} onClick={() => actM.mutate({ url: `/api/dagent/runs/${runId}/resume`, body: { action: "recheck-readiness" } })} style={ctaButtonStyle("ghost")}>
+              Re-check readiness
+            </button>
+          ) : null}
+          {waiting === "needs-review" ? (
+            <button type="button" className="te-action-btn" disabled={actM.isPending} onClick={() => actM.mutate({ url: `/api/dagent/runs/${runId}/resume`, body: { action: "accept" } })} style={ctaButtonStyle("ghost")}>
+              Accept PRs
+            </button>
+          ) : null}
+        </PageToolbar>
+      ) : null}
 
-      {startOpen ? <StartRunPanel form={formValue} busy={startM.isPending} onChange={(p) => setForm({ ...formValue, ...p })} onSubmit={submitStart} onClose={() => setStartOpen(false)} /> : null}
-
-      {mobile === null || (runId && viewQ.isPending) ? (
+      {mobile === null || runsQ.isPending || (runId && viewQ.isPending) ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <LoadingRing size={28} />
         </div>
-      ) : runId && viewQ.error ? (
-        <div style={{ ...tintedCard("danger"), margin: 16, fontSize: FONT.base }}>{viewQ.error.message}</div>
+      ) : runsQ.error || (runId && viewQ.error) ? (
+        <div style={{ ...tintedCard("danger"), margin: 16, fontSize: FONT.base }}>{(runsQ.error ?? viewQ.error)?.message}</div>
+      ) : empty ? (
+        <div style={{ ...card(), margin: 16, fontSize: FONT.base, color: COLORS.textMuted }}>
+          {ticketParam ? `${ticketParam} has no D-Agent run yet.` : "No D-Agent run yet."} Switch Flow Runner to the D-Agent engine and its runs show up here live.
+        </div>
       ) : (
         <div className="te-wf" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 1, background: COLORS.panelBgDark }}>
           <div style={{ flex: "0 0 auto", height: 48, display: "flex", alignItems: "center", gap: 10, padding: "0 16px", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.panelBg }}>
@@ -338,12 +283,12 @@ export default function WorkflowView() {
 
           <TicketLifecycle
             stages={lifecycle}
-            runKey={demo ? runKey : "implement"}
+            runKey={runId}
             open={ui.lcOpen}
             onToggle={() => patch({ lcOpen: !ui.lcOpen })}
             mobileOpen={ui.mLcOpen}
             onMobileToggle={() => patch({ mLcOpen: !ui.mLcOpen })}
-            onOpenRun={(key) => (demo ? reset({ scenario: ui.scenario, runKey: key }) : undefined)}
+            onOpenRun={() => undefined}
             onAction={onStageAction}
           />
 
@@ -352,7 +297,7 @@ export default function WorkflowView() {
               gate={refused}
               open={ui.fixOpen}
               onToggle={() => patch({ fixOpen: !ui.fixOpen })}
-              onRecheck={() => (demo ? showToast("Gates re-checked — admission still refuses.", "warning") : submitStart())}
+              onRecheck={onRetry}
             />
           ) : null}
 
@@ -384,12 +329,14 @@ export default function WorkflowView() {
                     follow={ui.follow}
                     vertical={vertical}
                     live={!!liveish}
-                    layoutKey={`${demo ? ui.scenario : runId}|${runKey}|${vertical}`}
+                    layoutKey={`${runId}|${vertical}`}
                     edgePop={ui.edgePop}
+                    allPaths={ui.allPaths}
                     steps={steps}
                     onPick={pick}
                     onFollow={onFollow}
                     onPill={onPill}
+                    onAllPaths={() => setUi((u) => ({ ...u, allPaths: !u.allPaths }))}
                     onClosePop={() => patch({ edgePop: null })}
                   />
                 </div>

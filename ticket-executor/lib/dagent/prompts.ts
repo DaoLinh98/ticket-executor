@@ -1,5 +1,5 @@
 import path from "path";
-import { bundleOf, deliveryOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, warningsOf } from "./rules";
+import { bundleOf, deliveryOf, findingsOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, threadsOf, warningsOf } from "./rules";
 import type { Ctx, Refusal } from "./types";
 
 export const PLAN_FILE = path.join(".te", "plan.md");
@@ -11,6 +11,7 @@ function header(c: Ctx): string {
     `Ticket: ${c.ticketUrl || c.ticketId} (id ${c.ticketId}, provider ${c.provider}, project ${c.project})`,
     `Working tree (repository "${rootName(c)}"): ${c.cwd}${c.baseSha ? ` — base commit ${c.baseSha}` : ""}`,
   ];
+  if (c.prUrl && c.flow === "review") lines.push(`Pull request under review: ${c.prUrl}`);
   lines.push(...repoMap(c));
   if (c.knowledgeFile) lines.push(`Project knowledge: ${c.knowledgeFile} (absolute path; may not exist yet)`);
   return lines.join("\n");
@@ -37,12 +38,20 @@ function repoMap(c: Ctx): string[] {
 const strings = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
 
 function acceptance(c: Ctx): string {
+  if (c.flow === "review") {
+    const fix = threadsOf(c).filter((t) => t.decision === "fix");
+    return `Review threads this run fixes:\n${fix.map((t, i) => `${i + 1}. [thread ${t.threadId}]${t.file ? ` ${t.file} —` : ""} ${t.comment} → ${t.reason}`).join("\n")}`;
+  }
+  if (c.flow === "qa") {
+    const defects = findingsOf(c).filter((f) => f.defect);
+    return `QA defects this run fixes:\n${defects.map((f, i) => `${i + 1}. ${f.finding} — ${f.reason}`).join("\n")}`;
+  }
   const acs = strings(c.channels.readiness?.acceptanceCriteria);
   return acs.length ? `Acceptance criteria:\n${acs.map((a, i) => `${i + 1}. ${a}`).join("\n")}` : "";
 }
 
 export function branchOf(c: Ctx): string {
-  return String(lastDelivery(c).branch ?? c.channels.plan?.branch ?? "").trim();
+  return String(lastDelivery(c).branch ?? c.channels.plan?.branch ?? c.channels.qaTriage?.branch ?? c.channels.setup?.branch ?? "").trim();
 }
 
 const numbered = (list: Refusal[]) =>
@@ -120,6 +129,49 @@ export function reflectPrompt(c: Ctx): string {
     `${header(c)}\n\nThe run is stopping after ${why}. These review blockers still stand:\n` +
     `${numbered(bundleOf(c))}\n\nLast fix summary: ${String(lastDelivery(c).summary ?? "")}\n\n` +
     `Decide whether this teaches a reusable lesson and, if so, record it in ${c.knowledgeFile || "KNOWLEDGE.md"}.`
+  );
+}
+
+export function reviewTriagePrompt(c: Ctx): string {
+  return (
+    `${header(c)}\n\nThe working tree is on the pull request's source branch \`${branchOf(c)}\`. ` +
+    `Read every open review thread on the pull request above and judge each one against the code and the ticket. ` +
+    `Return one \`threads\` entry per open thread and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files and do not reply to any thread.`
+  );
+}
+
+export function reviewImplementPrompt(c: Ctx): string {
+  return (
+    `${header(c)}\n\n${acceptance(c)}\n\nThe decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` — ` +
+    `do not create or switch branches, do not rebase. Commit locally. Do not push and do not reply to any thread.`
+  );
+}
+
+export function respondPrompt(c: Ctx): string {
+  const changed = Array.isArray(c.channels.diffGuard?.changed) && c.channels.diffGuard.changed.length > 0;
+  const answer = threadsOf(c).filter((t) => t.decision !== "informational");
+  const list = answer.map((t, i) => `${i + 1}. thread ${t.threadId} (${t.decision})${t.file ? ` ${t.file}` : ""} — ${t.reason}`).join("\n");
+  return (
+    `${header(c)}\n\n` +
+    (changed ? `Push branch \`${branchOf(c)}\` from \`${c.cwd}\` to origin (never force-push). Then answer` : "Nothing was committed — push nothing. Answer") +
+    ` these threads on the pull request, one reply each:\n${list}\n\n` +
+    `Never resolve a thread or change its status. Skip a thread that already carries your reply — this step may be retried after a crash.`
+  );
+}
+
+export function qaTriagePrompt(c: Ctx): string {
+  return (
+    `${header(c)}\n\nQA sent this ticket back. Read the work item and the QC comments left since the last delivery, and judge every finding ` +
+    `against the code on the base commits above. Return the verdicts in \`findings\`; when at least one is a real defect, propose \`branch\` and the fix plan in \`planMd\` ` +
+    `(the harness writes it to \`${PLAN_FILE}\`). When none is, draft \`qaReply\`. Do not write files and do not comment on the ticket.`
+  );
+}
+
+export function qaImplementPrompt(c: Ctx): string {
+  return (
+    `${header(c)}\n\n${acceptance(c)}\n\n` +
+    `Implement \`${PLAN_FILE}\` on branch \`${branchOf(c)}\` in every repository you change — create it where it does not exist yet. ` +
+    `Add a regression test for each defect. Commit locally. Do not push.`
   );
 }
 

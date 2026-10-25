@@ -453,13 +453,18 @@ export default function MySprintPage() {
       await load();
     });
 
-  const openExecution = (ticketId: string, tab: "execution" | "result") =>
+  // A ticket whose runs went to the D-Agent engine is watched on /workflow, which follows its live run.
+  const openExecution = (ticketId: string, tab: "execution" | "result") => {
+    const row = stored?.items.find((i) => i.ticketId === ticketId);
+    const dagent = row?.runEngine === "dagent" || row?.reviewEngine === "dagent";
     window.open(
-      `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` +
-        `&at=${Date.now()}`,
+      dagent
+        ? `/workflow?ticket=${encodeURIComponent(ticketId)}`
+        : `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` + `&at=${Date.now()}`,
       "_blank",
       "noopener"
     );
+  };
 
   const askRelease = (row: PlannedRow) =>
     setConfirm({
@@ -506,9 +511,9 @@ export default function MySprintPage() {
       : (data?.plan?.tickets ?? []).map((t) => ({
           id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
-          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
+          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", runEngine: "classic", prUrl: "",
           prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
-          reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
+          reviewState: "idle", reviewRunId: "", reviewEngine: "classic", openComments: 0, threadsReplied: 0, threadsResolved: 0,
           reviewRounds: 0, reviewError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
           model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
@@ -856,6 +861,7 @@ export default function MySprintPage() {
                   onApplySettings={buildPlan}
                   onSetStatus={(status) => patchPlan({ status }, "activate")}
                   onToggle={(field, on) => patchPlan({ [field]: on }, field)}
+                  onEngine={(engine) => patchPlan({ engine }, "engine")}
                   onTick={tickNow}
                   onSaveReviewers={(reviewers) => patchPlan({ reviewers }, "reviewers")}
                 />

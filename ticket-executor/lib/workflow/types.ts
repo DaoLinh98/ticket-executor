@@ -71,7 +71,14 @@ export type NodeOutput =
   | { node: "evaluate"; verdict: "pass" | "changes-required"; blockers: Refusal[]; reviewedDelta: boolean }
   | { node: "reflect"; recorded: boolean; lesson: string }
   | { node: "publish"; prs: PullRequestRef[] }
-  | { node: "verifyPublish"; passed: boolean; checks: { name: string; ok: boolean }[] };
+  | { node: "verifyPublish"; passed: boolean; checks: { name: string; ok: boolean }[] }
+  | {
+      node: "reviewTriage";
+      threads: { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string }[];
+      planMd: string;
+    }
+  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string }
+  | { node: "respond"; pushed: boolean; threadsReplied: number };
 
 export type Step = {
   id: string;
@@ -151,15 +158,6 @@ export type LifecycleStage = {
   action?: string;
   runs: RunChip[];
   ticks?: StageTick[];
-};
-
-export type Scenario = {
-  key: string;
-  label: string;
-  runKey: string | null;
-  gates: GateResult[];
-  lifecycle: LifecycleStage[];
-  runs: Record<string, () => Run>;
 };
 
 export type Cell = string | { t: string; tone?: Tone; mono?: boolean };

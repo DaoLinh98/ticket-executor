@@ -268,6 +268,13 @@ export async function loadLinkedPullRequest(
   return getLinkedPullRequest(ticketId, knownPrUrl);
 }
 
+/** The source branch of one pull request — the branch a D-Agent review run checks out. */
+export async function loadPullRequestBranch(provider: ProviderId, ticketId: string, prUrl: string): Promise<string> {
+  if (provider !== "azure-devops" && provider !== "github") return "";
+  const review = provider === "azure-devops" ? await getPullRequestReview(ticketId, prUrl, { fast: true }) : await githubReviewFor(ticketId, prUrl);
+  return review.pr?.branch ?? "";
+}
+
 export async function searchTickets(provider: ProviderId, query: string): Promise<Ticket[]> {
   if (provider !== "azure-devops") return [];
   if (!(await adoCreds())) return [];

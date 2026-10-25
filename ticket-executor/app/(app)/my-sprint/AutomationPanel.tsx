@@ -17,6 +17,13 @@ const TOGGLES: readonly [AutoField, string, string][] = [
   ["autoDraftQaReply", "Auto-draft QC reply", "Draft a reply when QC comments on a ticket in QA. Nothing is posted until you confirm."],
 ];
 
+type Engine = StoredPlan["engine"];
+
+const ENGINES: readonly [Engine, string, string][] = [
+  ["classic", "Classic", "Run tickets on the Ticket Execution engine (skills)."],
+  ["dagent", "D-Agent", "Run tickets on the D-Agent engine (subagents) — implement, review fix and QA fix. Watch them live on Workflow."],
+];
+
 const SETTING_FIELDS: readonly [keyof PlanSettings, string, string][] = [
   ["pointsPerDay", "POINTS / DAY", "decimal"],
   ["hoursPerDay", "HOURS / DAY", "decimal"],
@@ -32,6 +39,7 @@ export default function AutomationPanel({
   onApplySettings,
   onSetStatus,
   onToggle,
+  onEngine,
   onTick,
   onSaveReviewers,
 }: {
@@ -43,6 +51,7 @@ export default function AutomationPanel({
   onApplySettings: () => void;
   onSetStatus: (status: "active" | "draft") => void;
   onToggle: (field: AutoField, on: boolean) => void;
+  onEngine: (engine: Engine) => void;
   onTick: () => void;
   onSaveReviewers: (reviewers: string[]) => void;
 }) {
@@ -62,6 +71,26 @@ export default function AutomationPanel({
   return (
     <div style={{ ...card({ padding: "8px 10px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <span role="radiogroup" aria-label="Run engine" style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+          <span style={{ ...sectionCaption(), color: COLORS.textMuted }}>ENGINE</span>
+          {ENGINES.map(([engine, label, hint]) => {
+            const on = (stored?.engine ?? "classic") === engine;
+            return (
+              <button
+                key={engine}
+                role="radio"
+                aria-checked={on}
+                className="te-action-btn"
+                onClick={(e) => { fireBoltFromEvent(e); if (stored && !on) onEngine(engine); }}
+                disabled={!stored || busy.has("engine")}
+                title={hint}
+                style={{ ...ctaButtonStyle(on ? "primary" : "ghost", { height: "26px", cornerPx: 7 }), padding: "0 9px", fontSize: FONT.sm, cursor: stored && !on ? "pointer" : "default" }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </span>
         {TOGGLES.map(([field, label, hint]) => {
           const on = !!stored?.[field];
           return (

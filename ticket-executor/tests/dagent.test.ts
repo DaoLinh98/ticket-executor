@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
-import { agentsOf, GRAPH, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS } from "../lib/dagent/graph";
+import { agentsOf, allAgents, GRAPH, GRAPHS, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
 import { implementPrompt, readinessPrompt } from "../lib/dagent/prompts";
 import { bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, warningsOf } from "../lib/dagent/rules";
 import { companionNote } from "../lib/repoContext";
@@ -15,6 +15,8 @@ import { outputOf } from "../lib/dagent/view";
 
 const ctx = (channels: Ctx["channels"] = {}, visits: Ctx["visits"] = {}): Ctx => ({
   runId: "r1",
+  flow: "implement",
+  prUrl: "",
   ticketId: "4182",
   ticketUrl: "",
   provider: "azure-devops",
@@ -34,20 +36,61 @@ const edge = (id: string, c: Ctx, r: NodeResult) => GRAPH.edges[id](c, r);
 const clear = { blocked: { is: false, reason: "" } };
 
 test("every edge target is declared, and every declared target is a node or a terminal", () => {
-  for (const n of Object.values(GRAPH.nodes)) {
-    assert.ok(GRAPH.edges[n.id], `${n.id} has no edge`);
-    for (const t of n.next) assert.ok(GRAPH.nodes[t] || TERMINALS.includes(t), `${n.id} → ${t}`);
+  for (const g of Object.values(GRAPHS)) {
+    for (const n of Object.values(g.nodes)) {
+      assert.ok(g.edges[n.id], `${g.id}: ${n.id} has no edge`);
+      for (const t of n.next) assert.ok(g.nodes[t] || TERMINALS.includes(t), `${g.id}: ${n.id} → ${t}`);
+    }
   }
 });
 
-test("the external node is a leaf: nothing after publish can reach publish again", () => {
-  const seen = new Set<string>();
-  const walk = (id: string) => {
-    for (const t of GRAPH.nodes[id]?.next ?? []) if (!seen.has(t) && GRAPH.nodes[t]) (seen.add(t), walk(t));
-  };
-  walk("publish");
-  assert.ok(!seen.has("publish"));
-  for (const n of Object.values(GRAPH.nodes)) if (n.effects === "external") assert.equal(n.maxVisits, 1);
+test("the external node is a leaf: nothing after it can reach it again", () => {
+  for (const g of Object.values(GRAPHS)) {
+    const external = Object.values(g.nodes).filter((n) => n.effects === "external");
+    assert.equal(external.length, 1, g.id);
+    const seen = new Set<string>();
+    const walk = (id: string) => {
+      for (const t of g.nodes[id]?.next ?? []) if (!seen.has(t) && g.nodes[t]) (seen.add(t), walk(t));
+    };
+    walk(external[0].id);
+    assert.ok(!seen.has(external[0].id), g.id);
+    assert.equal(external[0].maxVisits, 1, g.id);
+  }
+});
+
+const reviewCtx = (channels: Ctx["channels"] = {}, visits: Ctx["visits"] = {}): Ctx => ({ ...ctx(channels, visits), flow: "review", prUrl: "https://dev.azure.com/o/p/_git/r/pullrequest/7" });
+const thread = (decision: string) => ({ threadId: "1", file: "a.ts:3", comment: "c", decision, reason: "r" });
+
+test("review fix: triage routes to the fix, straight to the replies, or fails with nothing to answer", () => {
+  const e = (r: NodeResult) => REVIEW_GRAPH.edges.reviewTriage(reviewCtx(), r);
+  assert.equal(e(ok({ threads: [thread("fix"), thread("reject")], planMd: "", ...clear })).to, "implement");
+  assert.equal(e(ok({ threads: [thread("reject")], planMd: "", ...clear })).to, "respond");
+  assert.equal(e(ok({ threads: [], planMd: "", ...clear })).to, FAIL);
+});
+
+test("review fix: the PR branch is never rebased — commits go straight to the diff guard", () => {
+  assert.ok(!REVIEW_GRAPH.nodes.syncBase);
+  const done = ok({ committed: true, branch: "b", ...clear });
+  assert.equal(REVIEW_GRAPH.edges.implement(reviewCtx(), done).to, "diffGuard");
+  assert.equal(REVIEW_GRAPH.edges.fix(reviewCtx(), done).to, "diffGuard");
+  assert.equal(REVIEW_GRAPH.edges.prePublish(reviewCtx(), ok({ passed: false, baseMoved: true, issues: ["x"] })).to, FAIL);
+});
+
+test("review fix: answering is required, and a committed fix must be pushed", () => {
+  const changed = reviewCtx({ diffGuard: { changed: [{ repo: "r", branch: "b", files: 1 }] } });
+  assert.equal(REVIEW_GRAPH.edges.respond(changed, ok({ pushed: false, threadsReplied: 2, ...clear })).to, FAIL);
+  assert.equal(REVIEW_GRAPH.edges.respond(changed, ok({ pushed: true, threadsReplied: 0, ...clear })).to, FAIL);
+  assert.equal(REVIEW_GRAPH.edges.respond(changed, ok({ pushed: true, threadsReplied: 2, ...clear })).to, END);
+  assert.equal(REVIEW_GRAPH.edges.respond(reviewCtx(), ok({ pushed: false, threadsReplied: 1, ...clear })).to, END);
+});
+
+test("QA fix: no defect ends with a reply, a defect enters the implement loop", () => {
+  const e = (data: Record<string, unknown>) => QA_GRAPH.edges.qaTriage(ctx(), ok({ ...data, ...clear }));
+  assert.equal(e({ outcome: "no-fix-needed", findings: [{ defect: false }] }).to, END);
+  assert.equal(e({ outcome: "fix", findings: [{ defect: true }], branch: "bug/1-x" }).to, "implement");
+  assert.equal(e({ outcome: "fix", findings: [{ defect: false }], branch: "bug/1-x" }).to, FAIL);
+  assert.equal(e({ outcome: "fix", findings: [{ defect: true }], branch: "" }).to, FAIL);
+  assert.equal(QA_GRAPH.nodes.publish.effects, "external");
 });
 
 test("every agent node runs a global agent and declares a schema", () => {
@@ -217,7 +260,7 @@ test("an agent turn cannot invoke a Ticket Execution or hand-run skill, or spawn
 });
 
 test("the repo ships every agent the graph runs, each valid and versioned", () => {
-  assert.deepEqual([...BUNDLED_AGENTS].sort(), agentsOf().sort());
+  assert.deepEqual([...BUNDLED_AGENTS].sort(), allAgents().sort());
   for (const name of BUNDLED_AGENTS) {
     const file = path.join(process.cwd(), "agents", `${name}.md`);
     assert.equal(agentProblem(name, parseAgent(readFileSync(file, "utf8"))), "", name);

@@ -298,7 +298,7 @@ export async function setPlanStatus(id: string, status: "draft" | "active" | "ar
 
 export async function setPlanAutomation(
   id: string,
-  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[] }
+  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[]; engine?: string }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
 }

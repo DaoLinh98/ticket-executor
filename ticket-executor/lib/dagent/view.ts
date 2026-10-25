@@ -14,9 +14,9 @@ import type {
   StepStatus,
   Transition,
 } from "../workflow/types";
-import { GRAPH, MAX_FIX_ATTEMPTS, outline } from "./graph";
+import { flowOf, GRAPH, graphById, MAX_FIX_ATTEMPTS, outline } from "./graph";
 import { deliveryOf, prNumber } from "./rules";
-import type { LogEntry } from "./types";
+import type { Graph, LogEntry } from "./types";
 
 export type RunRow = {
   id: string;
@@ -26,6 +26,7 @@ export type RunRow = {
   provider: string;
   project: string;
   rootRepo: string;
+  graphId: string;
   state: string;
   waitReason: string;
   currentNodeId: string;
@@ -73,9 +74,9 @@ const GATE_DEFS: FlowNodeDef[] = [
   { id: "admission", label: "Admission", phase: "pre-run", kind: "gate", effects: "pure", context: "", next: ["setup"] },
 ];
 
-export function flowDefs(): FlowNodeDef[] {
-  return GATE_DEFS.concat(
-    outline().map((n) => ({
+export function flowDefs(g: Graph = GRAPH): FlowNodeDef[] {
+  return GATE_DEFS.map((d) => (d.id === "admission" ? { ...d, next: [g.entry] } : d)).concat(
+    outline(g).map((n) => ({
       id: n.id,
       label: n.label,
       phase: n.phase,
@@ -153,9 +154,17 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
       };
     case "verifyPublish":
       return { node: "verifyPublish", passed: !!d.passed, checks: arr(d.checks) };
+    case "reviewTriage":
+      return { node: "reviewTriage", threads: arr(d.threads), planMd };
+    case "qaTriage":
+      return { node: "qaTriage", outcome: d.outcome === "no-fix-needed" ? "no-fix-needed" : "fix", findings: arr(d.findings), qaReply: str(d.qaReply), planMd };
+    case "respond":
+      return { node: "respond", pushed: !!d.pushed, threadsReplied: num(d.threadsReplied) };
   }
   return null;
 }
+
+const FLOW_LABEL = { implement: "implement", review: "fix-review", qa: "fix-qa" } as const;
 
 const STEP_STATUS: Record<string, StepStatus> = { running: "running", succeeded: "succeeded", failed: "failed", refused: "refused", skipped: "skipped", abandoned: "failed" };
 
@@ -167,7 +176,9 @@ function runState(row: RunRow): RunState {
 const last = <T>(list: T[]) => list[list.length - 1];
 
 export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live): RunView {
-  const defs = flowDefs();
+  const graph = graphById(row.graphId) ?? GRAPH;
+  const flow = FLOW_LABEL[flowOf(graph.id)];
+  const defs = flowDefs(graph);
   const plans = artifacts.filter((a) => a.kind === "plan");
   const planMd = last(plans)?.body ?? "";
   const logs: LogLine[] = [];
@@ -198,7 +209,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
   const gates = arr<GateResult>(row.gates);
   const admitted = gates.find((g) => g.gate === "admission");
   const transitions: Transition[] = [
-    { seq: 0, fromNode: "admission", toNode: "setup", reason: admitted?.reason ?? "admitted", at: row.startedAt.getTime() },
+    { seq: 0, fromNode: "admission", toNode: graph.entry, reason: admitted?.reason ?? "admitted", at: row.startedAt.getTime() },
     ...transRows.filter((t) => t.toNode !== "CANCELLED").map((t) => ({ seq: t.seq, fromNode: t.fromNode, toNode: t.toNode, reason: t.reason, at: t.createdAt.getTime() })),
   ];
 
@@ -217,7 +228,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
 
   const run: Run = {
     id: row.id,
-    flow: "implement",
+    flow,
     state,
     waitReason: row.state === "waiting" ? (row.waitReason as Run["waitReason"]) : undefined,
     currentNodeId: row.currentNodeId,
@@ -235,7 +246,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
             reason: row.errorMessage || "Reached FAIL",
             refusals: [...standing, ...(lastEval ? refusals(arr<Data>((lastEval.output as Data | null)?.blockers).map((b) => ({ ...b, source: "evaluate" }))) : [])],
             lesson: reflect?.output?.node === "reflect" ? reflect.output.lesson : "",
-            retryableFrom: GRAPH.retryEntries,
+            retryableFrom: graph.retryEntries,
           }
         : undefined,
     knowledge: knowledgeRow ? (JSON.parse(knowledgeRow.body) as Run["knowledge"]) : undefined,
@@ -248,7 +259,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
         : null,
     logs,
   };
-  return { run, gates, lifecycle: lifecycleOf(row, steps), ticket: ticketOf(row), retryEntries: GRAPH.retryEntries };
+  return { run, gates, lifecycle: lifecycleOf(row, steps, flow), ticket: ticketOf(row), retryEntries: graph.retryEntries };
 }
 
 function ticketOf(row: RunRow): TicketView {
@@ -257,19 +268,19 @@ function ticketOf(row: RunRow): TicketView {
 
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
-function lifecycleOf(row: RunRow, steps: Step[]): LifecycleStage[] {
+function lifecycleOf(row: RunRow, steps: Step[], flow: string): LifecycleStage[] {
   const at = (s?: Step) => (s ? day(s.endedAt ?? s.startedAt) : "");
   const ready = last(steps.filter((s) => s.nodeId === "readiness"));
   const pub = last(steps.filter((s) => s.nodeId === "publish"));
   const cost = steps.reduce((n, s) => n + s.costUsd, 0);
-  const chip = { key: "implement", flow: "implement", state: row.state, cost };
+  const chip = { key: row.id, flow, state: row.state, cost };
   const m: Record<string, Partial<LifecycleStage>> = {};
   if (ready?.output?.node === "readiness") {
     m.readiness = ready.output.ready
       ? { status: "done", at: at(ready), detail: ready.output.delivery?.status === "done" ? "Already delivered" : "Ready" }
       : { status: "blocked", at: at(ready), detail: `${ready.output.questions.length} question(s) for the PO`, action: "Copy questions" };
   }
-  m.implement =
+  m[flow === "fix-review" ? "review" : flow === "fix-qa" ? "qa" : "implement"] =
     row.state === "succeeded"
       ? { status: "done", at: day(row.startedAt.getTime()), detail: "Succeeded", runs: [chip] }
       : row.state === "failed" || row.state === "cancelled"

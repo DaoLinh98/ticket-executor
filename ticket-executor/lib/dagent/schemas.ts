@@ -169,3 +169,94 @@ export const PUBLISH_OUTPUT = {
   required: ["prs", "blocked"],
   additionalProperties: false,
 } as const;
+
+export const REVIEW_TRIAGE_OUTPUT = {
+  type: "object",
+  properties: {
+    threads: {
+      type: "array",
+      description: "One entry per open review thread on the pull request, in the order the provider lists them.",
+      items: {
+        type: "object",
+        properties: {
+          threadId: { type: "string", description: "The provider's id for the thread." },
+          file: { type: "string", description: "Path with a line number when the thread is anchored to code; empty otherwise." },
+          comment: { type: "string", description: "The reviewer's request, in one sentence." },
+          decision: {
+            type: "string",
+            enum: ["fix", "reject", "informational"],
+            description: "fix: a valid finding this run changes code for. reject: invalid, out of scope or architectural — answered, not changed. informational: needs no reply.",
+          },
+          reason: { type: "string", description: "Why, in one sentence. For fix: what will change." },
+        },
+        required: ["threadId", "file", "comment", "decision", "reason"],
+        additionalProperties: false,
+      },
+    },
+    planMd: { type: "string", description: "A short Markdown plan: a Thread Decisions table and, for each fix, the files to change. The harness writes it to .te/plan.md." },
+    blocked: BLOCKED,
+  },
+  required: ["threads", "planMd", "blocked"],
+  additionalProperties: false,
+} as const;
+
+export const QA_TRIAGE_OUTPUT = {
+  type: "object",
+  properties: {
+    title: { type: "string", description: "The work item's title." },
+    findings: {
+      type: "array",
+      description: "One entry per QC finding in the comments QA left after the last delivery.",
+      items: {
+        type: "object",
+        properties: {
+          finding: { type: "string", description: "What QA reported, in one sentence." },
+          defect: { type: "boolean", description: "True only when the code is wrong against the ticket." },
+          reason: { type: "string", description: "Evidence for the verdict: file:line, or the acceptance criterion it is checked against." },
+          files: { ...STRINGS, description: "Files the fix changes, repo-prefixed when several repos are listed. Empty when defect is false." },
+        },
+        required: ["finding", "defect", "reason", "files"],
+        additionalProperties: false,
+      },
+    },
+    outcome: {
+      type: "string",
+      enum: ["fix", "no-fix-needed"],
+      description: "fix: at least one finding is a real defect. no-fix-needed: none is — nothing will change and the run ends with qaReply.",
+    },
+    branch: { type: "string", description: "The branch the fix is committed on. Empty when outcome is no-fix-needed." },
+    repos: { ...STRINGS, description: "Every repository the fix touches, by the names the brief uses." },
+    planMd: { type: "string", description: "The fix plan in Markdown, under 60 lines. Empty when outcome is no-fix-needed. The harness writes it to .te/plan.md." },
+    qaReply: { type: "string", description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty otherwise." },
+    summary: { type: "string", description: "One sentence: what QA reported and what this run decided." },
+    blocked: BLOCKED,
+  },
+  required: ["title", "findings", "outcome", "branch", "repos", "planMd", "qaReply", "summary", "blocked"],
+  additionalProperties: false,
+} as const;
+
+export const RESPOND_OUTPUT = {
+  type: "object",
+  properties: {
+    branch: { type: "string" },
+    pushed: { type: "boolean", description: "True if the branch was pushed. False when nothing was committed." },
+    replies: {
+      type: "array",
+      description: "One entry per thread you were asked to answer.",
+      items: {
+        type: "object",
+        properties: {
+          threadId: { type: "string" },
+          replied: { type: "boolean", description: "True if your reply is on the thread (including one already there from an earlier attempt)." },
+        },
+        required: ["threadId", "replied"],
+        additionalProperties: false,
+      },
+    },
+    threadsReplied: { type: "integer", description: "How many threads carry your reply." },
+    threadsResolved: { type: "integer", description: "Always 0 — threads are never resolved by this step." },
+    blocked: BLOCKED,
+  },
+  required: ["branch", "pushed", "replies", "threadsReplied", "threadsResolved", "blocked"],
+  additionalProperties: false,
+} as const;
