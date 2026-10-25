@@ -15,3 +15,16 @@ export function companionPathsFromInstructions(text: string): string[] {
   }
   return found;
 }
+
+export function companionNote(text: string, raw: string): string {
+  const line = text.split(/\r?\n/).find((l) => l.includes(raw));
+  if (!line) return "";
+  return line
+    .replace(`\`${raw}\``, " ")
+    .replace(raw, " ")
+    .replace(/^\s*[-*]\s+/, "")
+    .replace(/\s*[—–:-]\s*[—–:-]\s*/g, " — ")
+    .replace(/[\s:—–-]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

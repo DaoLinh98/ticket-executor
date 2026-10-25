@@ -730,3 +730,92 @@ model QaReplyDraft {
   @@index([plannedTicketId])
   @@index([status])
 }
+
+model DagentRun {
+  id               String    @id @default(cuid())
+  ticketId         String
+  ticketUrl        String    @default("")
+  ticketTitle      String    @default("")
+  provider         String    @default("")
+  org              String    @default("")
+  project          String    @default("")
+  rootRepo         String
+  worktreePath     String    @default("")
+  graphId          String
+  state            String    @default("running")
+  waitReason       String    @default("")
+  currentNodeId    String    @default("")
+  errorMessage     String    @default("")
+  gates            Json      @default("[]")
+  channels         Json      @default("{}")
+  visits           Json      @default("{}")
+  hops             Int       @default(0)
+  model            String    @default("")
+  effort           String    @default("")
+  baseSha          String    @default("")
+  companions       Json      @default("[]")
+  branch           String    @default("")
+  prUrl            String    @default("")
+  retryOfId        String    @default("")
+  entryNode        String    @default("")
+  knowledgeAtStart String?
+  startedAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  endedAt          DateTime?
+
+  steps       DagentStep[]
+  transitions DagentTransition[]
+  artifacts   DagentArtifact[]
+
+  @@index([ticketId])
+  @@index([startedAt])
+}
+
+model DagentStep {
+  id              String    @id @default(cuid())
+  runId           String
+  run             DagentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId          String
+  label           String    @default("")
+  agent           String    @default("")
+  attempt         Int       @default(1)
+  status          String    @default("running")
+  input           Json?
+  output          Json?
+  errorMessage    String    @default("")
+  logLines        Json      @default("[]")
+  costUsd         Float     @default(0)
+  inputTokens     Int       @default(0)
+  outputTokens    Int       @default(0)
+  cacheReadTokens Int       @default(0)
+  numTurns        Int       @default(0)
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+
+  @@unique([runId, nodeId, attempt])
+  @@index([runId])
+}
+
+model DagentTransition {
+  id        String    @id @default(cuid())
+  runId     String
+  run       DagentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  seq       Int
+  fromNode  String
+  toNode    String
+  reason    String    @default("")
+  createdAt DateTime  @default(now())
+
+  @@index([runId, seq])
+}
+
+model DagentArtifact {
+  id        String    @id @default(cuid())
+  runId     String
+  run       DagentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind      String
+  body      String
+  createdAt DateTime  @default(now())
+
+  @@index([runId, kind])
+}

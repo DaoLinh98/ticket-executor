@@ -104,11 +104,13 @@ function SystemCheckPageInner() {
         <ProviderBadge />
       </header>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
-          <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+          <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto" }}>
+          <div className="te-sprint-split" style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "24px" }}>
+          <div className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             {error && (
               <div style={{ ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }), fontSize: FONT.base, color: COLORS.danger, lineHeight: 1.5 }}>{error}</div>
             )}
@@ -152,6 +154,24 @@ function SystemCheckPageInner() {
               </div>
             </div>
 
+            {/* Payoff */}
+            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              {summary?.ready ? (
+                <Link
+                  href="/ticket-execution"
+                  onClick={(e) => fireBoltFromEvent(e)}
+                  style={{ ...ctaButtonStyle("primary", { height: "34px" }), textDecoration: "none" }}
+                >
+                  Go to Ticket Execution
+                </Link>
+              ) : (
+                <span style={{ display: "inline-flex", alignItems: "center", height: "34px", padding: "0 16px", fontSize: FONT.sm, fontWeight: 600, color: COLORS.textMuted, border: `1.5px solid ${COLORS.border}`, clipPath: clipCorner(7) }}>
+                  Clear the blockers to continue
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="te-scroll te-sprint-pane" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: "20px", alignContent: "start", alignItems: "start", paddingRight: "4px" }}>
             {/* Groups */}
             {GROUPS.map((g) => {
               const rows = result?.checks.filter((c) => c.group === g.id) ?? [];
@@ -182,22 +202,8 @@ function SystemCheckPageInner() {
               );
             })}
 
-            {/* Payoff */}
-            <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: "4px" }}>
-              {summary?.ready ? (
-                <Link
-                  href="/ticket-execution"
-                  onClick={(e) => fireBoltFromEvent(e)}
-                  style={{ ...ctaButtonStyle("primary", { height: "34px" }), textDecoration: "none" }}
-                >
-                  Go to Ticket Execution
-                </Link>
-              ) : (
-                <span style={{ display: "inline-flex", alignItems: "center", height: "34px", padding: "0 16px", fontSize: FONT.sm, fontWeight: 600, color: COLORS.textMuted, border: `1.5px solid ${COLORS.border}`, clipPath: clipCorner(7) }}>
-                  Clear the blockers to continue
-                </span>
-              )}
-            </div>
+          </div>
+          </div>
           </div>
         )}
       </main>

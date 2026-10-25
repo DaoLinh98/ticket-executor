@@ -36,7 +36,7 @@ import {
 } from "./mcp";
 import { normalizeProvider } from "./tickets";
 import { providerMeta } from "./providers";
-import { companionPathsFromInstructions, INSTRUCTION_FILES } from "./repoContext";
+import { companionNote, companionPathsFromInstructions, INSTRUCTION_FILES } from "./repoContext";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 export type CheckGroup = "environment" | "skills" | "connection" | "agent-access" | "repo";
@@ -626,16 +626,16 @@ export function validateRootRepo(rootRepo: string | undefined | null): { ok: boo
   return { ok: true };
 }
 
-export function discoverCompanionRepos(rootRepo: string): { repos: { name: string; path: string }[]; warnings: string[] } {
+export function discoverCompanionRepos(rootRepo: string): { repos: { name: string; path: string; note: string }[]; warnings: string[] } {
   const norm = (p: string) => {
     const r = path.resolve(p);
     return process.platform === "win32" ? r.toLowerCase() : r;
   };
   const root = norm(rootRepo);
   const seen = new Set([root]);
-  const repos: { name: string; path: string }[] = [];
+  const repos: { name: string; path: string; note: string }[] = [];
   const warnings: string[] = [];
-  const text = INSTRUCTION_FILES.map((rel) => {
+  const text = [...INSTRUCTION_FILES, "CLAUDE.local.md"].map((rel) => {
     try {
       return readFileSync(path.join(rootRepo, rel), "utf8");
     } catch {
@@ -657,7 +657,7 @@ export function discoverCompanionRepos(rootRepo: string): { repos: { name: strin
       warnings.push(`${p} is named in the Root repo's instruction files but is not the top of a git repository — not offered to the run.`);
       continue;
     }
-    repos.push({ name: path.basename(p), path: p });
+    repos.push({ name: path.basename(p), path: p, note: companionNote(text, raw) });
   }
   return { repos, warnings };
 }

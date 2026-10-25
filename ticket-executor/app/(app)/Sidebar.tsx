@@ -40,6 +40,11 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: "/workflow",
+    label: "Workflow",
+    icon: <path d="M5 6a2 2 0 1 0 0 .01M19 6a2 2 0 1 0 0 .01M12 19a2 2 0 1 0 0 .01M7 6h10M6.5 7.5l4.5 10M17.5 7.5L13 17.5" />,
+  },
+  {
     href: "/report",
     label: "Report",
     icon: <path d="M8 3h8l4 4v14H4V3zM8 12h8M8 16h5" />,

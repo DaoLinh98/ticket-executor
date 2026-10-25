@@ -109,6 +109,32 @@
   /* Execution flow map (react-flow) */
   --te-flow-dot: rgba(255,255,255,.09);
 
+  /* Ticket Workflow page */
+  --te-wf-dot: rgba(255,255,255,.4);
+  --te-accent-soft: color-mix(in srgb, var(--te-accent) 14%, transparent);
+  --te-success-soft: color-mix(in srgb, var(--te-success) 14%, transparent);
+  --te-danger-soft: color-mix(in srgb, var(--te-danger) 14%, transparent);
+  --te-warning-soft: color-mix(in srgb, var(--te-warning) 15%, transparent);
+  --te-info-soft: color-mix(in srgb, var(--te-info) 14%, transparent);
+  --te-indigo-soft: color-mix(in srgb, var(--te-indigo) 15%, transparent);
+  --te-lane-bg: rgba(255,255,255,.022);
+  --te-lane-bg-active: color-mix(in srgb, var(--te-accent) 6%, transparent);
+  --te-lane-border: rgba(255,255,255,.07);
+  --te-node-bg: #0E2230;
+  --te-node-shadow: 0 6px 18px rgba(0,0,0,.45);
+  --te-port: #5C7480;
+  --te-edge-faint: #46667A;
+  --te-glow-accent: color-mix(in srgb, var(--te-accent) 55%, transparent);
+  --te-glow-danger: color-mix(in srgb, var(--te-danger) 45%, transparent);
+  --te-phase-prepare: #5E6B80;
+  --te-phase-understand: #9A8CFA;
+  --te-phase-build: #4CC2F0;
+  --te-phase-verify: #EBA846;
+  --te-phase-publish: #44C08A;
+  --te-minimap-bg: rgba(7,22,31,.92);
+  --te-minimap-mask: color-mix(in srgb, var(--te-accent) 12%, transparent);
+  --te-sheet-shadow: 0 -10px 30px rgba(0,0,0,.5);
+
   /* scrollbars */
   --te-scroll: rgba(255,255,255,.14);
   --te-scroll-hover: rgba(255,255,255,.24);
@@ -199,6 +225,39 @@ html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border)
   --xy-controls-box-shadow-default: 0 10px 26px -14px #000;
 }
 .te-flow .react-flow__node { cursor: pointer; }
+.te-wf .react-flow {
+  --xy-background-color-default: transparent;
+  --xy-background-pattern-dots-color-default: var(--te-wf-dot);
+  --xy-node-background-color-default: transparent;
+  --xy-node-border-default: none;
+  --xy-node-boxshadow-default: none;
+  --xy-controls-button-background-color-default: var(--te-panel-bg);
+  --xy-controls-button-background-color-hover-default: var(--te-inset-bg-focus);
+  --xy-controls-button-color-default: var(--te-text-soft);
+  --xy-controls-button-color-hover-default: var(--te-text);
+  --xy-controls-button-border-color-default: var(--te-border);
+  --xy-controls-box-shadow-default: var(--te-node-shadow);
+  --xy-minimap-background-color-default: var(--te-minimap-bg);
+  --xy-minimap-mask-background-color-default: rgba(0,0,0,.35);
+}
+.te-wf .react-flow__node { cursor: pointer; }
+.te-wf .react-flow__node-lane { cursor: default; pointer-events: none; }
+.te-wf .react-flow__attribution { display: none; }
+.te-wf .react-flow__minimap { border: 1px solid var(--te-border); border-radius: 8px; overflow: hidden; }
+.te-wf-edge-live { stroke-dasharray: 6 6; animation: te-wf-dash .9s linear infinite; }
+.te-wf-running { animation: te-wf-pulse 2s ease-in-out infinite; }
+.te-wf-glow-danger { filter: drop-shadow(0 0 8px var(--te-glow-danger)); }
+.te-wf-blink { animation: te-wf-blink 1.2s steps(2, start) infinite; }
+.te-wf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.te-wf-mob { display: none; }
+@keyframes te-wf-dash { to { stroke-dashoffset: -12; } }
+@keyframes te-wf-pulse { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 10px var(--te-glow-accent)); } }
+@keyframes te-wf-blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) {
+  .te-wf-edge-live, .te-wf-running, .te-wf-blink { animation: none !important; }
+  .te-wf-particle { display: none; }
+}
+
 .te-flow .react-flow__controls { border-radius: 9px; overflow: hidden; }
 .te-activity summary::-webkit-details-marker { display: none; }
 @media (prefers-reduced-motion: reduce) {
@@ -310,6 +369,25 @@ button:disabled{cursor:not-allowed;}
    the breakpoint. */
 .te-nav-scrim { display: none; }
 .te-nav-toggle { display: none; }
+
+/* Desktop only: the ticket rail can be collapsed (the mobile block undoes it). */
+.te-split > .te-pane-list {
+  overflow: hidden;
+  transition: width .38s var(--te-ease-expo), flex-basis .38s var(--te-ease-expo), opacity .26s ease, visibility 0s linear 0s;
+}
+.te-split > .te-pane-list > * { min-width: 388px; }
+.te-split[data-list-hidden="true"] > .te-pane-list {
+  width: 0 !important;
+  flex-basis: 0 !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  border-right-width: 0 !important;
+  transition: width .38s var(--te-ease-expo), flex-basis .38s var(--te-ease-expo), opacity .26s ease, visibility 0s linear .38s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .te-split > .te-pane-list { transition: none !important; }
+}
 
 @media (max-width: 900px) {
   /* iOS zooms the page when a focused field is under 16px. Sizes come from FONT
@@ -504,6 +582,14 @@ button:disabled{cursor:not-allowed;}
      (file list + diff). Which pane is showing is a `data-pane` attribute the
      component sets, so the desktop render is untouched and nothing has to
      guess the viewport at hydration. */
+  .te-split[data-list-hidden="true"] > .te-pane-list {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .te-split > .te-pane-list > * { min-width: 0; }
   .te-split[data-pane="list"] > .te-pane-detail { display: none !important; }
   .te-split[data-pane="detail"] > .te-pane-list { display: none !important; }
   .te-pane-list {
@@ -521,6 +607,7 @@ button:disabled{cursor:not-allowed;}
   }
   .te-tabbar-actions { margin-left: auto; }
   .te-back-btn { display: inline-flex !important; }
+  .te-list-toggle { display: none !important; }
 
   /* Seven tabs at desktop padding wrapped onto three rows and took a third of
      the screen before the tab's own content started. They scroll sideways on
@@ -588,6 +675,31 @@ button:disabled{cursor:not-allowed;}
   .te-flow-rail { display: flex !important; }
   .te-activity { height: min(60vh, 520px) !important; }
   .te-exec-hud { gap: 14px 18px !important; }
+
+  /* ---- Ticket Workflow ------------------------------------------------ */
+  /* The canvas keeps the top of the screen; the inspector is a bottom sheet
+     over the rest, in three heights chosen by data-sheet. */
+  .te-wf-desk { display: none !important; }
+  .te-wf-mob { display: block; }
+  .te-wf-body { position: relative; flex-direction: column !important; }
+  .te-wf-canvas { position: absolute !important; inset: 0 0 35% 0 !important; flex: none !important; }
+  .te-wf-body[data-sheet="closed"] .te-wf-canvas { bottom: 64px !important; }
+  .te-wf-inspector {
+    position: absolute !important;
+    left: 0; right: 0; bottom: 0;
+    width: auto !important;
+    height: 35%;
+    z-index: 9;
+    border-left: 0 !important;
+    border-top: 1px solid var(--te-border);
+    box-shadow: var(--te-sheet-shadow);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .te-wf-inspector[data-sheet="full"] { height: 90%; }
+  .te-wf-inspector[data-sheet="closed"] { height: 64px; }
+  .te-wf-tap { min-height: 40px !important; min-width: 40px !important; }
+  .te-wf .react-flow__controls-button { width: 40px; height: 40px; }
+  .te-wf-hud-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
 
   /* A diff wraps mid-word, so every pixel of column is a character that stays
      on its own line. */

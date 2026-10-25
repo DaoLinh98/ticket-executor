@@ -12,19 +12,17 @@ import {
   CLAIM,
   READINESS,
   dayLabel,
-  hours,
   originLabel,
   usd,
-  reviewOf,
   stateOf,
   type MySprint,
   type PlannedRow,
   type QaDraft,
 } from "./model";
 
-const GRID = "84px 1fr 60px 68px 132px 132px 104px 104px 176px";
-const HEADERS = ["#", "TICKET", "PTS", "EST.", "STATUS", "RELEASE", "STATE", "REVIEW", "ACTIONS"];
-const LABELS = ["Queue", "", "Pts", "Est.", "Status", "Release", "State", "Review", ""];
+const GRID = "84px 1fr 60px 132px 132px 104px 176px";
+const HEADERS = ["#", "TICKET", "PTS", "STATUS", "RELEASE", "STATE", "ACTIONS"];
+const LABELS = ["Queue", "", "Pts", "Status", "Release", "State", ""];
 
 export type PlanHandlers = {
   openExecution: (ticketId: string, tab: "execution" | "result") => void;
@@ -115,7 +113,6 @@ export default function PlanTable({
             const tri = triaged.get(t.ticketId);
             const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
             const state = stateOf(t, ticket?.status ?? "");
-            const review = reviewOf(t);
             const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
             const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
             const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
@@ -144,7 +141,6 @@ export default function PlanTable({
                   <span style={{ fontSize: FONT.sm, color: COLORS.warning }}> ↑</span>
                 )}
               </span>,
-              <span key="est" style={{ fontSize: FONT.base, color: COLORS.textMuted }}>{t.estimateHours ? hours(t.estimateHours) : "—"}</span>,
               <span key="status" style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                 {claim !== "mine" ? (
                   <span style={pill({ color: CLAIM[claim].color, size: "xs", weight: 700 })}>{CLAIM[claim].label}</span>
@@ -176,16 +172,6 @@ export default function PlanTable({
               <span key="state" style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
                 {t.implementState === "running" && <LoadingRing size={13} />}
                 <span style={pill({ color: state.color, size: "xs", weight: 700 })}>{state.label}</span>
-              </span>,
-              <span key="review" style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
-                {review ? (
-                  <>
-                    {review.spin && <LoadingRing size={13} />}
-                    <span style={pill({ color: review.color, size: "xs", weight: 700 })}>{review.label}</span>
-                  </>
-                ) : (
-                  <span style={{ fontSize: FONT.base, color: COLORS.faint }}>—</span>
-                )}
               </span>,
             ];
 

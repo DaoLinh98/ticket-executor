@@ -44,7 +44,7 @@ const sectionHeading: CSSProperties = {
 // Same type treatment as sectionHeading, one step up, with a rule to its right.
 function TierHeading({ n, title, blurb }: { n: string; title: string; blurb: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: "6px 0 -8px" }}>
+    <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: 0, flexWrap: "wrap" }}>
       <span style={{ ...pill({ color: COLORS.accent, border: COLORS.border, size: "xs", weight: 700 }) }}>{n}</span>
       <span style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.base, fontWeight: 700, letterSpacing: ".14em", color: COLORS.text }}>{title}</span>
       <span style={{ fontSize: FONT.sm, color: COLORS.textMuted, flex: 1, minWidth: 0 }}>{blurb}</span>
@@ -357,6 +357,7 @@ function DashboardPageInner() {
   const sectionDelay = (i: number) => ({ animation: "fadeUp .45s both", animationDelay: `${i * 70}ms` } as CSSProperties);
   // Tier 3 is reference material, not the argument — dim it so the eye lands on
   // tiers 1 and 2 first.
+  const tierColumn: CSSProperties = { minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" };
   const opsTier: CSSProperties = { display: "flex", flexDirection: "column", gap: "16px", opacity: 0.86 };
 
   return (
@@ -381,8 +382,8 @@ function DashboardPageInner() {
         </div>
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "26px 28px 48px", background: "var(--te-page-veil)" }}>
-        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "26px" }}>
+      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
+        <div className="te-sprint-page" style={{ maxWidth: "1800px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "16px" }}>
           {error && (
             <div style={{ ...tintedCard("danger"), animation: "fadeUp .4s both" }}>
               <div style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</div>
@@ -395,7 +396,8 @@ function DashboardPageInner() {
           )}
 
           {data && (
-            <>
+            <div className="te-sprint-split" style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}>
+              <div className="te-scroll te-sprint-pane" style={tierColumn}>
               {/* ---------- TIER 1 · VALUE ---------- */}
               <TierHeading n="01" title="VALUE" blurb="What this app adds over driving the Claude CLI by hand, one session at a time." />
 
@@ -461,6 +463,8 @@ function DashboardPageInner() {
                 </section>
               )}
 
+              </div>
+              <div className="te-scroll te-sprint-pane" style={tierColumn}>
               {/* ---------- TIER 2 · QUALITY ---------- */}
               <TierHeading n="02" title="QUALITY" blurb="Measured per ticket, not per run — rework is exactly what a per-run view hides." />
 
@@ -491,7 +495,7 @@ function DashboardPageInner() {
                   hint="real work, not a one-line edit" />
               </section>
 
-              <section className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", ...sectionDelay(3) }}>
+              <section style={{ display: "flex", flexDirection: "column", gap: "16px", ...sectionDelay(3) }}>
                 <div style={panelStyle(3.8)}>
                   <h3 style={sectionHeading}>DELIVERY FUNNEL</h3>
                   <Funnel f={data.funnel} live={funnel} />
@@ -502,6 +506,8 @@ function DashboardPageInner() {
                 </div>
               </section>
 
+              </div>
+              <div className="te-scroll te-sprint-pane" style={tierColumn}>
               {/* ---------- TIER 3 · OPERATIONS ---------- */}
               <TierHeading n="03" title="OPERATIONS" blurb="Day-to-day running of the engine: spend, reliability, and where the runs went." />
 
@@ -517,7 +523,7 @@ function DashboardPageInner() {
                   </div>
                 </section>
 
-                <section className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <section style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
                   <div style={panelStyle(3.6)}>
                     <h3 style={sectionHeading}>RELIABILITY</h3>
                     <StatusBar r={data.reliability} />
@@ -576,7 +582,8 @@ function DashboardPageInner() {
                   </div>
                 </section>
               </div>
-            </>
+              </div>
+            </div>
           )}
         </div>
       </main>
