@@ -491,13 +491,29 @@ model NotificationHistory {
   @@index([scope, at])
 }
 
-model QaReplyDraft {
+// One QA follow-up case: the QC signals on a delivered ticket (comments, QA failed, back to In Progress),
+// the analysis of them, the developer's decision and the reply. Rules in `lib/qaFollowUp.ts`; at most one
+// open case per ticket. Kept on the table the earlier reply drafts used, so their watermarks carry over.
+model QaCase {
   id              String    @id @default(cuid())
   planId          String
   plannedTicketId String
   ticketId        String
-  status          String    @default("running")
+  // pending | running | ready | failed | fixing | fixed | posted | dismissed
+  status          String    @default("pending")
+  triggers        String[]  @default([])
+  // The comment window the case answers: after `since`, up to and including `answersUpTo`.
+  since           String    @default("")
   answersUpTo     String    @default("")
+  // The last signal — the debounce runs from here.
+  signalAt        DateTime?
+  // The D-Agent analysis run and, once approved, the fix run.
+  runId           String    @default("")
+  fixRunId        String    @default("")
+  findings        Json?
+  // fix | decide | reply — from `recommend()`, never the agent's own summary.
+  recommendation  String    @default("")
+  // The reply to QC, as drafted and then as edited/posted.
   body            String    @default("")
   summary         String    @default("")
   needsHuman      Boolean   @default(false)
@@ -506,10 +522,12 @@ model QaReplyDraft {
   costUsd         Float     @default(0)
   createdAt       DateTime  @default(now())
   endedAt         DateTime?
+  decidedAt       DateTime?
   postedAt        DateTime?
 
   @@index([plannedTicketId])
   @@index([status])
+  @@map("QaReplyDraft")
 }
 
 model DagentRun {

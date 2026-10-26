@@ -5,12 +5,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function fingerprint(planId: string) {
-  const [items, event, drafts] = await Promise.all([
+  const [items, event, cases] = await Promise.all([
     prisma.plannedTicket.aggregate({ where: { planId }, _count: true, _max: { updatedAt: true } }),
     prisma.automationEvent.findFirst({ where: { planId }, orderBy: { createdAt: "desc" }, select: { id: true } }),
-    prisma.qaReplyDraft.findMany({ where: { planId }, select: { id: true, status: true, postedAt: true } }),
+    prisma.qaCase.findMany({ where: { planId }, select: { id: true, status: true, signalAt: true, endedAt: true, postedAt: true } }),
   ]);
-  return JSON.stringify([items._count, items._max.updatedAt, event?.id ?? "", drafts.map((d) => [d.id, d.status, d.postedAt])]);
+  return JSON.stringify([items._count, items._max.updatedAt, event?.id ?? "", cases.map((c) => [c.id, c.status, c.signalAt, c.endedAt, c.postedAt])]);
 }
 
 export async function GET(req: Request) {

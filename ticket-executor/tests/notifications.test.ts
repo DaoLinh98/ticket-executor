@@ -539,3 +539,14 @@ test("a drafted reply to QC is one actionable notification pointing at Flow Runn
   assert.equal(n.severity, "action");
   assert.equal(n.href, "/my-sprint");
 });
+
+test("a QA follow-up case says what it waits for, and is unread again once it waits another SLA period", () => {
+  const base = { ticketId: "206", pendingAction: "qa-reply-ready", pendingSince: "2026-09-30T02:00:00Z" };
+  const [fix] = fromLifecycle([{ ...base, waiting: "fix", overdue: 0 }]);
+  assert.match(fix.summary, /real defect on #206/);
+  assert.doesNotMatch(fix.summary, /waiting over/);
+  const [late] = fromLifecycle([{ ...base, waiting: "fix", overdue: 2 }]);
+  assert.match(late.summary, /waiting over 8h/);
+  assert.equal(notificationKey(fix), notificationKey(late));
+  assert.notEqual(fix.fingerprint, late.fingerprint);
+});

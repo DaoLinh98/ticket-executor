@@ -354,8 +354,8 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "table",
           title: "QA findings",
-          cols: ["Finding", "Defect", "Why"],
-          rows: out.findings.map((f): Cell[] => [f.finding, { t: f.defect ? "yes" : "no", tone: f.defect ? "danger" : "success" }, { t: f.reason, mono: true }]),
+          cols: ["Finding", "Verdict", "Why"],
+          rows: out.findings.map((f): Cell[] => [f.finding, { t: f.kind || (f.defect ? "defect" : "not-defect"), tone: f.defect ? "danger" : "success" }, { t: f.reason, mono: true }]),
         },
       ];
       if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", text: out.qaReply });
@@ -643,8 +643,14 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
       return b("success", IC.check, "Already delivered.", `Every acceptance criterion is already on the base — nothing was implemented or published · ${usd(run.costUsd)} total.`);
     if (run.currentNodeId === "implement")
       return b("success", IC.check, "No change needed.", `A person confirmed the base already does what the ticket asks — nothing was committed or published · ${usd(run.costUsd)} total.`);
-    if (run.currentNodeId === "qaTriage")
-      return b("success", IC.check, "No defect found.", `The reply to QA is drafted — nothing was changed or pushed · ${usd(run.costUsd)} total.`);
+    if (run.currentNodeId === "qaTriage") {
+      // A QA follow-up analysis also ends here — whatever it found waits for the developer's decision on Flow Runner.
+      const out = stepsOf(run, "qaTriage").pop()?.output;
+      const defects = out?.node === "qaTriage" ? out.findings.filter((f) => f.defect).length : 0;
+      return defects
+        ? b("warning", IC.alert, `${plural(defects, "defect")} found.`, `Analysis only — nothing was changed or pushed. Approve the fix or reply to QC on Flow Runner · ${usd(run.costUsd)} total.`)
+        : b("success", IC.check, "No defect found.", `The reply to QA is drafted — nothing was changed or pushed · ${usd(run.costUsd)} total.`);
+    }
     return b("success", IC.check, "Succeeded.", run.flow === "implement" ? `Draft PRs are open and verified · ${usd(run.costUsd)} total.` : `Fix pushed to the existing PRs and verified · ${usd(run.costUsd)}.`);
   }
   return null;

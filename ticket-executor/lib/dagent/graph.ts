@@ -13,7 +13,7 @@ import {
   reviewImplementPrompt,
   reviewTriagePrompt,
 } from "./prompts";
-import { bundleOf, deliveryOf, threadsOf } from "./rules";
+import { bundleOf, deliveryOf, followUpOf, threadsOf } from "./rules";
 import {
   EVALUATE_OUTPUT,
   PLAN_OUTPUT,
@@ -29,7 +29,7 @@ import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Edge, type F
 
 export const GRAPH_ID = "dagent-implement-v3";
 export const REVIEW_GRAPH_ID = "dagent-fix-review-v1";
-export const QA_GRAPH_ID = "dagent-fix-qa-v2";
+export const QA_GRAPH_ID = "dagent-fix-qa-v3";
 export const MAX_FIX_ATTEMPTS = 5;
 export const MAX_PLAN_ATTEMPTS = 2;
 export const MAX_PRE_PUBLISH = 3;
@@ -255,6 +255,8 @@ export const REVIEW_GRAPH: Graph = {
 
 // fix-qa: QA sends a ticket back after its pull request merged, so the fix is new work on a new branch from the
 // default branch and ships as a new draft PR — the implement loop, entered through a triage of QA's findings.
+// Flow Runner runs it twice per QA follow-up case: first without a decision, ending after the triage so the
+// developer decides on the analysis; then, once a fix is approved, seeded with that decision.
 const QA_NODES: Node[] = [
   { ...nodeOf("setup"), next: ["qaTriage", FAIL] },
   {
@@ -268,9 +270,11 @@ const QA_NODES: Node[] = [
 const QA_EDGES: Record<string, Edge> = {
   ...EDGES,
   setup: (_c, r) => (r.ok ? { to: "qaTriage", reason: "workspace ready" } : { to: FAIL, reason: r.error || "workspace setup failed" }),
-  qaTriage: (_c, r) => {
+  qaTriage: (c, r) => {
     const bad = guard(r);
     if (bad) return bad;
+    const f = followUpOf(c);
+    if (f && !f.decision) return { to: END, reason: "analysis ready · the developer decides" };
     if (r.data.outcome === "no-fix-needed") return { to: END, reason: "no finding is a defect · reply to QA drafted" };
     const defects = (Array.isArray(r.data.findings) ? (r.data.findings as { defect?: boolean }[]) : []).filter((f) => f.defect).length;
     if (!defects) return { to: FAIL, reason: "outcome is fix but no finding is marked a defect" };
@@ -300,7 +304,7 @@ const beforeNoChange = (g: Graph, id: string): Graph => ({
 const LEGACY: Record<Flow, Graph[]> = {
   implement: [beforeNoChange(GRAPH, "dagent-implement-v2")],
   review: [],
-  qa: [beforeNoChange(QA_GRAPH, "dagent-fix-qa-v1")],
+  qa: [beforeNoChange(QA_GRAPH, "dagent-fix-qa-v1"), { ...QA_GRAPH, id: "dagent-fix-qa-v2" }],
 };
 
 export function graphById(id: string): Graph | null {

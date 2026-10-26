@@ -45,7 +45,8 @@ export default function ActionButton({
         padding: compact ? "0 9px" : "0 11px",
         ...(compact ? { fontSize: FONT.sm } : {}),
         ...(icon ? { width: compact ? "26px" : tall ? "40px" : "30px", padding: 0, justifyContent: "center" } : {}),
-        ...(variant === "outline" && !inert ? { borderColor: COLORS.accent, color: COLORS.text } : {}),
+        // The whole shorthand, not `borderColor`: dropping a longhand over `border` on re-render (busy ⇄ ready) is a React styling bug.
+        ...(variant === "outline" && !inert ? { border: `1.5px solid ${COLORS.accent}`, color: COLORS.text } : {}),
         ...(disabled && !busy ? { cursor: "not-allowed" } : {}),
       }}
     >

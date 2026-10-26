@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { commentsSince, isFixingQa, isQueueable, pendingActionFor, stageOf } from "../lib/ticketLifecycle";
+import { commentsSince, isFixingQa, isQueueable, pendingActionFor, stageFrom, stageOf } from "../lib/ticketLifecycle";
 
 test("every Azure DevOps state in the team's process maps to a stage", () => {
   const expected: Record<string, string> = {
@@ -95,4 +95,11 @@ test("only comments newer than the watermark and written by someone else are new
 test("with nothing new the watermark stays where it was", () => {
   const r = commentsSince([{ at: "2026-09-29T10:00:00Z", authorName: "QC" }], "2026-09-30T00:00:00Z", () => false);
   assert.deepEqual(r, { count: 0, latestAt: "2026-09-30T00:00:00Z" });
+});
+
+test("a stored stage id is read as is, not as a tracker status", () => {
+  assert.equal(stageFrom("qa-failed", "In QA"), "qa-failed");
+  assert.equal(stageFrom("code-review", ""), "code-review");
+  assert.equal(stageFrom("", "QA Failed"), "qa-failed");
+  assert.equal(stageFrom("bogus", "In Progress"), "doing");
 });

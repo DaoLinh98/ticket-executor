@@ -11,6 +11,8 @@
 // lives in the provider, one click away. That keeps review-comment bodies,
 // mention markup and work-item HTML out of the header entirely.
 
+import { SLA_MS } from "./qaFollowUp";
+
 /** Every distinct thing the bell can report. The prefix is the source, so a new
  *  source adds names rather than overloading an existing one. */
 export type NotificationKind =
@@ -464,11 +466,26 @@ export type LifecycleSource = {
   ticketId: string;
   pendingAction: string;
   pendingSince: string;
+  /** `qa-reply-ready` only: what the QA follow-up case waits on the developer for (`lib/qaFollowUp.ts`). */
+  waiting?: "pending" | "failed" | "fixed" | "fix" | "decide" | "reply";
+  /** `qa-reply-ready` only: whole SLA periods it has waited — each one makes the notification unread again. */
+  overdue?: number;
+};
+
+const SLA_HOURS = SLA_MS / 3_600_000;
+
+const QA_CASE_SUMMARY: Record<NonNullable<LifecycleSource["waiting"]>, (id: string) => string> = {
+  pending: (id) => `QC gave feedback on #${id} — analyse it on Flow Runner`,
+  failed: (id) => `The analysis of QC's feedback on #${id} failed — run it again on Flow Runner`,
+  fixed: (id) => `The QA fix for #${id} has a pull request — post the reply to QC on Flow Runner`,
+  fix: (id) => `QC found a real defect on #${id} — approve the fix on Flow Runner`,
+  decide: (id) => `QC's feedback on #${id} needs your decision on Flow Runner`,
+  reply: (id) => `A reply to QC on #${id} is drafted — review it and post it on Flow Runner`,
 };
 
 export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
   return rows.flatMap((r): AppNotification[] => {
-    const fingerprint = `${r.pendingAction}::${r.pendingSince}`;
+    const fingerprint = `${r.pendingAction}::${r.pendingSince}` + (r.waiting ? `::${r.waiting}::${r.overdue ?? 0}` : "");
     if (r.pendingAction === "move-to-qa") {
       return [{
         kind: "ticket.ready-for-qa",
@@ -488,7 +505,9 @@ export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
         ticketId: "",
         refId: r.ticketId,
         severity: "action",
-        summary: `A reply to QC on #${r.ticketId} is drafted — review it and post it on Flow Runner`,
+        summary:
+          QA_CASE_SUMMARY[r.waiting ?? "reply"](r.ticketId) +
+          (r.overdue ? ` · waiting over ${r.overdue * SLA_HOURS}h` : ""),
         at: r.pendingSince,
         tab: "overview",
         href: "/my-sprint",

@@ -29,8 +29,7 @@ import { resolveCredential } from "../providerCredentials";
 import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadPrReviews, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
-import { isFixingQa, MAX_QA_ROUNDS } from "../ticketLifecycle";
-import { openQaDraft } from "./qaReply";
+import { reconcileQaCases, startDueAnalyses } from "./qaFollowUp";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
@@ -150,6 +149,8 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
     report.aborted += await refreshClaims(plan);
     report.watched += await syncNewTickets(plan, now);
     report.watched += await watchLifecycle(plan, now);
+    // QC's feedback before new work: a delivered ticket waiting on the developer is the stall this app exists to end.
+    report.watched += await startDueAnalyses(plan, now);
     if (plan.autoRelease) {
       for (const item of await dueForRelease(plan.id, today)) {
         if (await releaseRetriesExhausted(plan.id, item.ticketId)) {
@@ -725,66 +726,6 @@ export async function startReviewRun(
   return { ok: true, error: "" };
 }
 
-export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string; blocked?: string }> {
-  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
-  if (!item) return { ok: false, error: "No such planned ticket." };
-
-  const refusal =
-    item.claim !== "mine"
-      ? "This ticket is no longer yours."
-      : item.pendingAction !== "fix-qa"
-        ? "QA has not sent this ticket back."
-        : isFixingQa(item)
-          ? "A QA fix is already in progress for this ticket."
-          : item.qaRounds >= MAX_QA_ROUNDS
-            ? `${MAX_QA_ROUNDS} QA fixes did not close this ticket — it needs a person.`
-            : item.implementState === "running" || item.reviewState === "running"
-              ? "A run is already in progress for this ticket."
-              : "";
-  if (refusal) {
-    await logAutomation({
-      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
-      reason: "qa-fix-refused", detail: refusal,
-    });
-    return { ok: false, error: refusal };
-  }
-
-  const rootRepo = await rootRepoFor(item.plan, item.project);
-  if (!rootRepo) {
-    const error = await noteMissingRootRepo(item.plan, item, "implement", isoDay(new Date()));
-    return { ok: false, error, blocked: "no-root-repo" };
-  }
-
-  const result = await startRun({
-    flow: "qa",
-    ticketId: item.ticketId,
-    provider: item.plan.provider,
-    project: item.project || item.plan.project,
-    rootRepo,
-  });
-  if (!result.ok) {
-    await logAutomation({
-      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
-      reason: "admission-refused", detail: result.error,
-    });
-    return { ok: false, error: result.error };
-  }
-
-  await prisma.plannedTicket.update({
-    where: { id: item.id },
-    data: {
-      implementState: "running",
-      runId: result.runId,
-      qaRounds: item.qaRounds + 1,
-    },
-  });
-  await logAutomation({
-    planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "started",
-    reason: "qa-fix", detail: `QA fix round ${item.qaRounds + 1} of ${MAX_QA_ROUNDS}, started after you confirmed.`,
-  });
-  return { ok: true, error: "" };
-}
-
 /**
  * Reconcile what the engine did with what the plan believes.
  *
@@ -805,7 +746,7 @@ async function reconcileImplement(): Promise<void> {
     if (!run || run.state === "running" || run.state === "waiting") continue;
     const out = run.output;
     if (run.state === "succeeded" && out.outcome === "no-fix-needed") {
-      await settleNoFixNeeded(item, out);
+      await settleNoFixNeeded(item);
       continue;
     }
     if (run.state === "succeeded" && out.noChange === true) {
@@ -854,35 +795,16 @@ const QA_FIX_RESET = {
   reviewError: "",
 };
 
-async function settleNoFixNeeded(
-  item: { id: string; planId: string; ticketId: string; qaRounds: number; qaCommentAt: string },
-  out: Record<string, unknown>
-): Promise<void> {
+// The QA follow-up case reads the same outcome and puts the drafted reply in front of the developer.
+async function settleNoFixNeeded(item: { id: string; planId: string; ticketId: string; qaRounds: number }): Promise<void> {
   await prisma.plannedTicket.update({
     where: { id: item.id },
     data: { implementState: "no-fix-needed", qaRounds: Math.max(0, item.qaRounds - 1) },
   });
-  const open = await openQaDraft(item.id);
-  if (!open) {
-    await prisma.qaReplyDraft.create({
-      data: {
-        planId: item.planId,
-        plannedTicketId: item.id,
-        ticketId: item.ticketId,
-        status: "ready",
-        answersUpTo: item.qaCommentAt,
-        body: String(out.qaReply ?? "").trim(),
-        summary: typeof out.summary === "string" ? out.summary : "",
-        endedAt: new Date(),
-      },
-    });
-  }
   await logAutomation({
     planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done",
     reason: "no-fix-needed",
-    detail: open
-      ? "QA's findings were reviewed and none is a defect — nothing was changed. A reply draft was already waiting, so it was kept."
-      : "QA's findings were reviewed and none is a defect — nothing was changed. A reply to QA is drafted for you to post.",
+    detail: "QA's findings were reviewed and none is a defect — nothing was changed. A reply to QA waits on the case.",
   });
 }
 
@@ -963,6 +885,7 @@ async function reconcileReviews(): Promise<void> {
 export async function reconcile(): Promise<void> {
   await reconcileImplement();
   await reconcileReviews();
+  await reconcileQaCases();
 }
 
 async function safeTick() {

@@ -153,7 +153,31 @@ export function threadsOf(c: Pick<Ctx, "channels">): Thread[] {
   return Array.isArray(t) ? (t as Thread[]) : [];
 }
 
-export type QaFinding = { finding: string; defect: boolean; reason: string; files: string[] };
+export type QaFinding = { finding: string; kind?: string; defect: boolean; reason: string; files: string[] };
+
+/** Flow Runner's QA follow-up input: the comment window to answer and, on a fix run, the developer's decision. */
+export type FollowUp = {
+  since: string;
+  upTo: string;
+  triggers: string[];
+  /** Who the developer is, as Flow Runner read it from the stored connection — never a literal. */
+  developer?: { name: string; email: string };
+  decision?: { fix: string[]; note: string };
+};
+
+export function followUpOf(c: Pick<Ctx, "channels">): FollowUp | null {
+  const f = c.channels.followUp as Partial<FollowUp> | undefined;
+  if (!f) return null;
+  const d = f.decision;
+  const dev = f.developer;
+  return {
+    since: String(f.since ?? ""),
+    upTo: String(f.upTo ?? ""),
+    triggers: Array.isArray(f.triggers) ? f.triggers.map(String) : [],
+    ...(dev && (dev.name || dev.email) ? { developer: { name: String(dev.name ?? ""), email: String(dev.email ?? "") } } : {}),
+    ...(d && Array.isArray(d.fix) ? { decision: { fix: d.fix.map(String), note: String(d.note ?? "") } } : {}),
+  };
+}
 
 export function findingsOf(c: Pick<Ctx, "channels">): QaFinding[] {
   const f = c.channels.qaTriage?.findings;

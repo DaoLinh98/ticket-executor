@@ -77,7 +77,7 @@ export type NodeOutput =
       threads: { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string }[];
       planMd: string;
     }
-  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string }
+  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; kind?: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string }
   | { node: "respond"; pushed: boolean; threadsReplied: number };
 
 export type Step = {

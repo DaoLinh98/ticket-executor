@@ -54,7 +54,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "plan.needs-root-repo": "ROOT REPO",
   "ticket.ready-for-qa": "READY FOR QA",
   "ticket.qa-failed": "QA FAILED",
-  "ticket.qa-reply-ready": "QC REPLY",
+  "ticket.qa-reply-ready": "QC FOLLOW-UP",
   "report.unsent": "REPORT",
 };
 

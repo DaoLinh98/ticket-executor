@@ -1,5 +1,5 @@
 import path from "path";
-import { basesOf, bundleOf, deliveryOf, findingsOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, skillsOf, threadsOf, warningsOf } from "./rules";
+import { basesOf, bundleOf, deliveryOf, findingsOf, followUpOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, skillsOf, threadsOf, warningsOf } from "./rules";
 import { skillCatalog } from "./skills";
 import type { Ctx, Refusal } from "./types";
 
@@ -194,10 +194,26 @@ export function respondPrompt(c: Ctx): string {
 }
 
 export function qaTriagePrompt(c: Ctx): string {
+  const f = followUpOf(c);
+  const window = f
+    ? `QC feedback to judge: ${f.triggers.join(", ") || "comments"} — every comment by someone other than the developer` +
+      `${f.since ? ` after ${f.since}` : ""}${f.upTo ? `, up to ${f.upTo}` : ""}. Read earlier comments only for context.` +
+      (f.developer
+        ? `\nThe developer is ${[f.developer.name, f.developer.email && `<${f.developer.email}>`].filter(Boolean).join(" ")} — ` +
+          `their own comments are context, never feedback to judge, and the reply is written as them.`
+        : "")
+    : "QA sent this ticket back. Judge the QC comments left since the last delivery.";
+  const decision = f?.decision
+    ? `\n\nThe developer reviewed the analysis and decided to fix exactly these — binding: mark each a defect, plan its fix, outcome \`fix\`:\n` +
+      f.decision.fix.map((x, i) => `${i + 1}. ${x}`).join("\n") +
+      (f.decision.note ? `\nDeveloper's note: ${f.decision.note}` : "") +
+      `\nReport other findings as you judge them; plan no change for them.`
+    : "";
   return (
-    `${header(c)}\n\nQA sent this ticket back. Read the work item and the QC comments left since the last delivery, and judge every finding ` +
-    `against the code on the base commits above. Return the verdicts in \`findings\`; when at least one is a real defect, propose \`branch\` and the fix plan in \`planMd\` ` +
-    `(the harness writes it to \`${PLAN_FILE}\`). When none is, draft \`qaReply\`. Do not write files and do not comment on the ticket.` +
+    `${header(c)}\n\n${window}\nRead the work item through the provider's MCP server and judge every point QC raised against the code on the base commits above. ` +
+    `Return the verdicts in \`findings\` and the developer's reply to QC in \`qaReply\`; when at least one is a real defect, propose \`branch\` and the fix plan in \`planMd\` ` +
+    `(the harness writes it to \`${PLAN_FILE}\`). Do not write files and do not comment on the ticket.` +
+    decision +
     skillMenu(c, true)
   );
 }

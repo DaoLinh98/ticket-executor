@@ -244,16 +244,24 @@ export const QA_TRIAGE_OUTPUT = {
     title: { type: "string", description: "The work item's title." },
     findings: {
       type: "array",
-      description: "One entry per QC finding in the comments QA left after the last delivery.",
+      description: "One entry per point QC raised (question, issue, failure) in the comments the brief's window covers.",
       items: {
         type: "object",
         properties: {
-          finding: { type: "string", description: "What QA reported, in one sentence." },
-          defect: { type: "boolean", description: "True only when the code is wrong against the ticket." },
-          reason: { type: "string", description: "Evidence for the verdict: file:line, or the acceptance criterion it is checked against." },
-          files: { ...STRINGS, description: "Files the fix changes, repo-prefixed when several repos are listed. Empty when defect is false." },
+          finding: { type: "string", description: "What QC asked or reported, in one sentence." },
+          kind: {
+            type: "string",
+            enum: ["question", "defect", "not-defect", "needs-info", "new-scope"],
+            description:
+              "question: QC asks, and the answer shows the code is right. defect: the code is wrong against the ticket — also when a question's answer reveals that. " +
+              "not-defect: the behaviour is right, proven by file:line or the acceptance criterion. needs-info: the code cannot settle it. " +
+              "new-scope: QC asks for something the ticket never did.",
+          },
+          defect: { type: "boolean", description: "True exactly when kind is defect." },
+          reason: { type: "string", description: "Evidence for the verdict: file:line with the code, or the acceptance criterion it is checked against. For needs-info, what would settle it." },
+          files: { ...STRINGS, description: "Files the fix changes, repo-prefixed when several repos are listed. Empty unless kind is defect." },
         },
-        required: ["finding", "defect", "reason", "files"],
+        required: ["finding", "kind", "defect", "reason", "files"],
         additionalProperties: false,
       },
     },
@@ -265,7 +273,12 @@ export const QA_TRIAGE_OUTPUT = {
     branch: { type: "string", description: "The branch the fix is committed on. Empty when outcome is no-fix-needed." },
     repos: { ...STRINGS, description: "Every repository the fix touches, by the names the brief uses." },
     planMd: { type: "string", description: "The fix plan in Markdown, under 60 lines. Empty when outcome is no-fix-needed. The harness writes it to .te/plan.md." },
-    qaReply: { type: "string", description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty otherwise." },
+    qaReply: {
+      type: "string",
+      description:
+        "The developer's reply to QC, plain text in QC's language, one line per finding: the answer, the evidence that it is right, " +
+        "the fix that is coming, or the question that would settle it. Never empty.",
+    },
     summary: { type: "string", description: "One sentence: what QA reported and what this run decided." },
     skills: SKILLS,
     baseBranch: BASE_BRANCH,

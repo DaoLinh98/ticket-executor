@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import {
   addTicketToPlan,
-  dismissQaReply,
+  analyzeCase,
+  approveFix,
+  dismissCase,
   findPlan,
   holdPlannedTicket,
-  listQaDrafts,
+  lastClosedCases,
+  listCases,
   moveInQueue,
   previewRebuild,
   setReleaseDay,
   setRunOptions,
-  postQaReply,
-  startQaReply,
+  postCaseReply,
   moveToQa,
   planById,
   rebuildPlan,
@@ -21,7 +23,6 @@ import {
   setPlanAutomation,
   setPlanStatus,
   setTicketUnblocked,
-  startQaFix,
   startReviewRun,
   tickNow,
 } from "@/lib/executionStore";
@@ -65,7 +66,8 @@ export async function GET(req: Request) {
   return NextResponse.json({
     plan,
     events: plan ? await recentAutomation(plan.id) : [],
-    drafts: plan ? await listQaDrafts(plan.id) : [],
+    cases: plan ? await listCases(plan.id) : [],
+    closed: plan ? await lastClosedCases(plan.id) : {},
     costs,
   });
 }
@@ -176,6 +178,8 @@ export async function PATCH(req: Request) {
 //   { tick: true }                    run one scheduler pass immediately
 //   { addToRelease: { ticketId, ..., status } }  add or re-track a ticket; queued only before review
 //   { removeFromRelease: "<plannedTicketId>" }  stop tracking a ticket (the row stays as a record)
+//   { analyzeQa: "<plannedTicketId>" } / { approveQaFix: { id, fix, note } } / { postQaReply, body } / { dismissQaCase }
+//                                     the QA follow-up case (`lib/execution/qaFollowUp.ts`)
 //
 // The button and the timer call exactly the same code on purpose: an automation
 // nobody can trigger by hand is one nobody can check.
@@ -210,25 +214,23 @@ export async function PUT(req: Request) {
       outcome.ok ? undefined : { status: 400 }
     );
   }
-  if (typeof body.draftQaReply === "string" && body.draftQaReply) {
-    const outcome = await startQaReply(body.draftQaReply);
+  // The QA follow-up case: analyse QC's feedback, approve the fix, post the reply, or dismiss it.
+  if (typeof body.analyzeQa === "string" && body.analyzeQa) {
+    const outcome = await analyzeCase(body.analyzeQa, true);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  if (body.approveQaFix && typeof body.approveQaFix === "object" && typeof body.approveQaFix.id === "string") {
+    const { id, fix, note } = body.approveQaFix;
+    const outcome = await approveFix(id, Array.isArray(fix) ? fix.map(Number).filter(Number.isInteger) : [], String(note ?? ""));
     return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
   }
   if (typeof body.postQaReply === "string" && body.postQaReply) {
-    const outcome = await postQaReply(body.postQaReply, typeof body.body === "string" ? body.body : "");
+    const outcome = await postCaseReply(body.postQaReply, typeof body.body === "string" ? body.body : "");
     return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
   }
-  if (typeof body.dismissQaReply === "string" && body.dismissQaReply) {
-    const outcome = await dismissQaReply(body.dismissQaReply);
+  if (typeof body.dismissQaCase === "string" && body.dismissQaCase) {
+    const outcome = await dismissCase(body.dismissQaCase);
     return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
-  }
-  if (typeof body.startQaFix === "string" && body.startQaFix) {
-    const outcome = await startQaFix(body.startQaFix);
-    const item = await prisma.plannedTicket.findUnique({ where: { id: body.startQaFix } });
-    return NextResponse.json(
-      { outcome, plan: item ? await planById(item.planId) : null },
-      outcome.ok ? undefined : { status: 400 }
-    );
   }
   if (typeof body.moveToQa === "string" && body.moveToQa) {
     const outcome = await moveToQa(body.moveToQa);

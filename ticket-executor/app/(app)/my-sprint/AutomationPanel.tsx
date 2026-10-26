@@ -11,7 +11,7 @@ const TOGGLES: readonly [AutoField, string, string][] = [
   ["autoImplement", "Auto-implement", "Work down the queue without waiting to be asked."],
   ["autoRelease", "Auto-release", "Hand finished work over on its release day."],
   ["autoResolveReview", "Auto-resolve review", "Answer new review comments on released work without waiting to be asked."],
-  ["autoDraftQaReply", "Auto-draft QC reply", "Draft a reply when QC comments on a ticket in QA. Nothing is posted until you confirm."],
+  ["autoDraftQaReply", "Auto-analyse QC feedback", "When QC comments, fails a ticket or sends it back, check the feedback against the code and propose a reply or a fix. Nothing is posted or changed until you decide."],
 ];
 
 export default function AutomationPanel({

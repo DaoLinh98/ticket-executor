@@ -32,7 +32,7 @@ const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
   reflector: "when the fix loop is exhausted, decides whether to record a lesson in KNOWLEDGE.md.",
   publisher: "pushes the verified branches and opens a draft PR linked to the ticket.",
   "review-triager": "review fix — judges every open thread on the PR: fix, answer without a change, or informational. Read-only.",
-  "qa-triager": "QA fix — judges which QC findings are real defects, then plans the fix or drafts the reply to QA. Read-only.",
+  "qa-triager": "QA follow-up — classifies every point QC raised (question, defect, not a defect, needs info, new scope) against the code, drafts the reply to QC, and plans the fix you approve. Read-only.",
   responder: "review fix — pushes the fix to the PR branch and answers the judged threads. Never resolves one.",
 };
 

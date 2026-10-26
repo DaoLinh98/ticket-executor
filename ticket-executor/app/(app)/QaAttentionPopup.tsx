@@ -34,7 +34,7 @@ export default function QaAttentionPopup() {
             const failed = n.kind === "ticket.qa-failed";
             return (
               <div key={`${n.kind}::${n.refId}`} style={tintedCard(failed ? "danger" : "accent", { padding: "11px 13px", radius: "10px" })}>
-                <span style={pill({ color: failed ? COLORS.danger : COLORS.accent, size: "xs", weight: 700 })}>{failed ? "NEEDS FIX" : "QC REPLY"}</span>
+                <span style={pill({ color: failed ? COLORS.danger : COLORS.accent, size: "xs", weight: 700 })}>{failed ? "NEEDS FIX" : "QC FOLLOW-UP"}</span>
                 <div style={{ marginTop: "6px", fontSize: FONT.md, color: COLORS.text }}>{n.summary}</div>
               </div>
             );

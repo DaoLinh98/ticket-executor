@@ -71,10 +71,16 @@ skills in `skills/` are only Flow Runner's own turns:
 | Skill | Used when |
 |-------|-----------|
 | `triage-sprint-v4` | Flow Runner triage (building the plan) |
-| `reply-qa-v4` | The drafted reply to QA |
+
+QC's feedback on a delivered ticket — a comment, QA failed, back to In Progress — opens a
+**QC follow-up** case on My Sprint. The `qa-triager` agent classifies every point against
+the code (question, defect, not a defect, needs info, new scope) and drafts the reply; you
+approve the fix, post the reply, or dismiss it. Nothing is posted or changed before you do.
+**Auto-analyse QC feedback** runs the analysis on its own, 10 minutes after QC's last
+comment; the bell asks again every 4 hours a case waits on you.
 
 The skills of the retired Ticket Execution engine (`implement-ticket-v4`,
-`fix-code-review-v4`, `review-changes-v4`, `fix-qa-v4`) are no longer bundled;
+`fix-code-review-v4`, `review-changes-v4`, `fix-qa-v4`) and the old `reply-qa-v4` are no longer bundled;
 a copy left in `~/.claude/skills` is harmless and stays denied to D-Agent turns.
 
 Runs read the project's `KNOWLEDGE.md` (repo root of the **Root repo**) and add

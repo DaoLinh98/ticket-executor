@@ -16,18 +16,13 @@ export const REQUIRED_SKILLS = [
   "triage-sprint-v4",
 ] as const;
 
-/** Bundled and installable exactly like the required ones, but only reached from
- *  one Flow Runner action — so a missing copy is a *warning* in System Check. */
-export const OPTIONAL_SKILLS = [
-  "reply-qa-v4", // Flow Runner's drafted reply to QC — a turn that writes nothing
-] as const;
-
-/** Skills the retired Ticket Execution engine shipped. No longer bundled, but a machine may still have
- *  them installed, so D-Agent turns keep them denied (`DENIED_SKILLS`). */
-export const RETIRED_SKILLS = ["implement-ticket-v4", "fix-code-review-v4", "review-changes-v4", "fix-qa-v4"] as const;
+/** Skills the app shipped before and no longer does — the retired Ticket Execution engine's, and the QC reply
+ *  turn the QA follow-up case replaced. A machine may still have them installed, so D-Agent turns keep them
+ *  denied (`DENIED_SKILLS`). */
+export const RETIRED_SKILLS = ["implement-ticket-v4", "fix-code-review-v4", "review-changes-v4", "fix-qa-v4", "reply-qa-v4"] as const;
 
 /** Every skill this repo ships a copy of. */
-export const BUNDLED_SKILLS = [...REQUIRED_SKILLS, ...OPTIONAL_SKILLS] as const;
+export const BUNDLED_SKILLS = [...REQUIRED_SKILLS] as const;
 
 export type SkillName = (typeof BUNDLED_SKILLS)[number];
 

@@ -261,6 +261,8 @@ export type StartInput = {
   effort?: string;
   retryOf?: string;
   from?: string;
+  /** Channels the run starts with — how a caller hands a flow its input (Flow Runner's QA follow-up window and decision). */
+  seed?: Record<string, Record<string, unknown>>;
 };
 
 export type StartResult = { ok: true; runId: string } | { ok: false; error: string; status: number; gates: GateResult[] };
@@ -355,7 +357,7 @@ export async function startRun(input: StartInput): Promise<StartResult> {
           retryOfId: input.retryOf ?? "",
           entryNode: from,
           knowledgeAtStart: readKnowledge(rootRepo),
-          channels: (seeded?.channels ?? {}) as Prisma.InputJsonValue,
+          channels: (seeded?.channels ?? input.seed ?? {}) as Prisma.InputJsonValue,
         },
       });
     });
@@ -383,7 +385,7 @@ export async function startRun(input: StartInput): Promise<StartResult> {
       baseSha: "",
       companions: [],
       knowledgeFile: knowledgePath(rootRepo),
-      channels: seeded?.channels ?? {},
+      channels: seeded?.channels ?? input.seed ?? {},
       visits: {},
     },
     env: { gitName: setting?.gitUserName ?? "", gitEmail: setting?.gitUserEmail ?? "", retry: seeded?.seed ?? null },

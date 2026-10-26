@@ -33,7 +33,7 @@ runner beyond `node --test`; ask before adding tooling.
 - **Ticket Execution UI** — `app/TicketExecutor.tsx` is the only stateful container; `app/ticket-executor/` is
   presentational. New state → container, new markup → child. Tabs: Overview, Resolve Review, Commits, Ask.
 - **Flow Runner** — `lib/executionStore.ts` re-exports `lib/execution/` (`claudeCli`, `triage`, `planStore`,
-  `release`, `scheduler`, `lifecycle`, `qaReply`, `translate`). **Routes import `lib/executionStore` only.**
+  `release`, `scheduler`, `lifecycle`, `qaFollowUp`, `translate`). **Routes import `lib/executionStore` only.**
 - **D-Agent** — `app/(app)/workflow` → `app/ticket-executor/workflow/` (`WorkflowView.tsx` stateful), canvas in
   `lib/workflow/`, engine in `lib/dagent/`. **`app/api/dagent/runs/*` import `lib/dagent` (`index.ts`) only.**
 - **Pure rule modules** — `identity`, `sprintPlan`, `notifications`, `ticketLifecycle`: no Prisma, no provider,
@@ -73,7 +73,8 @@ Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
 **`dagent-fix-review-v1`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
 (`review-triager`) → `implement` → `diffGuard` ⇄ `evaluate` ⇄ `fix` → `prePublish` → `respond` (`responder`: push,
 one reply per thread, **never resolve**). No `syncBase` — a published PR branch is never rebased.
-**`dagent-fix-qa-v2`** — `setup` → `qaTriage` (`qa-triager`; `no-fix-needed` → END with `qaReply`) → `implement` …
+**`dagent-fix-qa-v3`** — `setup` → `qaTriage` (`qa-triager`; seeded `followUp` without a `decision` → END: analysis only;
+`no-fix-needed` → END with `qaReply`) → `implement` …
 `verifyPublish`. `/workflow` has no picker or start form: it shows the run in flight (else latest) for `?ticket=`.
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`), only to the node's `next` (or a
@@ -106,9 +107,9 @@ After touching `lib/dagent/` or `lib/workflow/`:
   via `lib/mcp.ts`: one file per run in `tmpdir()/te-mcp`, deleted after the turn, outside the repo.
 
 ## Sprint plan and automation
-Binds `lib/execution/{triage,planStore,release,scheduler,lifecycle,qaReply}.ts` and `lib/sprintPlan.ts`. Skills
-bundled in `skills/` are Flow Runner's own turns only (`triage-sprint-v4`, `reply-qa-v4`); retired run skills stay
-in `RETIRED_SKILLS` so D-Agent turns keep them denied.
+Binds `lib/execution/{triage,planStore,release,scheduler,lifecycle,qaFollowUp}.ts`, `lib/sprintPlan.ts` and
+`lib/qaFollowUp.ts`. Skills bundled in `skills/` are Flow Runner's own turns only (`triage-sprint-v4`); retired skills
+stay in `RETIRED_SKILLS` so D-Agent turns keep them denied.
 
 1. **Implementing and releasing are two schedules.** `implementOrder` is a queue; `releaseDay` a calendar paced by
    `pointsPerDay` (**points**). A finished run moves no work item — nothing in `app/` writes a status on completion.
@@ -126,6 +127,13 @@ in `RETIRED_SKILLS` so D-Agent turns keep them denied.
    row; `handed-off` = delivered at no capacity, `dropped` counts nowhere; `buildPlan()` / `startNextTicket()` skip
    non-`mine`, `dueForRelease()` doesn't. `refreshClaims()` runs first each tick, cancels a handed-over ticket's run,
    writes only `claim`/`assigneeNow`, refuses on empty read, foreign `org` or changed identity.
+8. **QC feedback ends in a decision, never a stall.** `watchLifecycle()` turns a QC comment, QA failed or back to In
+   Progress on **any** tracked row (every claim) into a signal on the ticket's one open `QaCase` (`onSignal()`).
+   A due case (`dueForAnalysis()`: auto on, 10-min debounce) starts a D-Agent `qa` run seeded with `followUp` that
+   ends after `qaTriage`; `reconcileQaCases()` stores `normalizeFindings()` + `recommend()` — the harness's verdict,
+   an unproven `not-defect` becomes `needs-info`. The developer approves a fix (`approveFix()` → `qa` run seeded with
+   the binding `decision`), posts the reply, or dismisses; only `postCaseReply()` writes to the work item. Comments
+   after a case's window open the next case (`followUpAfter()`); the bell re-raises a waiting case every `SLA_MS`.
 
 ## The notification bell
 `lib/notifications.ts` merges; `lib/notificationSources.ts` holds the server-side sources. **No notification carries

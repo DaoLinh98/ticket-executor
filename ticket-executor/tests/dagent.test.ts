@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
 import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
-import { implementPrompt, publishPrompt, readinessPrompt } from "../lib/dagent/prompts";
+import { implementPrompt, publishPrompt, qaTriagePrompt, readinessPrompt } from "../lib/dagent/prompts";
 import { basesOf, bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, skillFrontMatter, skillsOf, warningsOf } from "../lib/dagent/rules";
 import { companionNote } from "../lib/repoContext";
 import { readFileSync } from "fs";
@@ -91,6 +91,30 @@ test("QA fix: no defect ends with a reply, a defect enters the implement loop", 
   assert.equal(e({ outcome: "fix", findings: [{ defect: false }], branch: "bug/1-x" }).to, FAIL);
   assert.equal(e({ outcome: "fix", findings: [{ defect: true }], branch: "" }).to, FAIL);
   assert.equal(QA_GRAPH.nodes.publish.effects, "external");
+});
+
+test("QA follow-up: an analysis run stops after the triage; the developer's decision enters the implement loop", () => {
+  const window = { since: "2026-10-20T01:00:00Z", upTo: "2026-10-21T01:00:00Z", triggers: ["comment"] };
+  const fixing = ok({ outcome: "fix", findings: [{ defect: true }], branch: "bug/1-x", ...clear });
+  assert.equal(QA_GRAPH.edges.qaTriage(ctx({ followUp: window }), fixing).to, END);
+  const decided = ctx({ followUp: { ...window, decision: { fix: ["Total is wrong"], note: "" } } });
+  assert.equal(QA_GRAPH.edges.qaTriage(decided, fixing).to, "implement");
+  assert.equal(QA_GRAPH.edges.qaTriage(ctx({ followUp: window }), notOk("turn failed")).to, FAIL);
+  assert.equal(flowOf("dagent-fix-qa-v2"), "qa");
+});
+
+test("QA triage brief carries the comment window, and the developer's decision as binding", () => {
+  const window = { since: "2026-10-20T01:00:00Z", upTo: "2026-10-21T01:00:00Z", triggers: ["qa-failed"] };
+  const analyse = qaTriagePrompt(ctx({ followUp: window }));
+  assert.match(analyse, /after 2026-10-20T01:00:00Z, up to 2026-10-21T01:00:00Z/);
+  assert.doesNotMatch(analyse, /binding/);
+  assert.doesNotMatch(analyse, /The developer is/);
+  const known = qaTriagePrompt(ctx({ followUp: { ...window, developer: { name: "Dev Sample", email: "dev@example.test" } } }));
+  assert.match(known, /The developer is Dev Sample <dev@example\.test> — their own comments are context/);
+  const fix = qaTriagePrompt(ctx({ followUp: { ...window, decision: { fix: ["Total is wrong"], note: "keep the API" } } }));
+  assert.match(fix, /binding/);
+  assert.match(fix, /1\. Total is wrong/);
+  assert.match(fix, /Developer's note: keep the API/);
 });
 
 test("every agent node runs a global agent and declares a schema", () => {
