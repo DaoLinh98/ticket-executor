@@ -47,8 +47,7 @@ import { randomUUID } from "crypto";
 import { mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { commonArgs, runTurn } from "./claudeCli";
-import type { LiveRun } from "./graph/types";
+import { commonArgs, runTurn, turnLive } from "./claudeCli";
 
 /** The cheapest model the CLI offers. See the note above on why it is an alias. */
 export const TRANSLATE_MODEL = "haiku";
@@ -112,50 +111,6 @@ function scratchCwd(id: string): string {
   return dir;
 }
 
-// The shape runTurn() reads, for a turn that is not a run. Same approach as
-// triageLive() — a turn needs a log to write into and a cwd to start in, and
-// nothing else on LiveRun applies to something with no graph and no lifecycle.
-function translateLive(id: string, cwd: string): LiveRun {
-  return {
-    id,
-    graphId: "translate",
-    ctx: {
-      runId: id, ticketId: "", ticketUrl: "", provider: "", project: "", prUrl: "",
-      skill: "", rootRepo: cwd, cwd, baseSha: "", companions: [],
-      channels: {}, visits: {},
-    },
-    state: "running",
-    currentNodeId: "translate",
-    sessionId: "",
-    model: TRANSLATE_MODEL,
-    effort: "",
-    isolate: false,
-    child: null,
-    cancelled: false,
-    logLines: [],
-    stepLogStarts: {},
-    mcpConfigPath: "",
-    parkedAt: null,
-    humanWaitMs: 0,
-    resumeAt: null,
-    limitWaitMs: 0,
-    limitParks: 0,
-    resumeSession: false,
-    startedAt: Date.now(),
-    endedAt: null,
-    seq: 0,
-    hops: 0,
-    resumedAfterRestart: false,
-    errorMessage: "",
-    endReason: "",
-    prUrl: "",
-    companionPrUrls: [],
-    branch: "",
-    resultText: "",
-    knowledgeAtStart: null,
-  };
-}
-
 export type TranslateResult = { vietnamese: string } | { error: string };
 
 /** Translate one comment. Text in, text out — nothing is stored. */
@@ -168,7 +123,7 @@ export async function translateToVietnamese(text: string): Promise<TranslateResu
 
   const id = randomUUID().replace(/[^\w-]/g, "");
   const cwd = scratchCwd(id);
-  const turn = await runTurn(translateLive(id, cwd), [
+  const turn = await runTurn(turnLive(cwd), [
     "-p",
     prompt(source),
     "--session-id",

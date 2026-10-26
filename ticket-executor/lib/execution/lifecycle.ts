@@ -2,7 +2,8 @@ import { hasIdentity, isMine, isSamePerson } from "../identity";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { getOrCreateSetting } from "../settings";
-import { commentsSince, pendingActionFor, QA_STAGES, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
+import { commentsSince, pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
+import { signalsOf, watchesComments } from "../qaFollowUp";
 import { deliverablesOnly, isoDay } from "../sprintPlan";
 import {
   cycleSince,
@@ -16,7 +17,7 @@ import {
   updateTicketStatus,
 } from "../tickets";
 import { logAutomation, rebuildPlan } from "./planStore";
-import { startQaReply } from "./qaReply";
+import { noteSignals } from "./qaFollowUp";
 
 export const QA_STATUS = "In QA";
 
@@ -35,7 +36,6 @@ export type WatchPlan = {
   includeWider: boolean;
   startDate: string;
   finishDate: string;
-  autoDraftQaReply: boolean;
 };
 
 export type SyncPlan = WatchPlan & {
@@ -205,7 +205,7 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
 
     const current = row.pendingAction as PendingAction;
     let newQcComments = 0;
-    if (scanPrs && (QA_STAGES.has(stage) || (stage === "doing" && current === "fix-qa"))) {
+    if (scanPrs && watchesComments(stage, current === "fix-qa")) {
       const marks = await loadCommentMarks(provider, row.ticketId).catch(() => null);
       if (marks) {
         const seen = commentsSince(marks, row.qaCommentAt, (name) => isSamePerson("", name, identity));
@@ -242,16 +242,13 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
         planId: plan.id, ticketId: row.ticketId, action: "watch", outcome: "done",
         reason: "qa-comment", detail: `${newQcComments} new comment(s) from QC.`,
       });
-      if (plan.autoDraftQaReply && next !== "fix-qa") {
-        const drafted = await startQaReply(row.id, { since: row.qaCommentAt, answersUpTo: data.qaCommentAt });
-        if (!drafted.ok) {
-          await logAutomation({
-            planId: plan.id, ticketId: row.ticketId, action: "watch", outcome: "skipped",
-            reason: "qa-reply-refused", detail: drafted.error,
-          });
-        }
-      }
     }
+    // Every signal from QA — a comment, QA failed, back to In Progress — lands on the ticket's follow-up case.
+    await noteSignals(
+      row,
+      signalsOf({ stage, prevStage, newComments: newQcComments }),
+      { since: row.qaCommentAt, upTo: data.qaCommentAt ?? row.qaCommentAt }
+    );
     if (next && next !== current) {
       await logAutomation({
         planId: plan.id, ticketId: row.ticketId, action: "watch", outcome: "done",

@@ -4,10 +4,10 @@ import { stripAnsi } from "./execution/format";
 /** Ad-hoc Claude sessions — "open a terminal and ask something", reachable from
  *  a phone.
  *
- *  This is **not** the execution engine and must never grow into it. There is no
+ *  This is **not** a run engine and must never grow into one. There is no
  *  graph, no node, no output contract, no worktree, no branch, no pull request
- *  and no `Run` row, which is exactly why it does not live under
- *  `lib/execution/`: the engine's invariants (a declared JSON Schema per agent
+ *  and no `DagentRun` row, which is exactly why it does not live under
+ *  `lib/dagent/`: the engine's invariants (a declared JSON Schema per agent
  *  node, edges routing only on validated output) describe a machine that decides
  *  things unattended, and a free-form question decides nothing. Reusing
  *  `runTurn()` would have meant inventing a schema for a conversation.

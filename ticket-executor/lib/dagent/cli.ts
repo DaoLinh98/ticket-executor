@@ -3,13 +3,13 @@ import { randomUUID } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { BUNDLED_SKILLS } from "../skillPack";
+import { BUNDLED_SKILLS, RETIRED_SKILLS } from "../skillPack";
 import { ZERO_USAGE, type LogEntry, type Usage } from "./types";
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const KEEP_PLUGINS = /^(1|true)$/i.test(process.env.CLAUDE_KEEP_PLUGINS ?? "");
 const MANUAL_SKILLS = ["implement-ticket", "fix-code-review", "dev-team"];
-export const DENIED_SKILLS = [...BUNDLED_SKILLS, ...MANUAL_SKILLS];
+export const DENIED_SKILLS = [...BUNDLED_SKILLS, ...RETIRED_SKILLS, ...MANUAL_SKILLS];
 
 export type TurnRequest = {
   cwd: string;

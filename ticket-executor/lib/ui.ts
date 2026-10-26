@@ -1,14 +1,9 @@
 import type { CSSProperties } from "react";
-import type { UiRunState } from "./types";
 
 // ---- Ported verbatim from the prototype's renderVals() ----
 
-// There is no STEPS array here any more. A run's progress list is derived from
-// the graph it is walking (see lib/execution/graph/graphs.ts) and reaches the UI
-// as `RunView.nodes`, so adding a node adds a step with nothing to keep in sync.
-// The same goes for the old isTwoPhaseSkill / stepsForSkill / stepsIndexMap
-// helpers: whether a run has a human gate is a property of its graph, not a
-// hard-coded list of skill names.
+// There is no STEPS array here: a run's progress is derived from the D-Agent graph
+// it is walking (lib/dagent/graph.ts) and drawn on /workflow.
 
 // Hue tokens rather than literals — see app/globals.css. These are *data*
 // colours (a work-item type, a ticket status), so they are themed by hue and not
@@ -97,15 +92,14 @@ export function isReviewable(status: string): boolean {
   return REVIEWABLE_STATES.has((status ?? "").trim().toLowerCase());
 }
 
-export type ActionInfo = { label: string; skill: string };
+export type ActionInfo = { label: string };
 
-// Maps the effective ticket status to the runnable action (label + skill).
+// Maps the effective ticket status to the runnable action's label.
 // Returns null when no action applies for that status (button is gated).
 export function actionInfoFor(status: string): ActionInfo | null {
   const s = (status ?? "").trim().toLowerCase();
   if (IMPLEMENTABLE_STATES.has(s))
-    return { label: "Implement Ticket", skill: "implement-ticket-v4" };
-  // if (REVIEWABLE_STATES.has(s)) return { label: "Review Code", skill: "senior-code-review" };
+    return { label: "Implement Ticket" };
   return null;
 }
 
@@ -115,65 +109,9 @@ export function actionInfoFor(status: string): ActionInfo | null {
 // `lib/execution/release.ts` (RELEASE_STATUS), not at the moment the agent
 // stopped typing.
 
-// True for any code-review-resolution skill, including the retired v2/v3 ones a
-// past run may still carry — used everywhere the UI treats a review-fix run apart.
-export function isFixReviewSkill(skill?: string): boolean {
-  return !!skill?.startsWith("fix-code-review-");
-}
-
-export const RUN_COLOR: Record<UiRunState, string> = {
-  running: HUE.amber,
-  waiting: "var(--te-indigo)",
-  succeeded: HUE.green,
-  failed: HUE.red,
-  cancelled: "var(--te-faint)",
-  none: "var(--te-faint)",
-};
-
-export type StepTone = "pending" | "running" | "done" | "failed" | "skipped";
-
-const STEP_TONE_COLOR: Record<StepTone, string> = {
-  pending: "var(--te-faint)",
-  running: "var(--te-warning)",
-  done: "var(--te-success)",
-  failed: "var(--te-danger)",
-  skipped: "var(--te-text-muted)",
-};
-
-export function stepTone(status: string): StepTone {
-  if (status === "running") return "running";
-  if (status === "succeeded" || status === "done") return "done";
-  if (status === "failed") return "failed";
-  if (status === "abandoned" || status === "skipped") return "skipped";
-  return "pending";
-}
-
-export function stepToneColor(status: string): string {
-  return STEP_TONE_COLOR[stepTone(status)];
-}
-
-const EFFECT_COLOR: Record<string, string> = {
-  pure: "var(--te-info)",
-  local: "var(--te-indigo)",
-  external: "var(--te-accent)",
-};
-
-export function effectColor(effects: string): string {
-  return EFFECT_COLOR[effects] ?? "var(--te-text-muted)";
-}
-
 export function toneTint(color: string, pct = 14): string {
   return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 }
-
-export const RUN_LABEL: Record<UiRunState, string> = {
-  running: "Running",
-  waiting: "Waiting for you",
-  succeeded: "Completed",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  none: "Not started",
-};
 
 // ---- Shared design tokens ----
 // Single source of truth for the palette + shape/animation primitives reused
@@ -809,28 +747,6 @@ export function avatar(name: string): CSSProperties {
     fontWeight: 700,
     color: `hsl(${h} 72% 76%)`,
     background: `hsl(${h} 42% 20%)`,
-  };
-}
-
-export function runDot(st: UiRunState): CSSProperties {
-  const base: CSSProperties = {
-    width: "9px",
-    height: "9px",
-    borderRadius: "50%",
-    display: "inline-block",
-    flex: "0 0 auto",
-  };
-  // "no run yet" and "cancelled" both read as an outline rather than a lit dot.
-  if (st === "none" || st === "cancelled")
-    return {
-      ...base,
-      background: "transparent",
-      border: `1.5px solid ${RUN_COLOR[st]}`,
-    };
-  return {
-    ...base,
-    background: RUN_COLOR[st],
-    boxShadow: `0 0 8px ${RUN_COLOR[st]}66`,
   };
 }
 

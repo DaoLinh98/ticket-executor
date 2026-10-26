@@ -9,6 +9,7 @@ import { loadSent } from "@/lib/reportDraft";
 import { slackReportChannel } from "@/lib/slack";
 import { getOrCreateSetting } from "@/lib/settings";
 import { isFixingQa } from "@/lib/ticketLifecycle";
+import { awaitsDeveloper, overduePeriods } from "@/lib/qaFollowUp";
 import { loadPullRequestInbox, loadReviewsSummary, loadTicketActivity, normalizeProvider } from "@/lib/tickets";
 import type { ProviderId } from "@/lib/providers";
 import type { PullRequestBrief, TicketActivity } from "@/lib/types";
@@ -249,26 +250,33 @@ async function lifecycleSources(provider: ProviderId, org: string, identity: Dev
   });
   const plans = await prisma.sprintPlan.findMany({
     where: { provider, org, identityEmail: identity.email, status: "active" },
-    select: { id: true },
+    select: { id: true, autoDraftQaReply: true },
   });
-  const drafts = plans.length
-    ? await prisma.qaReplyDraft.findMany({
-        where: { status: "ready", planId: { in: plans.map((p) => p.id) } },
-        select: { ticketId: true, endedAt: true, createdAt: true },
+  const auto = new Map(plans.map((p) => [p.id, p.autoDraftQaReply]));
+  const cases = plans.length
+    ? await prisma.qaCase.findMany({
+        where: { status: { in: ["pending", "ready", "failed", "fixed"] }, planId: { in: plans.map((p) => p.id) } },
+        select: { planId: true, ticketId: true, status: true, recommendation: true, signalAt: true, endedAt: true, createdAt: true },
         take: TAKE,
       })
     : [];
+  const now = new Date();
   return [
     ...rows.filter((r) => !(r.pendingAction === "fix-qa" && isFixingQa(r))).map((r) => ({
       ticketId: r.ticketId,
       pendingAction: r.pendingAction,
       pendingSince: r.pendingSince ? r.pendingSince.toISOString() : "",
     })),
-    ...drafts.map((d) => ({
-      ticketId: d.ticketId,
-      pendingAction: "qa-reply-ready",
-      pendingSince: (d.endedAt ?? d.createdAt).toISOString(),
-    })),
+    ...cases.filter((c) => awaitsDeveloper(c, auto.get(c.planId) ?? false)).map((c) => {
+      const since = (c.status === "pending" ? c.signalAt : c.endedAt) ?? c.createdAt;
+      return {
+        ticketId: c.ticketId,
+        pendingAction: "qa-reply-ready",
+        pendingSince: since.toISOString(),
+        waiting: (c.status === "ready" ? c.recommendation || "reply" : c.status) as LifecycleSource["waiting"],
+        overdue: overduePeriods(since, now),
+      };
+    }),
   ];
 }
 

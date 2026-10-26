@@ -12,17 +12,12 @@ import { AccessDiagram, Bullets, Callout, Cmd, Code, DocsLink, P, Shot, SkillIns
 // module is server-only (it reaches child_process through lib/mcp.ts), and a
 // value import would pull it into the client bundle. Keep the two in sync.
 const SKILLS = [
-  "implement-ticket-v4",
-  "fix-code-review-v4",
-  "review-changes-v4",
+  "triage-sprint-v4",
 ] as const;
 
-// What each one actually does. Every run commits locally, passes a test gate and
-// an independent review (looping back to fix what they refuse), then publishes.
+// What each one actually does. Runs themselves are D-Agent subagents — see the agents section.
 const SKILL_BLURB: Record<(typeof SKILLS)[number], string> = {
-  "implement-ticket-v4": "builds the ticket, commits locally, and opens a draft PR once the test gate and the reviewer pass it.",
-  "fix-code-review-v4": "works an existing PR's open review threads — fixes, then replies and resolves once the test gate and the reviewer pass the fixes.",
-  "review-changes-v4": "the independent reviewer every run calls before publishing. Read-only; it never sees the implementer's reasoning.",
+  "triage-sprint-v4": "Flow Runner's triage — reviews your sprint's tickets for readiness, estimates and work order. Writes nothing.",
 };
 
 // Mirrors BUNDLED_AGENTS in lib/agentPack.ts (server-only, like REQUIRED_SKILLS).
@@ -37,7 +32,7 @@ const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
   reflector: "when the fix loop is exhausted, decides whether to record a lesson in KNOWLEDGE.md.",
   publisher: "pushes the verified branches and opens a draft PR linked to the ticket.",
   "review-triager": "review fix — judges every open thread on the PR: fix, answer without a change, or informational. Read-only.",
-  "qa-triager": "QA fix — judges which QC findings are real defects, then plans the fix or drafts the reply to QA. Read-only.",
+  "qa-triager": "QA follow-up — classifies every point QC raised (question, defect, not a defect, needs info, new scope) against the code, drafts the reply to QC, and plans the fix you approve. Read-only.",
   responder: "review fix — pushes the fix to the PR branch and answers the judged threads. Never resolves one.",
 };
 
@@ -108,14 +103,14 @@ git --version`}</Cmd>
   // 2 ----------------------------------------------------------------------
   {
     id: "skills",
-    title: "Install the four skills",
-    blurb: "A skill is the instruction set a run executes. This repo ships all four — install them onto your machine in one click.",
+    title: "Install the skills",
+    blurb: "A skill is the instruction set a Flow Runner turn executes. This repo ships them — install them onto your machine in one click.",
     checkGroup: "skills",
     docs: [{ label: "Agent Skills", href: "https://docs.claude.com/en/docs/claude-code/skills" }],
     body: (
       <>
         <P>
-          Each skill is a single <Code>SKILL.md</Code> file in its own folder under <Code>~/.claude/skills/</Code> — the folder the Claude CLI reads. Which one a run uses is decided by the two Settings toggles, not chosen per ticket:
+          Each skill is a single <Code>SKILL.md</Code> file in its own folder under <Code>~/.claude/skills/</Code> — the folder the Claude CLI reads:
         </P>
         <Bullets
           items={SKILLS.map((s) => (
@@ -261,9 +256,9 @@ git --version`}</Cmd>
         <Bullets
           items={[
             <><strong>Set the Root repo per ticket.</strong> On the Overview tab. It is used verbatim as the working directory — the project name is never appended. It is remembered per project afterwards.</>,
-            <><strong>Nobody approves a plan.</strong> The run writes one as a record (the Plan tab), then a test gate and an independent reviewer judge the finished diff and send it back to be fixed, at most twice, before anything is pushed.</>,
+            <><strong>Nobody approves a plan.</strong> The run writes one as a record (on Workflow), then an independent reviewer judges the finished diff and sends it back to be fixed before anything is pushed.</>,
             <><strong>Keep a <Code>KNOWLEDGE.md</Code> in each project.</strong> Runs read it before coding and add the lessons that reviewers and QA had to teach them. It is never committed.</>,
-            <><strong>Multi-ticket mode gives each run its own worktree.</strong> Leave it on to run tickets concurrently. Turn it off if you want to watch a single run in your own checkout — the app then refuses a second concurrent start.</>,
+            <><strong>Every run gets its own worktree.</strong> Tickets run concurrently up to Settings → Concurrent runs; your own checkout is never touched.</>,
             <><strong>Run System Check before your first ticket of the day.</strong> Every blocker it lists is a run that would have failed after spending tokens.</>,
           ]}
         />

@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 
 /** Open an OS terminal in `rootRepo` with the Claude CLI already running in it.
  *
- *  Deliberately separate from `lib/execution/` — nothing here starts a `Run`,
+ *  Deliberately separate from `lib/dagent/` — nothing here starts a run,
  *  takes a worktree or touches admission. It is the button equivalent of the
  *  developer opening a terminal themselves, and the process it spawns outlives
  *  this one (`detached` + `unref`).

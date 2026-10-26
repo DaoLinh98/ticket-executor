@@ -2,9 +2,30 @@ import { spawn, type ChildProcess } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import type { LogLine } from "../types";
 import { stripAnsi } from "./format";
-import type { LiveRun, TurnUsage } from "./graph/types";
-import { ZERO_USAGE } from "./graph/types";
+
+/** Token and cost accounting of one turn, as the CLI's `result` event reports it. */
+export type TurnUsage = {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  numTurns: number;
+  durationMs: number;
+};
+
+export const ZERO_USAGE: TurnUsage = {
+  costUsd: 0, inputTokens: 0, outputTokens: 0,
+  cacheReadTokens: 0, cacheCreationTokens: 0, numTurns: 0, durationMs: 0,
+};
+
+/** What `runTurn` reads and writes: the cwd the turn starts in, a log to append to,
+ *  and a slot that holds the child process while it runs. */
+export type TurnLive = { cwd: string; logLines: LogLine[]; child: ChildProcess | null };
+
+export const turnLive = (cwd: string): TurnLive => ({ cwd, logLines: [], child: null });
 
 // ---- optional guardrails via env ----
 export const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
@@ -201,7 +222,7 @@ function resultSummary(text: string, isError: boolean): string {
 }
 
 // Parse one NDJSON line from `--output-format stream-json`, updating the live run.
-function handleEvent(live: LiveRun, obj: Record<string, unknown>, out: TurnResult) {
+function handleEvent(live: TurnLive, obj: Record<string, unknown>, out: TurnResult) {
   const type = obj.type;
 
   if (type === "system" && obj.subtype === "init") {
@@ -314,7 +335,7 @@ function sandboxEnv(): Record<string, string> {
 }
 
 /** Run one Claude turn; resolves when the process closes. */
-export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
+export function runTurn(live: TurnLive, args: string[]): Promise<TurnResult> {
   return new Promise((resolve) => {
     const out: TurnResult = {
       ok: false, structured: null, text: "", error: "", usage: { ...ZERO_USAGE }, sessionId: "", limitResetAt: null,
@@ -327,7 +348,7 @@ export function runTurn(live: LiveRun, args: string[]): Promise<TurnResult> {
     let child: ChildProcess;
     try {
       child = spawn(CLAUDE_BIN, args, {
-        cwd: live.ctx.cwd,
+        cwd: live.cwd,
         env: { ...process.env, ...sandboxEnv() },
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],

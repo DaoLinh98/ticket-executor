@@ -24,8 +24,8 @@ import { SETTINGS_KEY, connectionsKey, fetchSettings, useConnections, type Conne
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
   animatedBackground: true, clickEffects: true, ringAnimation: true,
-  scope: "team", personalAccount: "", concurrentRuns: 2, multiTicketMode: true,
-  manageMcp: true, hourlyRateUsd: 0, hoursPerStoryPoint: 6,
+  scope: "team", personalAccount: "", concurrentRuns: 2,
+  manageMcp: true, hoursPerStoryPoint: 6,
   gitUserName: "", gitUserEmail: "",
 };
 
@@ -44,7 +44,6 @@ const TABS = [
   { id: "connection", label: "Connection" },
   { id: "execution", label: "Execution" },
   { id: "flowrunner", label: "Flow Runner" },
-  { id: "dashboard", label: "Dashboard" },
   { id: "notifications", label: "Notifications" },
   { id: "appearance", label: "Appearance" },
 ] as const;
@@ -346,7 +345,7 @@ export default function SettingsPage() {
         )}
         <span style={hint}>
           Add one per organization you work with. The header switches between them, and every page — projects,
-          tickets, sprints, review notifications and the dashboard — reloads as the one selected there.
+          tickets, sprints and review notifications — reloads as the one selected there.
         </span>
       </div>
 
@@ -456,32 +455,11 @@ export default function SettingsPage() {
       />
 
       <div style={divider} />
-      <ToggleRow
-        label="Multi-ticket mode"
-        on={settings.multiTicketMode}
-        onToggle={(e) => { fireBoltFromEvent(e); setSettings((s) => ({ ...s, multiTicketMode: !s.multiTicketMode })); }}
-        desc={<>On: select multiple tickets and run them concurrently, each isolated in its own git worktree.<br />Off: one ticket at a time, run directly in the root repo — simplest and most reliable for a single run.</>}
-      />
-      <div style={{ display: "grid", gridTemplateRows: settings.multiTicketMode ? "1fr" : "0fr", opacity: settings.multiTicketMode ? 1 : 0, transition: "grid-template-rows .28s ease, opacity .22s ease" }}>
-        <div style={{ overflow: "hidden" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: "8px", paddingTop: "4px" }}>
-            <span style={fieldLabel()}>CONCURRENT RUNS</span>
-            <input type="number" min={1} max={20} value={settings.concurrentRuns} onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))} style={{ ...fieldInput(), width: "120px" }} />
-            <span style={hint}>Runs beyond this limit wait in a queue until a slot frees up.</span>
-          </label>
-        </div>
-      </div>
-    </div>
-  );
-
-  const dashboardPane = (
-    <div style={pane}>
-      <span style={hint}>What the Dashboard prices delivered work at. These are read only when a metric is rendered; they change no run&apos;s behaviour.</span>
       <div style={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <span style={fieldLabel()}>BLENDED HOURLY RATE (USD)</span>
-          <input type="number" min={0} step={1} value={settings.hourlyRateUsd} onChange={(e) => setSettings((s) => ({ ...s, hourlyRateUsd: Math.max(0, Number(e.target.value) || 0) }))} style={{ ...fieldInput(), width: "140px" }} />
-          <span style={{ ...hint, maxWidth: "320px" }}>Prices the Dashboard&apos;s ROI tile against your team&apos;s own ticket estimates. Leave at 0 to hide that tile rather than publish a guessed number.</span>
+          <span style={fieldLabel()}>CONCURRENT RUNS</span>
+          <input type="number" min={1} max={20} value={settings.concurrentRuns} onChange={(e) => setSettings((s) => ({ ...s, concurrentRuns: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))} style={{ ...fieldInput(), width: "120px" }} />
+          <span style={{ ...hint, maxWidth: "320px" }}>How many D-Agent runs may run at once. A run beyond it is refused until one finishes.</span>
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <span style={fieldLabel()}>HOURS PER STORY POINT</span>
@@ -529,7 +507,6 @@ export default function SettingsPage() {
     connection: connectionPane,
     execution: executionPane,
     flowrunner: <FlowRunnerSettings />,
-    dashboard: dashboardPane,
     notifications: notificationsPane,
     appearance: appearancePane,
   };

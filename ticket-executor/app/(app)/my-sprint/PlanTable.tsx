@@ -3,7 +3,8 @@
 import { useState } from "react";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import { COLORS, FONT, card, fieldInput, pill, sectionCaption, statusPill } from "@/lib/ui";
-import { isFixingQa, MAX_QA_ROUNDS, QA_STAGES, stageOf } from "@/lib/ticketLifecycle";
+import { isFixingQa, MAX_QA_ROUNDS, stageFrom } from "@/lib/ticketLifecycle";
+import { awaitsAnalysis, type LastClosed } from "@/lib/qaFollowUp";
 import type { QueueMove } from "@/lib/sprintPlan";
 import type { TriagedTicket } from "@/lib/execution/triage";
 import { CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelLabel, resolveModelId } from "@/lib/claudeOptions";
@@ -18,7 +19,7 @@ import {
   stateOf,
   type MySprint,
   type PlannedRow,
-  type QaDraft,
+  type QaCase,
 } from "./model";
 
 const GRID = "84px 1fr 60px 132px 132px 104px 176px";
@@ -26,13 +27,12 @@ const HEADERS = ["QUEUE", "TICKET", "PTS", "TRACKER", "RELEASE", "RUN", "ACTIONS
 const LABELS = ["Queue", "", "Pts", "Tracker", "Release", "Run", ""];
 
 export type PlanHandlers = {
-  openExecution: (ticketId: string, tab: "execution" | "result") => void;
+  openExecution: (ticketId: string) => void;
   setUnblocked: (plannedId: string, unblocked: boolean) => void;
   resolveReview: (plannedId: string, ticketId: string) => void;
   retry: (plannedId: string) => void;
   release: (row: PlannedRow) => void;
-  draftReply: (plannedId: string) => void;
-  startQaFix: (plannedId: string, ticketId: string) => void;
+  analyzeQa: (plannedId: string, ticketId: string) => void;
   moveToQa: (plannedId: string) => void;
   remove: (plannedId: string, ticketId: string) => void;
   move: (plannedId: string, move: QueueMove) => void;
@@ -66,7 +66,8 @@ function ArrowButton({ label, direction, disabled, onClick }: { label: string; d
 export default function PlanTable({
   rows,
   data,
-  drafts,
+  cases,
+  closed,
   triaged,
   busy,
   releaseDayOptions,
@@ -78,7 +79,8 @@ export default function PlanTable({
 }: {
   rows: PlannedRow[];
   data: MySprint | null;
-  drafts: QaDraft[];
+  cases: QaCase[];
+  closed: Record<string, LastClosed>;
   triaged: Map<string, TriagedTicket>;
   busy: ReadonlySet<string>;
   releaseDayOptions: string[];
@@ -123,13 +125,13 @@ export default function PlanTable({
             const state = stateOf(t, ticket?.status ?? "");
             const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
             const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
-            const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
+            const qaCase = cases.find((c) => c.plannedTicketId === t.id);
             const canMove = reorderable && isMovable(t);
             const held = t.implementState === "skipped" && claim === "mine" && !t.prUrl;
             const cost = costs[t.ticketId] ?? 0;
             const redatable = !!t.id && !t.releasedAt && claim === "mine" && t.implementOrder > 0;
             const days = t.releaseDay && !releaseDayOptions.includes(t.releaseDay) ? [t.releaseDay, ...releaseDayOptions] : releaseDayOptions;
-            const stage = stageOf(t.stage || ticket?.status || "");
+            const stage = stageFrom(t.stage, ticket?.status ?? "");
             const cells = [
               <span key="order" style={{ display: "flex", alignItems: "center", gap: "2px" }}>
                 {t.id && (
@@ -293,9 +295,9 @@ export default function PlanTable({
                               : "QA fix is in a draft pull request — release it when you have looked at it."
                             : t.qaRounds >= MAX_QA_ROUNDS
                               ? `${t.qaRounds} QA fixes did not close this ticket — it needs you.`
-                              : t.implementState === "no-fix-needed" && replyWaiting
-                                ? "QC's findings were reviewed and none is a defect — post the drafted reply, or dismiss it to fix anyway."
-                                : "Came back from QA — start the QA fix to review QC's findings and fix the real defects."}
+                              : qaCase
+                                ? "Came back from QA — its QC follow-up case is below."
+                                : "Came back from QA — analyse QC's feedback to decide on a fix."}
                         </span>
                       )}
                       {t.reviewState === "needs-human" && (
@@ -318,9 +320,9 @@ export default function PlanTable({
                       <IconAction action="forceReady" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
                     ))}
                   {t.implementState === "running" || t.reviewState === "running" ? (
-                    <IconAction action="watch" onClick={() => h.openExecution(t.ticketId, "execution")} />
+                    <IconAction action="watch" onClick={() => h.openExecution(t.ticketId)} />
                   ) : t.runId || t.reviewRunId ? (
-                    <IconAction action="result" onClick={() => h.openExecution(t.ticketId, "result")} />
+                    <IconAction action="result" onClick={() => h.openExecution(t.ticketId)} />
                   ) : null}
                   {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
                     (t.reviewState === "resolved" ? (
@@ -333,13 +335,12 @@ export default function PlanTable({
                       <IconAction action={held ? "resume" : "retry"} onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />
                     )}
                   {due && t.id && <IconAction action="release" onClick={() => h.release(t)} busy={busy.has("release-" + t.id)} />}
-                  {t.id && QA_STAGES.has(stage) && t.pendingAction !== "fix-qa" && stage !== "qa-failed" && claim !== "dropped" && !replyWaiting && (
-                    <IconAction action="draftReply" onClick={() => h.draftReply(t.id)} busy={busy.has("draft-" + t.id)} />
+                  {t.id && qaCase && (
+                    <IconAction action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />
                   )}
-                  {t.id && t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds < MAX_QA_ROUNDS && !replyWaiting &&
-                    t.implementState !== "running" && t.reviewState !== "running" && claim === "mine" && (
-                      <IconAction action="qaFix" onClick={() => h.startQaFix(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />
-                    )}
+                  {t.id && !qaCase && awaitsAnalysis({ stage, pendingAction: t.pendingAction, pendingSince: t.pendingSince ?? null, qaCommentAt: t.qaCommentAt ?? "", lastClosed: closed[t.id] ?? null }) && (
+                    <IconAction action="analyzeQa" onClick={() => h.analyzeQa(t.id, t.ticketId)} busy={busy.has("analyze-" + t.id)} />
+                  )}
                   {t.id && t.pendingAction === "move-to-qa" && (
                     <IconAction action="moveToQa" onClick={() => h.moveToQa(t.id)} busy={busy.has("qa-" + t.id)} />
                   )}

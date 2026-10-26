@@ -3,8 +3,8 @@
 import { useCallback, useRef } from "react";
 import type { CSSProperties, Dispatch, MouseEvent, SetStateAction } from "react";
 import SelectMenu from "../SelectMenu";
-import type { Ticket, UiRunState } from "@/lib/types";
-import { COLORS, FONT, MOTION, RUN_COLOR, displayText, avatar, card, ctaButtonStyle, initials, pill, ringBorder, runDot, statusPill, tintedCard, typeBadge, chipShape } from "@/lib/ui";
+import type { Ticket } from "@/lib/types";
+import { COLORS, FONT, MOTION, displayText, avatar, card, ctaButtonStyle, initials, pill, ringBorder, statusPill, tintedCard, typeBadge, chipShape } from "@/lib/ui";
 import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
 import { ACCENT } from "./constants";
 import LoadingRing from "./LoadingRing";
@@ -65,16 +65,13 @@ type Props = {
   /** Queue position per ticket id for the tickets this sprint's plan carries.
    *  Empty outside the sprint view, and for a sprint with no plan. */
   plannedOrder: Record<string, number>;
-  multiTicketMode: boolean;
   selectMode: boolean;
   onToggleSelectMode: () => void;
   onCancelSelect: () => void;
   selectedIds: Set<string>;
   onToggleTicketSelected: (id: string) => void;
-  queuedIds: Set<string>;
   onRunSelected: () => void;
   selectedId: string;
-  execStatusOf: (id: string) => UiRunState;
   getStatus: (t: Ticket) => string;
   onSelectTicket: (id: string, e?: MouseEvent) => void;
 };
@@ -85,8 +82,8 @@ export default function TicketSidebar({
   search, setSearch, filtersOpen, setFiltersOpen, activeFilters, clearFilters,
   fStatus, setFStatus, fType, setFType, fAssignee, setFAssignee, fPlanned, setFPlanned,
   statusOptions, typeOptions, assigneeOptions, plannedOptions, plannedOrder,
-  multiTicketMode, selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
-  queuedIds, onRunSelected, selectedId, execStatusOf, getStatus, onSelectTicket,
+  selectMode, onToggleSelectMode, onCancelSelect, selectedIds, onToggleTicketSelected,
+  onRunSelected, selectedId, getStatus, onSelectTicket,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   const q = search.trim().toLowerCase();
@@ -107,9 +104,7 @@ export default function TicketSidebar({
   // changes.
   const renderRow = (tk: Ticket, i: number) => {
     const sel = tk.id === selectedId;
-    const est = execStatusOf(tk.id);
     const checked = selectedIds.has(tk.id);
-    const queued = queuedIds.has(tk.id);
     const highlighted = selectMode ? checked : sel;
     const rowStyle: CSSProperties = {
       position: "relative", overflow: "hidden", flexShrink: 0, display: "flex", flexDirection: "column",
@@ -169,21 +164,6 @@ export default function TicketSidebar({
               {plannedOrder[tk.id] ? `PLAN ${plannedOrder[tk.id]}` : "PLAN"}
             </span>
           )}
-          <div style={{ flex: 1 }} />
-          {queued ? (
-            <span style={pill({ color: COLORS.warning, background: "rgba(245,179,65,.1)", border: `color-mix(in srgb, ${COLORS.warning} 33%, transparent)`, size: "xs", weight: 700 })}>Queued</span>
-          ) : est === "running" ? (
-            <span
-              title="Running"
-              style={{
-                width: "12px", height: "12px", borderRadius: "50%", flex: "0 0 auto",
-                border: `1.6px solid ${RUN_COLOR.running}33`, borderTopColor: RUN_COLOR.running,
-                animation: "spin .8s linear infinite",
-              }}
-            />
-          ) : (
-            <span style={{ ...runDot(est) }} />
-          )}
         </div>
         <div style={{ fontSize: FONT.md, fontWeight: 600, color: "var(--te-text)", lineHeight: 1.35, textAlign: "left" }}>{tk.title}</div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "1px" }}>
@@ -230,15 +210,13 @@ export default function TicketSidebar({
               </button>
             </>
           )}
-          {multiTicketMode && (
-            <button
-              onClick={(e) => { fireBoltFromEvent(e); onToggleSelectMode(); }}
-              title="Select multiple tickets"
-              style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "var(--te-text-dim)", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "var(--te-raised-bg)", duration: 4.2 }) }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
-            </button>
-          )}
+          <button
+            onClick={(e) => { fireBoltFromEvent(e); onToggleSelectMode(); }}
+            title="Select multiple tickets"
+            style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", width: "36px", height: "36px", color: selectMode ? "var(--accent)" : "var(--te-text-dim)", cursor: "pointer", ...ringBorder({ fill: selectMode ? "rgba(251,114,80,.14)" : "var(--te-raised-bg)", duration: 4.2 }) }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
+          </button>
         </div>
         {!selectMode && filtersOpen && (
           /* Four filters no longer fit the rail on one line, so the row wraps

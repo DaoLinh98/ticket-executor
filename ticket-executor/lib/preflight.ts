@@ -243,10 +243,10 @@ async function environmentChecks(deep: boolean): Promise<Check[]> {
 function skillChecks(): Check[] {
   return skillStates().map((s) => {
     const base = { id: `skill-${s.name}`, group: "skills" as const, label: s.name };
-    // An optional skill (one reached only when a setting switches its node on) is
-    // not missing-and-fatal — it is missing-and-unused until that setting is on,
-    // and startRun() refuses the run if it ever isn't. Reporting it as a blocker
-    // here would tell every install it is broken over a feature it never enabled.
+    // An optional skill (one reached only from one Flow Runner action) is not
+    // missing-and-fatal — it is missing-and-unused until that action is used.
+    // Reporting it as a blocker here would tell every install it is broken over a
+    // feature it never used.
     if (s.status === "missing") {
       return {
         ...base,

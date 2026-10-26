@@ -1,11 +1,6 @@
-// Runs once when a Next.js server instance starts, before it handles requests.
-//
-// This is where crash recovery belongs. A run's live state is in-process, so a
-// restart orphans anything that was mid-flight: without this sweep those rows
-// sit at state "running" forever, with no process behind them. What each one is
-// eligible for is decided by the effect class of the step that was open —
-// see recoverInterruptedRuns(): pure re-runs, local resumes, and external stops
-// for a human, because nobody can tell from here whether the push landed.
+// Runs once when a Next.js server instance starts, before it handles requests:
+// installs the bundled skills and agents, then starts the scheduler and the push watcher.
+// A D-Agent run orphaned by a restart is failed by `reconcileOrphans()` (lib/dagent).
 /**
  * Put this repo's skills where the Claude CLI reads them.
  *
@@ -14,11 +9,11 @@
  * was a button on the Guide page. That was right while the app ran on a
  * developer's own machine, whose home directory persists. It is wrong in a
  * container: `~/.claude` is recreated with the container, so a fresh deploy
- * starts with no skills and the first run fails on
- * `Unknown command: /implement-ticket-v4`.
+ * starts with no skills and the first triage fails on
+ * `Unknown command: /triage-sprint-v4`.
  *
  * Idempotent. A copy older than the bundle is replaced — it answers an older
- * contract, and startRun() refuses to run it — while a copy of the same version
+ * contract — while a copy of the same version
  * whose contents differ is left alone, so a skill somebody deliberately edited
  * in place survives a restart.
  *
@@ -60,19 +55,9 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   await installBundledSkills();
   await installBundledAgents();
-  const { recoverInterruptedRuns } = await import("./lib/executionStore");
-  try {
-    const n = await recoverInterruptedRuns();
-    if (n > 0) console.log(`[ticket-executor] resumed ${n} run(s) interrupted by a restart`);
-  } catch (e) {
-    console.error("[ticket-executor] crash-recovery sweep failed:", e);
-  }
 
-  // The scheduler comes last, and after the recovery sweep on purpose: it may
-  // start runs, and it must not do that while the sweep is still deciding which
-  // of the previous process's runs are still alive. Its own tick takes a
-  // Postgres advisory lock, so a host and a container sharing one database still
-  // only schedule once.
+  // The scheduler's own tick takes a Postgres advisory lock, so a host and a
+  // container sharing one database still only schedule once.
   const { startScheduler } = await import("./lib/executionStore");
   startScheduler();
 

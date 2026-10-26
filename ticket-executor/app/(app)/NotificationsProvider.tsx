@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   buildNotifications, markAllRead, markRead, mergeWithHistory, notificationKey,
   type AppNotification, type AutomationSource, type LifecycleSource, type PullRequestSource, type ReadEntry, type ReadMap,
-  type ReportReminderSource, type RunEventSource, type ReviewSource, type TicketActivitySource,
+  type ReportReminderSource, type ReviewSource, type TicketActivitySource,
 } from "@/lib/notifications";
 
 // How often the bell re-asks its own sources. Minutes rather than seconds: a
@@ -26,12 +26,10 @@ const NOTIFY_READ_CHANNEL = "te:notifications-read";
 const HISTORY_PAGE = 30;
 
 /** The sources only the Ticket Execution screen can answer for: the board-scoped
- *  review poll, the runs this session is watching, and the titles of the tickets
+ *  review poll and the titles of the tickets
  *  it has loaded. Every other page contributes none of them. */
 export type LocalNotificationSources = {
   reviews?: ReviewSource[];
-  waitingRuns?: { ticketId: string; runId: string }[];
-  runEvents?: RunEventSource[];
   /** The board-scoped review poll could not reach the provider. */
   degraded?: boolean;
   titles?: Record<string, string>;
@@ -294,13 +292,11 @@ export default function NotificationsProvider({ children }: { children: ReactNod
         reviews: mergedReviews,
         pullRequests,
         ticketActivity,
-        waitingRuns: local.waitingRuns ?? [],
-        runEvents: local.runEvents ?? [],
         automation,
         reportReminder,
         lifecycle,
       }), history),
-    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, lifecycle, local.waitingRuns, local.runEvents, history]
+    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, lifecycle, history]
   );
 
   const titleOf = useCallback((ticketId: string) => local.titles?.[ticketId] ?? "", [local.titles]);

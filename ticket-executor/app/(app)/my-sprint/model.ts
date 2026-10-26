@@ -1,7 +1,8 @@
 import { COLORS } from "@/lib/ui";
 import type { Claim } from "@/lib/sprintClaim";
 import type { Lane, PlanConfig, SprintPlanResult } from "@/lib/sprintPlan";
-import { isQueueable, STAGE_LABEL, stageOf } from "@/lib/ticketLifecycle";
+import type { CaseStatus, Finding, LastClosed, Recommendation, Trigger } from "@/lib/qaFollowUp";
+import { isQueueable, STAGE_LABEL, stageFrom } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
 
@@ -42,7 +43,6 @@ export type PlannedRow = {
   unblockedByUser: boolean;
   implementState: string;
   runId: string;
-  runEngine: string;
   prUrl: string;
   prPublished: boolean;
   reviewersSet: boolean;
@@ -51,7 +51,6 @@ export type PlannedRow = {
   releaseError: string;
   reviewState: string;
   reviewRunId: string;
-  reviewEngine: string;
   openComments: number;
   threadsReplied: number;
   threadsResolved: number;
@@ -64,6 +63,8 @@ export type PlannedRow = {
   stage: string;
   prMerged: boolean;
   pendingAction: string;
+  pendingSince?: string | null;
+  qaCommentAt?: string;
   qaRounds: number;
   /** Stopped tracking by the developer — kept as a record, never shown. */
   untracked?: boolean;
@@ -76,7 +77,6 @@ export type StoredPlan = {
   autoRelease: boolean;
   autoResolveReview: boolean;
   autoDraftQaReply: boolean;
-  engine: "classic" | "dagent";
   includeWider: boolean;
   reviewers: string[];
   pointsPerDay: number;
@@ -85,16 +85,23 @@ export type StoredPlan = {
   items: PlannedRow[];
 };
 
-export type QaDraft = {
+/** An open QA follow-up case — `lib/qaFollowUp.ts` holds what each field means. */
+export type QaCase = {
   id: string;
   plannedTicketId: string;
   ticketId: string;
-  status: "running" | "ready" | "failed";
+  status: Exclude<CaseStatus, "posted" | "dismissed">;
+  triggers: Trigger[];
+  findings: Finding[] | null;
+  recommendation: Recommendation | "";
   body: string;
   summary: string;
-  needsHuman: boolean;
-  fixNeeded: boolean;
   errorMessage: string;
+  runId: string;
+  fixRunId: string;
+  signalAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
 };
 
 export type AutomationRow = {
@@ -185,7 +192,7 @@ export const IMPLEMENT_STATE: Record<string, { color: string; label: string }> =
 export function stateOf(t: PlannedRow, status: string): { color: string; label: string } {
   if (t.releasedAt) return { color: COLORS.success, label: "Released" };
   if (t.implementState === "pending" && !t.implementOrder) {
-    const stage = stageOf(t.stage || status);
+    const stage = stageFrom(t.stage, status);
     if (!isQueueable(stage)) return { color: stage === "qa-failed" ? COLORS.danger : COLORS.indigo, label: STAGE_LABEL[stage] };
   }
   if (t.implementState === "skipped" && t.claim === "mine" && !t.prUrl) return { color: COLORS.textDim, label: "On hold" };
@@ -260,7 +267,14 @@ export function originLabel(iterationPath: string | undefined, sprint: string): 
   return leaf === sprint ? "" : leaf;
 }
 
-export type PlanResponse = { plan: StoredPlan | null; events: AutomationRow[]; drafts: QaDraft[]; costs: Record<string, number> };
+export type PlanResponse = {
+  plan: StoredPlan | null;
+  events: AutomationRow[];
+  cases: QaCase[];
+  /** Each ticket's last closed QA case, by planned-ticket id. */
+  closed: Record<string, LastClosed>;
+  costs: Record<string, number>;
+};
 
 export type RebuildPreview = {
   added: string[];
@@ -309,7 +323,8 @@ export const fetchPlan = async (): Promise<PlanResponse> => {
   return {
     plan: d.plan ?? null,
     events: Array.isArray(d.events) ? d.events : [],
-    drafts: Array.isArray(d.drafts) ? d.drafts : [],
+    cases: Array.isArray(d.cases) ? d.cases : [],
+    closed: d.closed && typeof d.closed === "object" ? d.closed : {},
     costs: d.costs && typeof d.costs === "object" ? d.costs : {},
   };
 };

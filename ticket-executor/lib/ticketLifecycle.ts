@@ -41,6 +41,12 @@ export function stageOf(status: string): Stage {
   return STAGE_BY_STATUS[(status ?? "").trim().toLowerCase()] ?? "ready";
 }
 
+/** A plan row's stored `stage` is already a stage id (`qa-failed`, `code-review`) — not a tracker status, so it must
+ *  not go through `stageOf()`. Falls back to the live status when the row has none yet. */
+export function stageFrom(stored: string, status: string): Stage {
+  return stored in STAGE_LABEL ? (stored as Stage) : stageOf(status);
+}
+
 export function isQueueable(stage: Stage): boolean {
   return stage === "ready" || stage === "doing" || stage === "blocked";
 }

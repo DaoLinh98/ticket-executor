@@ -452,7 +452,7 @@ async function latestPrUrlForTicket(provider: ProviderId, ticketId: string): Pro
 /**
  * The known PR URL for many tickets, in **two** queries.
  *
- * Two sources, and the second is why the bell stays cheap. `Run.prUrl` covers a
+ * Two sources, and the second is why the bell stays cheap. `DagentRun.prUrl` covers a
  * PR this app opened. `TicketPullRequest` covers every PR anything has since
  * resolved, including the ones a human opened — without it, those tickets pay
  * the provider's full four-call resolution on every poll, forever, because
@@ -467,7 +467,7 @@ async function latestPrUrlForTicket(provider: ProviderId, ticketId: string): Pro
 export async function latestPrUrls(provider: ProviderId, ticketIds: string[]): Promise<Map<string, string>> {
   if (!ticketIds.length) return new Map();
   const [runs, cached] = await Promise.all([
-    prisma.run.findMany({
+    prisma.dagentRun.findMany({
       where: { ticketId: { in: ticketIds }, NOT: { prUrl: "" } },
       orderBy: { startedAt: "desc" },
       distinct: ["ticketId"],

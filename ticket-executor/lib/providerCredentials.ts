@@ -1,7 +1,7 @@
 // Where a provider credential comes from — the single place that decides.
 //
-// Every consumer — lib/ado.ts, lib/preflight.ts, the MCP builder in
-// lib/execution/graph/exec.ts, the connection test — goes through
+// Every consumer — lib/ado.ts, lib/preflight.ts, the per-turn MCP config
+// (lib/mcp.ts), the connection test — goes through
 // `resolveCredential()` rather than reading `ProviderCredential` itself, so
 // there is one answer to "which organization does a run authenticate as".
 //

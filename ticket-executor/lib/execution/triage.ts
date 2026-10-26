@@ -2,15 +2,13 @@
 // and answers, as structured data, which are ready, which need an answer from a
 // business analyst, which are mis-estimated, and what order to work them in.
 //
-// **Why this is not a graph.** Every graph in `lib/execution/graph/` drives a
-// *run*: one ticket, a branch, a worktree, admission control, and a leaf node
-// that pushes. Triage has none of those. It writes nothing — not a file, not a
-// comment, not a story point — so there is no worktree to isolate, no branch to
-// race over, and nothing an admission rule protects. Forcing it through
-// `startRun()` would mean inventing a ticket id for a sprint and creating a
-// worktree for a turn that only reads, which is more machinery than the work.
+// **Why this is not a run.** A D-Agent run (`lib/dagent/`) is one ticket, a
+// branch, a worktree, admission control, and a node that pushes. Triage has none
+// of those. It writes nothing — not a file, not a comment, not a story point — so
+// there is no worktree to isolate, no branch to race over, and nothing an
+// admission rule protects.
 //
-// What it does keep from the engine is the part that matters: a declared JSON
+// What it does keep from an agent step is the part that matters: a declared JSON
 // Schema, so the answer is data the planner can act on rather than a table a
 // human retypes. A turn that ends without honouring the contract is a failure,
 // exactly as it is for an agent node.
@@ -23,12 +21,11 @@ import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { commonArgs, runTurn } from "./claudeCli";
+import { commonArgs, runTurn, turnLive } from "./claudeCli";
 import { removeRunMcpConfig, resolveMcp, writeRunMcpConfig } from "../mcp";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { findSkill } from "../skillPack";
-import type { LiveRun } from "./graph/types";
 import type { Ticket } from "../types";
 
 export const TRIAGE_SKILL = "triage-sprint-v4";
@@ -205,50 +202,6 @@ export function triagePrompt(input: TriageInput): string {
 
 // ---- execution ----
 
-/** The minimal live-run shape `runTurn` reads: a cwd, a log to append to, and a
- *  slot to hold the child process. Triage has no Run row, so this is built here
- *  rather than rehydrated. */
-export function triageLive(id: string, cwd: string, provider: string, skill: string = TRIAGE_SKILL): LiveRun {
-  return {
-    id,
-    graphId: skill === TRIAGE_SKILL ? "triage" : skill,
-    ctx: {
-      runId: id, ticketId: "", ticketUrl: "", provider, project: "", prUrl: "",
-      skill, rootRepo: cwd, cwd, baseSha: "", companions: [],
-      channels: {}, visits: {},
-    },
-    state: "running",
-    currentNodeId: "triage",
-    sessionId: "",
-    model: "",
-    effort: "",
-    isolate: false,
-    child: null,
-    cancelled: false,
-    logLines: [],
-    stepLogStarts: {},
-    mcpConfigPath: "",
-    parkedAt: null,
-    humanWaitMs: 0,
-    resumeAt: null,
-    limitWaitMs: 0,
-    limitParks: 0,
-    resumeSession: false,
-    startedAt: Date.now(),
-    endedAt: null,
-    seq: 0,
-    hops: 0,
-    resumedAfterRestart: false,
-    errorMessage: "",
-    endReason: "",
-    prUrl: "",
-    companionPrUrls: [],
-    branch: "",
-    resultText: "",
-    knowledgeAtStart: null,
-  };
-}
-
 /**
  * Start a triage. Returns as soon as the row exists; the turn itself runs on.
  *
@@ -293,7 +246,7 @@ export function scratchCwd(id: string): string {
 
 async function execTriage(id: string, input: TriageInput) {
   const cwd = input.rootRepo || scratchCwd(id);
-  const live = triageLive(id, cwd, input.provider);
+  const live = turnLive(cwd);
   let mcpPath = "";
   try {
     const [setting, cred] = await Promise.all([

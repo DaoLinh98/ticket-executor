@@ -29,15 +29,12 @@ import { resolveCredential } from "../providerCredentials";
 import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadPrReviews, normalizeProvider } from "../tickets";
 import { logAutomation, rememberSprint } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
-import { IMPLEMENT_SKILL, QA_FIX_SKILL, REVIEW_FIX_SKILL } from "./graph/graphs";
-import { isFixingQa, MAX_QA_ROUNDS } from "../ticketLifecycle";
-import { openQaDraft } from "./qaReply";
+import { reconcileQaCases, startDueAnalyses } from "./qaFollowUp";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
-import { cancelRun, resumeRateLimitedRuns, startRun, type StartRunInput } from "./runner";
-import { cancelRun as cancelDagentRun, onRunEnded as onDagentRunEnded, runOutcomes, startRun as startDagentRun } from "../dagent";
+import { cancelRun, onRunEnded, runOutcomes, startRun } from "../dagent";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
  *  faster than a Claude turn finishes, and a tighter loop would only add
@@ -58,34 +55,6 @@ const TICK_TX_TIMEOUT_MS = 600_000;
  *  would re-read the same threads and reach the same conclusion, at full price.
  *  Hitting the ceiling is a state (`needs-human`), not a failure. */
 const MAX_REVIEW_ROUNDS = 3;
-
-/** The engine a plan starts its runs on: `Run` + skills, or `DagentRun` + subagents. */
-type Engine = "classic" | "dagent";
-
-const engineOf = (plan: { engine: string }): Engine => (plan.engine === "dagent" ? "dagent" : "classic");
-
-const DAGENT_FLOW = { [IMPLEMENT_SKILL]: "implement", [REVIEW_FIX_SKILL]: "review", [QA_FIX_SKILL]: "qa" } as const;
-
-/**
- * Start one run on the plan's engine. The plan row stamps which engine it went to
- * (`runEngine` / `reviewEngine`), so reconcile and cancel read the right table even
- * after the plan is switched mid-flight.
- */
-async function startOn(engine: Engine, input: StartRunInput): Promise<{ ok: true; runId: string } | { ok: false; error: string; blocked?: string }> {
-  if (engine === "classic") return startRun(input);
-  const result = await startDagentRun({
-    flow: DAGENT_FLOW[input.requestedSkill as keyof typeof DAGENT_FLOW] ?? "implement",
-    prUrl: input.prUrl,
-    ticketId: input.ticketId,
-    ticketUrl: input.ticketUrl,
-    project: input.project,
-    rootRepo: input.rootRepo,
-    provider: input.provider,
-    model: input.model,
-    effort: input.effort,
-  });
-  return result.ok ? result : { ok: false, error: result.error };
-}
 
 const CLOSED_PR_STATUSES = ["Completed", "Abandoned"];
 
@@ -140,8 +109,6 @@ export type TickReport = {
   skipped: number;
   /** Runs stopped because the ticket stopped being the developer's. */
   aborted: number;
-  /** Runs continued after the Claude account's usage limit reset. */
-  resumed: number;
   watched: number;
 };
 
@@ -153,7 +120,7 @@ export type TickReport = {
  * nobody can check.
  */
 export async function tick(now = new Date()): Promise<TickReport> {
-  const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, resumed: 0, watched: 0 };
+  const report: TickReport = { plans: 0, implementStarted: 0, reviewStarted: 0, released: 0, skipped: 0, aborted: 0, watched: 0 };
   await prisma.$transaction(
     async (tx) => {
       const [{ locked }] = await tx.$queryRaw<{ locked: boolean }[]>`
@@ -168,11 +135,6 @@ export async function tick(now = new Date()): Promise<TickReport> {
 }
 
 async function runTick(now: Date, report: TickReport): Promise<void> {
-  // Before the plans, and outside the loop: a run parked on a spent quota
-  // belongs to whatever plan started it, and the account it is waiting on is
-  // the machine's, not the sprint's. It is also the cheapest work in the
-  // tick — one indexed read that normally returns nothing.
-  report.resumed = await resumeRateLimitedRuns(now);
   await rolloverPlans(now);
 
   const plans = await prisma.sprintPlan.findMany({ where: { status: "active" } });
@@ -187,6 +149,8 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
     report.aborted += await refreshClaims(plan);
     report.watched += await syncNewTickets(plan, now);
     report.watched += await watchLifecycle(plan, now);
+    // QC's feedback before new work: a delivered ticket waiting on the developer is the stall this app exists to end.
+    report.watched += await startDueAnalyses(plan, now);
     if (plan.autoRelease) {
       for (const item of await dueForRelease(plan.id, today)) {
         if (await releaseRetriesExhausted(plan.id, item.ticketId)) {
@@ -212,7 +176,7 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
   }
 }
 
-type ActivePlan = { id: string; provider: string; org: string; project: string; engine: string };
+type ActivePlan = { id: string; provider: string; org: string; project: string };
 
 type ClaimPlan = ActivePlan & {
   sprint: string;
@@ -373,7 +337,7 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
     // `cancelRun` answers false when the run is not live in this process — after
     // a restart, say. The row is marked either way: a run this process cannot
     // reach is not one it should keep waiting for.
-    const stopped = row.runEngine === "dagent" ? await cancelDagentRun(row.runId) : await cancelRun(row.runId);
+    const stopped = await cancelRun(row.runId);
     await prisma.plannedTicket.update({
       where: { id: row.id },
       data: { implementState: "skipped" },
@@ -445,13 +409,12 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   }
   if (!next) return false;
 
-  const result = await startOn(engineOf(plan), {
+  const result = await startRun({
+    flow: "implement",
     ticketId: next.ticketId,
-    ticketUrl: "",
     provider: plan.provider,
     project: next.project || plan.project,
     rootRepo,
-    requestedSkill: IMPLEMENT_SKILL,
     model: next.model,
     effort: next.effort,
   });
@@ -459,7 +422,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   if (!result.ok) {
     await logAutomation({
       planId: plan.id, ticketId: next.ticketId, action: "implement", outcome: "skipped",
-      reason: result.blocked || "admission-refused",
+      reason: "admission-refused",
       detail: result.error,
     });
     return false;
@@ -467,7 +430,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
 
   await prisma.plannedTicket.update({
     where: { id: next.id },
-    data: { implementState: "running", runId: result.runId, runEngine: engineOf(plan) },
+    data: { implementState: "running", runId: result.runId },
   });
   await logAutomation({
     planId: plan.id, ticketId: next.ticketId, action: "implement", outcome: "started",
@@ -721,22 +684,20 @@ export async function startReviewRun(
     return { ok: false, error };
   }
 
-  const result = await startOn(engineOf(item.plan), {
+  const result = await startRun({
+    flow: "review",
     ticketId: item.ticketId,
-    ticketUrl: "",
     provider: item.plan.provider,
     project: item.project || item.plan.project,
     rootRepo: repoPath,
     prUrl: targetPr,
-    requestedSkill: REVIEW_FIX_SKILL,
-    rememberRootRepo: isPrimary,
     model: item.model,
     effort: item.effort,
   });
   if (!result.ok) {
     await logAutomation({
       planId: item.planId, ticketId: item.ticketId, action: "review", outcome: "skipped",
-      reason: result.blocked || "admission-refused", detail: result.error,
+      reason: "admission-refused", detail: result.error,
     });
     return { ok: false, error: result.error };
   }
@@ -746,7 +707,6 @@ export async function startReviewRun(
     data: {
       reviewState: "running",
       reviewRunId: result.runId,
-      reviewEngine: engineOf(item.plan),
       reviewError: "",
       ...(opts.openComments === undefined ? {} : { openComments: opts.openComments }),
       ...(opts.lastCommentAt && isPrimary ? { lastCommentAt: opts.lastCommentAt } : {}),
@@ -766,106 +726,27 @@ export async function startReviewRun(
   return { ok: true, error: "" };
 }
 
-export async function startQaFix(plannedId: string): Promise<{ ok: boolean; error: string; blocked?: string }> {
-  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
-  if (!item) return { ok: false, error: "No such planned ticket." };
-
-  const refusal =
-    item.claim !== "mine"
-      ? "This ticket is no longer yours."
-      : item.pendingAction !== "fix-qa"
-        ? "QA has not sent this ticket back."
-        : isFixingQa(item)
-          ? "A QA fix is already in progress for this ticket."
-          : item.qaRounds >= MAX_QA_ROUNDS
-            ? `${MAX_QA_ROUNDS} QA fixes did not close this ticket — it needs a person.`
-            : item.implementState === "running" || item.reviewState === "running"
-              ? "A run is already in progress for this ticket."
-              : "";
-  if (refusal) {
-    await logAutomation({
-      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
-      reason: "qa-fix-refused", detail: refusal,
-    });
-    return { ok: false, error: refusal };
-  }
-
-  const rootRepo = await rootRepoFor(item.plan, item.project);
-  if (!rootRepo) {
-    const error = await noteMissingRootRepo(item.plan, item, "implement", isoDay(new Date()));
-    return { ok: false, error, blocked: "no-root-repo" };
-  }
-
-  const result = await startOn(engineOf(item.plan), {
-    ticketId: item.ticketId,
-    ticketUrl: "",
-    provider: item.plan.provider,
-    project: item.project || item.plan.project,
-    rootRepo,
-    requestedSkill: QA_FIX_SKILL,
-  });
-  if (!result.ok) {
-    await logAutomation({
-      planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped",
-      reason: result.blocked || "admission-refused", detail: result.error,
-    });
-    return { ok: false, error: result.error };
-  }
-
-  await prisma.plannedTicket.update({
-    where: { id: item.id },
-    data: {
-      implementState: "running",
-      runId: result.runId,
-      runEngine: engineOf(item.plan),
-      qaRounds: item.qaRounds + 1,
-    },
-  });
-  await logAutomation({
-    planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "started",
-    reason: "qa-fix", detail: `QA fix round ${item.qaRounds + 1} of ${MAX_QA_ROUNDS}, started after you confirmed.`,
-  });
-  return { ok: true, error: "" };
-}
-
 /**
  * Reconcile what the engine did with what the plan believes.
  *
  * Called at the top of each tick rather than written by the runner, and that is
  * a deliberate choice about ownership: the engine knows nothing about plans, and
  * teaching it would put a second consumer inside the run lifecycle. Reading the
- * Run rows back is a cheap query and keeps the dependency pointing one way.
+ * D-Agent runs back (`runOutcomes()`) is a cheap query and keeps the dependency pointing one way.
  */
 async function reconcileImplement(): Promise<void> {
   const inFlight = await prisma.plannedTicket.findMany({
     where: { implementState: "running", runId: { not: "" } },
   });
   if (!inFlight.length) return;
-  const runs = await prisma.run.findMany({
-    where: { id: { in: inFlight.map((i) => i.runId) } },
-    select: { id: true, state: true, prUrl: true, companionPrUrls: true, endReason: true, skill: true },
-  });
-  const steps = await prisma.step.findMany({
-    where: { runId: { in: inFlight.map((i) => i.runId) }, nodeId: { in: ["deliver", "implement"] } },
-    select: { runId: true, output: true },
-  });
-  // D-Agent runs answer the same questions from their own tables, shaped like a classic run.
-  const dagent = await runOutcomes(inFlight.filter((i) => i.runEngine === "dagent").map((i) => i.runId));
-  const byId = new Map([
-    ...runs.map((r) => [r.id, r] as const),
-    ...dagent.map((d) => [d.id, { ...d, skill: d.flow === "qa" ? QA_FIX_SKILL : IMPLEMENT_SKILL }] as const),
-  ]);
-  const outputByRun = new Map([
-    ...steps.map((st) => [st.runId, (st.output ?? {}) as Record<string, unknown>] as const),
-    ...dagent.map((d) => [d.id, d.output] as const),
-  ]);
+  const byId = new Map((await runOutcomes(inFlight.map((i) => i.runId))).map((r) => [r.id, r] as const));
 
   for (const item of inFlight) {
     const run = byId.get(item.runId);
     if (!run || run.state === "running" || run.state === "waiting") continue;
-    const out = outputByRun.get(item.runId) ?? {};
+    const out = run.output;
     if (run.state === "succeeded" && out.outcome === "no-fix-needed") {
-      await settleNoFixNeeded(item, out);
+      await settleNoFixNeeded(item);
       continue;
     }
     if (run.state === "succeeded" && out.noChange === true) {
@@ -883,7 +764,7 @@ async function reconcileImplement(): Promise<void> {
         implementState: implemented ? "implemented" : "failed",
         prUrl: run.prUrl,
         companionPrUrls: run.companionPrUrls.length ? run.companionPrUrls : item.companionPrUrls,
-        ...(implemented && run.skill.startsWith("fix-qa-") ? QA_FIX_RESET : {}),
+        ...(implemented && run.flow === "qa" ? QA_FIX_RESET : {}),
       },
     });
     await logAutomation({
@@ -914,35 +795,16 @@ const QA_FIX_RESET = {
   reviewError: "",
 };
 
-async function settleNoFixNeeded(
-  item: { id: string; planId: string; ticketId: string; qaRounds: number; qaCommentAt: string },
-  out: Record<string, unknown>
-): Promise<void> {
+// The QA follow-up case reads the same outcome and puts the drafted reply in front of the developer.
+async function settleNoFixNeeded(item: { id: string; planId: string; ticketId: string; qaRounds: number }): Promise<void> {
   await prisma.plannedTicket.update({
     where: { id: item.id },
     data: { implementState: "no-fix-needed", qaRounds: Math.max(0, item.qaRounds - 1) },
   });
-  const open = await openQaDraft(item.id);
-  if (!open) {
-    await prisma.qaReplyDraft.create({
-      data: {
-        planId: item.planId,
-        plannedTicketId: item.id,
-        ticketId: item.ticketId,
-        status: "ready",
-        answersUpTo: item.qaCommentAt,
-        body: String(out.qaReply ?? "").trim(),
-        summary: typeof out.summary === "string" ? out.summary : "",
-        endedAt: new Date(),
-      },
-    });
-  }
   await logAutomation({
     planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done",
     reason: "no-fix-needed",
-    detail: open
-      ? "QA's findings were reviewed and none is a defect — nothing was changed. A reply draft was already waiting, so it was kept."
-      : "QA's findings were reviewed and none is a defect — nothing was changed. A reply to QA is drafted for you to post.",
+    detail: "QA's findings were reviewed and none is a defect — nothing was changed. A reply to QA waits on the case.",
   });
 }
 
@@ -966,29 +828,14 @@ async function reconcileReviews(): Promise<void> {
     where: { reviewState: "running", reviewRunId: { not: "" } },
   });
   if (!inFlight.length) return;
-  const runs = await prisma.run.findMany({
-    where: { id: { in: inFlight.map((i) => i.reviewRunId) } },
-    select: { id: true, state: true, endReason: true },
-  });
-  const dagent = await runOutcomes(inFlight.filter((i) => i.reviewEngine === "dagent").map((i) => i.reviewRunId));
-  const byId = new Map([...runs.map((r) => [r.id, r] as const), ...dagent.map((d) => [d.id, d] as const)]);
-  // What the run reported, read from the node contract rather than from its
-  // prose. `deliver` is the one-shot review node; a v3 run reports the same two
-  // fields from `publish`, so both are accepted and whichever exists wins.
-  const steps = await prisma.step.findMany({
-    where: { runId: { in: inFlight.map((i) => i.reviewRunId) }, nodeId: { in: ["deliver", "publish"] } },
-    select: { runId: true, output: true },
-  });
-  const outputByRun = new Map([
-    ...steps.map((st) => [st.runId, st.output as Record<string, unknown>] as const),
-    ...dagent.map((d) => [d.id, d.output] as const),
-  ]);
+  const byId = new Map((await runOutcomes(inFlight.map((i) => i.reviewRunId))).map((r) => [r.id, r] as const));
 
   for (const item of inFlight) {
     const run = byId.get(item.reviewRunId);
     if (!run || run.state === "running" || run.state === "waiting") continue;
 
-    const out = outputByRun.get(item.reviewRunId) ?? {};
+    // What the run reported, read from the node contract rather than from its prose.
+    const out = run.output;
     const replied = Number(out.threadsReplied ?? 0) || 0;
     const resolved = Number(out.threadsResolved ?? 0) || 0;
     const answered = run.state === "succeeded" && replied > 0;
@@ -1038,6 +885,7 @@ async function reconcileReviews(): Promise<void> {
 export async function reconcile(): Promise<void> {
   await reconcileImplement();
   await reconcileReviews();
+  await reconcileQaCases();
 }
 
 async function safeTick() {
@@ -1086,9 +934,9 @@ export function startScheduler() {
   if (timer) return;
   timer = setInterval(() => void safeTick(), TICK_MS);
   // Do not run one immediately: a server that has just started is also a server
-  // whose `recoverInterruptedRuns()` sweep is still deciding what is alive.
+  // whose D-Agent orphan sweep is still deciding what is alive.
   timer.unref?.();
-  onDagentRunEnded(() => void settleNow());
+  onRunEnded(() => void settleNow());
   console.log(`[ticket-executor] scheduler started (every ${TICK_MS / 1000}s)`);
 }
 

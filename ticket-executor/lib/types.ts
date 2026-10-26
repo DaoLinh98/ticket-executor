@@ -68,34 +68,6 @@ export type MentionCandidate = {
   email: string;
 };
 
-// Where a run is. This is the whole answer — there is deliberately no separate
-// phase/planStatus pair to keep consistent with it; which *node* the run sits on
-// carries that, and the node comes from the graph.
-//   waiting — parked on the account's usage limit, or held for human review
-//             after a crash on an external node. No child process is alive.
-export type RunState = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-
-/** RunState plus the one thing the engine has no opinion about: a ticket that
- *  has never been run. "No run" is the absence of a Run row, not a sixth state,
- *  so it exists only in the UI's vocabulary. */
-export type UiRunState = RunState | "none";
-
-/** Why a run ended somewhere other than plain success. `cancelled` and
- *  `plan-rejected` are human decisions and must never be scored as agent
- *  failures by anything computing a success rate. */
-export type EndReason =
-  | ""
-  | "cancelled"
-  | "plan-rejected"
-  | "blocked"
-  | "hop-limit"
-  | "needs-review"
-  // Not an ending at all while the run is `waiting`: the account this machine is
-  // logged in as ran out of quota mid-node, and the run holds here until
-  // `resumeAt`. It only *ends* under this reason when the ceiling on those parks
-  // is reached, which is a run a person has to look at.
-  | "rate-limited";
-
 export type LogLine = {
   text: string;
   kind: string;
@@ -106,21 +78,12 @@ export type LogLine = {
   isError?: boolean;
 };
 
-// One file touched by a run, with its unified diff against the base commit the
-// worktree started from — powers the Result tab's file-change diff popup.
+// One file a commit touched, with its unified diff — powers the Commits tab's file-change popup.
 export type FileChange = {
   path: string;
   changeType: "added" | "modified" | "deleted" | "renamed";
   diff: string;
 };
-
-export type KnowledgeChange = { file: string; added: string[]; removed: string[]; lines: number };
-
-export const KNOWLEDGE_MAX_LINES = 200;
-
-// The run's view model is not declared here: it is derived from the graph a run
-// is walking, so it lives next to that code as `RunView` in
-// lib/execution/queries.ts and reaches the UI through the API.
 
 export type PullRequestOverview = {
   id: string;

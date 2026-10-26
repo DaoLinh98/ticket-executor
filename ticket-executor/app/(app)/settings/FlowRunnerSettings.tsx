@@ -57,7 +57,7 @@ export default function FlowRunnerSettings() {
   });
 
   const setPlan = (plan: PlanResponse["plan"]) =>
-    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], costs: {}, ...old, plan }));
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, costs: {}, ...old, plan }));
 
   const run = useMutation({
     mutationFn: async ({ fn }: { key: string; fn: () => Promise<void> }) => fn(),

@@ -6,26 +6,18 @@ Developer contract. `README.md` is the operator guide; `UI-STYLEGUIDE.md` binds 
 @AGENTS.md
 
 ## What this app is
-A local Next.js UI that spawns the **Claude Code CLI** against a ticket: Implement branches a real clone, runs
-`claude --dangerously-skip-permissions`, commits, pushes and opens a draft PR, streaming log/steps/cost. **Flow
-Runner** runs a sprint unattended: an agent triages it, the harness lays it on two schedules (implement queue +
-release calendar), a server-side scheduler acts on both with the browser closed. Runs cost money and touch real
-repos, so guards fail *before* a spawn, never after.
+A local Next.js UI that spawns the **Claude Code CLI** against a ticket: a D-Agent run works the ticket in a
+worktree of a real clone through subagents, commits, pushes and opens a draft PR, watched live on `/workflow`.
+**Flow Runner** runs a sprint unattended: an agent triages it, the harness lays it on two schedules (implement
+queue + release calendar), a server-side scheduler acts on both with the browser closed. Runs cost money and touch
+real repos, so guards fail *before* a spawn, never after.
 
-## Two engines — keep them apart
-Shared only: shell, preflight (`validateRootRepo()` / `validateAgentAccess()`), credentials, MCP config writer.
-
-| | **Ticket Execution** | **D-Agent workflow** |
-|---|---|---|
-| Page / engine | Ticket Execution, My Sprint, Flow Runner — `lib/execution/` via `lib/executionStore.ts` | `/workflow` — `lib/dagent/` |
-| Step runs | a **skill** (`implement-ticket-v4`, …) | a **subagent** from `~/.claude/agents/` |
-| Tables | `Run`, `Step`, … | `DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact` |
-
-**Asked about one flow, answer from that flow's code only** — no comparing, borrowing or "aligning" unless asked.
-**The one junction is Flow Runner's scheduler:** `SprintPlan.engine` (`classic` | `dagent`) picks the engine for
-`startNextTicket` / `startReviewRun` / `startQaFix` (`startOn()`, `scheduler.ts`). The ticket stamps `runEngine` /
-`reviewEngine` at start; reconcile/cancel read the matching table (D-Agent via `runOutcomes()`), so a run outlives
-a switch. A D-Agent row's Watch/Result opens `/workflow?ticket=<id>`.
+## One engine — D-Agent
+Every run is a D-Agent run (`lib/dagent/`, tables `DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact`).
+The Ticket Execution ("classic") engine — `Run`/`Step` tables, skill-driven graphs, `/api/executions` — is retired.
+Flow Runner's scheduler starts implement / review fix / QA fix as D-Agent flows (`startRun({ flow })`) and
+reconciles via `runOutcomes()`; a row's Watch/Result opens `/workflow?ticket=<id>`. The Ticket Execution page keeps
+its run buttons, not yet wired to D-Agent (`RUNS_MOVED` in `app/TicketExecutor.tsx`).
 
 ## Commands
 `npm run dev` (:3000, Turbopack) · `npm run build && npm start` · `npm run test` (`node --test` over
@@ -39,39 +31,18 @@ runner beyond `node --test`; ask before adding tooling.
   `<Reactor>`. Header = `PageHeading` + `NotificationCenter` + `ProviderBadge`; page controls on a `PageToolbar`
   between header and `<main>`, never inside `<main>` (clips dropdowns).
 - **Ticket Execution UI** — `app/TicketExecutor.tsx` is the only stateful container; `app/ticket-executor/` is
-  presentational. New state → container, new markup → child.
-- **Execution engine** — `lib/executionStore.ts` re-exports `lib/execution/` (`graph/*`, `runner`, `admission`,
-  `claudeCli`, `git`, `queries`, `triage`, `planStore`, `release`, `scheduler`). **Routes import `lib/executionStore` only.**
+  presentational. New state → container, new markup → child. Tabs: Overview, Resolve Review, Commits, Ask.
+- **Flow Runner** — `lib/executionStore.ts` re-exports `lib/execution/` (`claudeCli`, `triage`, `planStore`,
+  `release`, `scheduler`, `lifecycle`, `qaFollowUp`, `translate`). **Routes import `lib/executionStore` only.**
 - **D-Agent** — `app/(app)/workflow` → `app/ticket-executor/workflow/` (`WorkflowView.tsx` stateful), canvas in
   `lib/workflow/`, engine in `lib/dagent/`. **`app/api/dagent/runs/*` import `lib/dagent` (`index.ts`) only.**
-- **Pure rule modules** — `admission`, `identity`, `sprintPlan`, `notifications`, `execution/loopMetrics`: no
-  Prisma, no provider, tested in ~1s. A rule acted on unattended lives here, not in a route or component.
+- **Pure rule modules** — `identity`, `sprintPlan`, `notifications`, `ticketLifecycle`: no Prisma, no provider,
+  tested in ~1s. A rule acted on unattended lives here, not in a route or component.
 - **Providers** — `lib/tickets.ts` dispatches on `ProviderId`; clients `lib/ado.ts` / `lib/github.ts`. **Auth** —
   `APP_ACCESS_PASSWORD`, `lib/auth.ts` HMAC cookie, `proxy.ts` gate, `/login` + `/api/auth/*` public; empty = no gate.
-- **Boot** — `instrumentation.ts` installs bundled `skills/` + `agents/`, runs `recoverInterruptedRuns()`, **then**
-  starts the scheduler, plus the read-only push watcher (`lib/push.ts`, `lib/pushWatcher.ts`, `app/api/push/*`,
+- **Boot** — `instrumentation.ts` installs bundled `skills/` + `agents/`, then starts the scheduler, plus the
+  read-only push watcher (`lib/push.ts`, `lib/pushWatcher.ts`, `app/api/push/*`,
   `public/sw.js`, `app/manifest.ts` — iOS push needs a Home-Screen install, `display: "standalone"`).
-
-## Engine invariants — Ticket Execution (`lib/execution/`)
-1. **Every agent node declares a JSON Schema; edges route only on validated `structured_output`.** Never parse prose.
-2. **An `external` node is never on a cycle** — push/PR/tracker write is a leaf run once; a retry is a dup PR.
-3. **Admission belongs to `startRun()`, not a route.** `resolveSkill()` picks the skill server-side; the
-   may-it-start check commits in the `Run` insert's transaction under a Postgres advisory lock.
-4. **A documented guard is wired and observable** — no unreachable ceiling, no silent degradation.
-5. **Judging nodes run `context: "fresh"`; a shape change gets a new graph id** (`implement-v5`) and `graphById()`
-   still serves old shapes (`-v4`, no `reflect`) to runs begun on them. Skill names stay `*-v4`. Every skill a graph
-   invokes (plus `review-changes-v4`) passes `skillProblem()` in `startRun()`: missing/older-than-bundled = admission refusal.
-6. **Never re-derive harness-owned state.** Failure = edge `reason` + `Transition`; node identity from `kind`, not
-   id; output in `channels` / `Step.output`. A regex over a run's own log is always the bug.
-7. **One closed loop; nobody approves a plan.** All three flows walk `implement → check → evaluate → fix → publish`
-   (zero-token test gate, fresh reviewer, `fix` ≤ `MAX_FIX_ATTEMPTS`). `.te/plan.md` is a record, not a gate. The
-   outer loop is `KNOWLEDGE.md` by absolute path in the **Root repo** (`knowledgeFile()`), never the worktree or a commit.
-8. **An exhausted loop leaves a lesson, then fails** — `reflect` (`effects: "local"`, `context: "resume"`,
-   `REFLECT_OUTPUT`), only edge FAIL; no code/commit/push; turn error, quota park or cancel never reach it.
-9. **`KNOWLEDGE.md` is audited** — `LiveRun.knowledgeAtStart` at spawn; `finish()` saves the diff
-   (`knowledgeChange()`) as Artifact `knowledge`, warns past `KNOWLEDGE_MAX_LINES` (200); entries ≤ 2 lines.
-
-**Run `npm run test` after touching a graph, edge, node contract, `resolveSkill()` or a pure rule module.**
 
 ## D-Agent workflow engine (`/workflow`, `lib/dagent/`)
 `dagent-implement-v3` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
@@ -102,7 +73,8 @@ Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
 **`dagent-fix-review-v1`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
 (`review-triager`) → `implement` → `diffGuard` ⇄ `evaluate` ⇄ `fix` → `prePublish` → `respond` (`responder`: push,
 one reply per thread, **never resolve**). No `syncBase` — a published PR branch is never rebased.
-**`dagent-fix-qa-v2`** — `setup` → `qaTriage` (`qa-triager`; `no-fix-needed` → END with `qaReply`) → `implement` …
+**`dagent-fix-qa-v3`** — `setup` → `qaTriage` (`qa-triager`; seeded `followUp` without a `decision` → END: analysis only;
+`no-fix-needed` → END with `qaReply`) → `implement` …
 `verifyPublish`. `/workflow` has no picker or start form: it shows the run in flight (else latest) for `?ticket=`.
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`), only to the node's `next` (or a
@@ -111,8 +83,8 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
 3. **Every turn is `context: "fresh"`**: `Agent` tool and `Skill(<name>)` for each `DENIED_SKILLS` (`cli.ts`)
    disallowed, plugins off, per-turn MCP config (`lib/mcp.ts`), related repos via `--add-dir`.
 4. **Admission is `startRun()`**: preflight + `checkAgents()` (installed, named right, allows `StructuredOutput`,
-   has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run or
-   main-flow `Run` for the ticket, and a free slot (`concurrentRuns`).
+   has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run for
+   the ticket, and a free slot (`concurrentRuns`).
 5. **Park, don't fail, for humans**: `NEEDS_INPUT` → `recheck-readiness`; `NEEDS_REVIEW` (read-back mismatch, or
    implement changed nothing) → `accept`; `runOutcomes().output.noChange` settles the plan row `no-fix-needed`. Failed or
    cancelled → new run from `plan` / `implement` / `syncBase`, seeded with old base, branches, plan.
@@ -135,24 +107,33 @@ After touching `lib/dagent/` or `lib/workflow/`:
   via `lib/mcp.ts`: one file per run in `tmpdir()/te-mcp`, deleted after the turn, outside the repo.
 
 ## Sprint plan and automation
-Binds `lib/execution/{triage,planStore,release,scheduler}.ts` and `lib/sprintPlan.ts`.
+Binds `lib/execution/{triage,planStore,release,scheduler,lifecycle,qaFollowUp}.ts`, `lib/sprintPlan.ts` and
+`lib/qaFollowUp.ts`. Skills bundled in `skills/` are Flow Runner's own turns only (`triage-sprint-v4`); retired skills
+stay in `RETIRED_SKILLS` so D-Agent turns keep them denied.
 
 1. **Implementing and releasing are two schedules.** `implementOrder` is a queue; `releaseDay` a calendar paced by
    `pointsPerDay` (**points**). A finished run moves no work item — nothing in `app/` writes a status on completion.
-2. **Every PR is a draft, published by the harness.** `DRAFT_RULE` rides in `publishPrompt()`; `isDraft` is a
-   required contract field, never scraped.
+2. **Every PR is a draft, published by the harness.** The D-Agent `publisher` opens it as a draft and
+   `verifyPublish` checks it; release is the only step that publishes it.
 3. **Release is not a node** (no worktree/slot). Three writes = three columns (`prPublished` / `reviewersSet` /
    `statusMoved`), each re-reading state; `releasedAt` only when complete. The one retryable outward action.
-4. **The scheduler owns no policy.** `tick()` only calls `startRun()` / `releasePlannedTicket()`, locks per tick,
+4. **The scheduler owns no policy.** `tick()` only calls D-Agent `startRun()` / `releasePlannedTicket()`, locks per tick,
    logs an `AutomationEvent` for **every** decision incl. "do nothing". A `draft` plan is never scheduled.
 5. **Allocation is arithmetic** — `buildPlan()` is pure. Agent judgement enters only via `triage-sprint-v4`'s JSON
    (`suggestedPoints`, `workOrder`, `needsClarification`); triage writes nothing and is not a Run.
 6. **`deliverablesOnly()`** drops hierarchy types (ADO only) and runs **before** `mineOnly()` in every `/api/my-sprint*`.
 7. **A sprint is what the developer carried.** `lib/sprintClaim.ts` → `mine` / `handed-off` / `dropped` from the
-   app's record (plan, `Run`, PR), never tracker history. `savePlan()` deletes nothing, never re-dates a settled
+   app's record (plan, `DagentRun`, PR), never tracker history. `savePlan()` deletes nothing, never re-dates a settled
    row; `handed-off` = delivered at no capacity, `dropped` counts nowhere; `buildPlan()` / `startNextTicket()` skip
    non-`mine`, `dueForRelease()` doesn't. `refreshClaims()` runs first each tick, cancels a handed-over ticket's run,
    writes only `claim`/`assigneeNow`, refuses on empty read, foreign `org` or changed identity.
+8. **QC feedback ends in a decision, never a stall.** `watchLifecycle()` turns a QC comment, QA failed or back to In
+   Progress on **any** tracked row (every claim) into a signal on the ticket's one open `QaCase` (`onSignal()`).
+   A due case (`dueForAnalysis()`: auto on, 10-min debounce) starts a D-Agent `qa` run seeded with `followUp` that
+   ends after `qaTriage`; `reconcileQaCases()` stores `normalizeFindings()` + `recommend()` — the harness's verdict,
+   an unproven `not-defect` becomes `needs-info`. The developer approves a fix (`approveFix()` → `qa` run seeded with
+   the binding `decision`), posts the reply, or dismisses; only `postCaseReply()` writes to the work item. Comments
+   after a case's window open the next case (`followUpAfter()`); the bell re-raises a waiting case every `SLA_MS`.
 
 ## The notification bell
 `lib/notifications.ts` merges; `lib/notificationSources.ts` holds the server-side sources. **No notification carries
@@ -198,8 +179,7 @@ then `npx tsc --noEmit` and look at the screen.
 ## Conventions that bite
 - **Root repo is per ticket** (`RootRepoProjectMap`), re-validated server-side before any spawn. **Preflight checks go
   in `lib/preflight.ts`**: `runPreflight()` (System Check), `validateRootRepo()` + `validateAgentAccess()`.
-- **Host and container must not run at once** — `recoverInterruptedRuns()` adopts any `running` row it doesn't hold.
-- **`lib/terminal.ts` / `lib/ask.ts` spawn `claude` but are deliberately not runs** — no graph, worktree, `Run` row or
-  admission; one Ask session per Root repo; needing a schema or gate makes it an engine run.
-- **No spend ceiling by design** (Cancel stops a run). Dashboard loop metrics (LOOP PASS, REVIEW ESCAPES via
-  `reviewEscapes()`, TEST GATE, FAILURE LESSONS) come from `Step.output`, never the log.
+- **Host and container must not run at once** — `reconcileOrphans()` fails any `running` D-Agent row it doesn't hold.
+- **`lib/terminal.ts` / `lib/ask.ts` spawn `claude` but are deliberately not runs** — no graph, worktree, `DagentRun`
+  row or admission; one Ask session per Root repo; needing a schema or gate makes it an engine run.
+- **No spend ceiling by design** (Cancel stops a run).

@@ -41,7 +41,7 @@ import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import NeedsYou, { type AttentionItem } from "./NeedsYou";
 import PlanFilters from "./PlanFilters";
 import PlanTable from "./PlanTable";
-import QcReplies from "./QcReplies";
+import QaFollowUps, { defaultPicks } from "./QaFollowUps";
 import RebuildPreviewDialog from "./RebuildPreviewDialog";
 import SchedulerLog from "./SchedulerLog";
 import CapacityStrip from "./CapacityStrip";
@@ -57,7 +57,7 @@ import {
   type PlanSort,
   type PlanResponse,
   type PlannedRow,
-  type QaDraft,
+  type QaCase,
   type RebuildPreview,
   type StoredPlan,
   PLAN_KEY,
@@ -83,7 +83,7 @@ const SEARCH_STALE_MS = 30000;
 const TONE_RANK = { danger: 0, warning: 1, accent: 2 } as const;
 
 const planRunning = (p?: PlanResponse) =>
-  (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
+  (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.cases ?? []).some((c) => c.status === "running" || c.status === "fixing");
 
 export default function MySprintPage() {
   const router = useRouter();
@@ -95,6 +95,8 @@ export default function MySprintPage() {
   // const [reportOpen, setReportOpen] = useState(false);
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
+  const [casePicks, setCasePicks] = useState<Record<string, number[]>>({});
+  const [caseNotes, setCaseNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [legendOpen, setLegendOpen] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -130,7 +132,8 @@ export default function MySprintPage() {
   const data = sprintQuery.data ?? null;
   const stored = planQuery.data?.plan ?? null;
   const events = planQuery.data?.events ?? [];
-  const drafts = planQuery.data?.drafts ?? [];
+  const cases = planQuery.data?.cases ?? [];
+  const closedCases = planQuery.data?.closed ?? {};
   const costs = planQuery.data?.costs ?? {};
   const initialLoading = sprintQuery.isPending || planQuery.isPending;
   const refreshing = !initialLoading && (sprintQuery.isFetching || planQuery.isFetching);
@@ -140,7 +143,7 @@ export default function MySprintPage() {
   const load = () => { void reloadSprint(); };
   const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY, exact: true });
   const setStored = (plan: StoredPlan | null) =>
-    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], drafts: [], costs: {}, ...old, plan }));
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, costs: {}, ...old, plan }));
 
   // A triage turn outlives the request that started it, so the row is polled
   // rather than awaited.
@@ -377,35 +380,39 @@ export default function MySprintPage() {
       else setMessage("Back in the queue — the scheduler starts it on its next pass.");
     });
 
-  const draftReplyNow = (plannedId: string) =>
-    act("draft-" + plannedId, async () => {
-      await post("/api/my-sprint/plan", { draftQaReply: plannedId }, "PUT");
-      showToast("Drafting a reply to QC — nothing is posted until you confirm.");
-      await reloadPlan();
-    });
-
-  const postReplyNow = (draft: QaDraft) =>
-    act("post-" + draft.id, async () => {
-      await post("/api/my-sprint/plan", { postQaReply: draft.id, body: draftEdits[draft.id] ?? draft.body }, "PUT");
-      showToast(`Reply posted on #${draft.ticketId}.`);
-      await reloadPlan();
-    });
-
-  const dismissReplyNow = (draft: QaDraft) =>
-    act("dismiss-" + draft.id, async () => {
-      await post("/api/my-sprint/plan", { dismissQaReply: draft.id }, "PUT");
-      await reloadPlan();
-    });
-
-  const startQaFixNow = (plannedId: string, ticketId: string) =>
-    act("qafix-" + plannedId, async () => {
+  const analyzeQaNow = (plannedId: string, ticketId: string) =>
+    act("analyze-" + plannedId, async () => {
       try {
-        const d = await post("/api/my-sprint/plan", { startQaFix: plannedId }, "PUT");
-        if (d.plan) setStored(d.plan);
-        showToast("QA fix started — it reviews QC's findings, then fixes the real defects or drafts a reply.");
+        await post("/api/my-sprint/plan", { analyzeQa: plannedId }, "PUT");
+        showToast("Analysing QC's feedback against the code — nothing is posted or changed until you decide.");
       } catch (e) {
         sendToRootRepo(e, ticketId);
       }
+      await reloadPlan();
+    });
+
+  const approveFixNow = (c: QaCase) =>
+    act("qafix-" + c.id, async () => {
+      try {
+        await post("/api/my-sprint/plan", { approveQaFix: { id: c.id, fix: casePicks[c.id] ?? defaultPicks(c), note: caseNotes[c.id] ?? "" } }, "PUT");
+        showToast("QA fix started on the findings you picked — the reply waits until it has a pull request.");
+      } catch (e) {
+        sendToRootRepo(e, c.ticketId);
+      }
+      await reloadPlan();
+    });
+
+  const postReplyNow = (c: QaCase) =>
+    act("post-" + c.id, async () => {
+      await post("/api/my-sprint/plan", { postQaReply: c.id, body: draftEdits[c.id] ?? c.body }, "PUT");
+      showToast(`Reply posted on #${c.ticketId}.`);
+      await reloadPlan();
+    });
+
+  const dismissCaseNow = (c: QaCase) =>
+    act("dismiss-" + c.id, async () => {
+      await post("/api/my-sprint/plan", { dismissQaCase: c.id }, "PUT");
+      await reloadPlan();
     });
 
   const moveToQaNow = (plannedId: string) =>
@@ -441,18 +448,9 @@ export default function MySprintPage() {
       await load();
     });
 
-  // A ticket whose runs went to the D-Agent engine is watched on /workflow, which follows its live run.
-  const openExecution = (ticketId: string, tab: "execution" | "result") => {
-    const row = stored?.items.find((i) => i.ticketId === ticketId);
-    const dagent = row?.runEngine === "dagent" || row?.reviewEngine === "dagent";
-    window.open(
-      dagent
-        ? `/workflow?ticket=${encodeURIComponent(ticketId)}`
-        : `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` + `&at=${Date.now()}`,
-      "_blank",
-      "noopener"
-    );
-  };
+  // A ticket's runs are watched on /workflow, which follows its live run.
+  const openExecution = (ticketId: string) =>
+    window.open(`/workflow?ticket=${encodeURIComponent(ticketId)}`, "_blank", "noopener");
 
   const askRelease = (row: PlannedRow) =>
     setConfirm({
@@ -471,13 +469,13 @@ export default function MySprintPage() {
       run: () => releaseNow(row.id),
     });
 
-  const askPostReply = (draft: QaDraft) =>
+  const askPostReply = (c: QaCase) =>
     setConfirm({
-      title: `Post the reply on #${draft.ticketId}?`,
+      title: `Post the reply on #${c.ticketId}?`,
       confirmLabel: "Post reply",
-      busyKey: "post-" + draft.id,
+      busyKey: "post-" + c.id,
       body: <span>The reply is posted as a comment on the work item under your name.</span>,
-      run: () => postReplyNow(draft),
+      run: () => postReplyNow(c),
     });
 
   const askRemove = (plannedId: string, ticketId: string) =>
@@ -516,9 +514,9 @@ export default function MySprintPage() {
       : (data?.plan?.tickets ?? []).map((t) => ({
           id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
-          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", runEngine: "classic", prUrl: "",
+          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
           prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
-          reviewState: "idle", reviewRunId: "", reviewEngine: "classic", openComments: 0, threadsReplied: 0, threadsResolved: 0,
+          reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
           reviewRounds: 0, reviewError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
           model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
@@ -540,8 +538,7 @@ export default function MySprintPage() {
     if (!t.id || t.claim !== "mine") continue;
     const base = { ticketId: t.ticketId, title: t.title };
     const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
-    const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
-    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId, "result")} />;
+    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId)} />;
     if (t.reviewState === "needs-human") {
       attention.push({ ...base, key: "nh-" + t.id, tone: "warning", text: `${t.reviewRounds} rounds of automatic review fixes did not close it — the rest needs a decision.`, action: result });
     }
@@ -574,15 +571,8 @@ export default function MySprintPage() {
         action: <IconAction action="moveToQa" onClick={() => moveToQaNow(t.id)} busy={busy.has("qa-" + t.id)} />,
       });
     }
-    if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.implementState !== "running" && t.reviewState !== "running") {
-      if (t.qaRounds >= MAX_QA_ROUNDS) {
-        attention.push({ ...base, key: "qx-" + t.id, tone: "danger", text: `${t.qaRounds} QA fixes did not close this ticket — it needs you.`, action: result });
-      } else if (!replyWaiting) {
-        attention.push({
-          ...base, key: "qf-" + t.id, tone: "warning", text: "Came back from QA — start the QA fix.",
-          action: <IconAction action="qaFix" onClick={() => startQaFixNow(t.id, t.ticketId)} busy={busy.has("qafix-" + t.id)} />,
-        });
-      }
+    if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds >= MAX_QA_ROUNDS) {
+      attention.push({ ...base, key: "qx-" + t.id, tone: "danger", text: `${t.qaRounds} QA fixes did not close this ticket — it needs you.`, action: result });
     }
     if (due && !stored?.autoRelease && data?.today && t.releaseDay && t.releaseDay <= data.today && !t.releaseError) {
       attention.push({
@@ -591,13 +581,27 @@ export default function MySprintPage() {
       });
     }
   }
-  for (const d of drafts) {
-    if (d.status !== "ready") continue;
-    const row = rows.find((r) => r.id === d.plannedTicketId);
+  // Every QA follow-up case waiting on the developer — whoever holds the ticket now.
+  const toCases = <IconAction action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />;
+  for (const c of cases) {
+    if (c.status !== "ready" && c.status !== "failed" && c.status !== "fixed" && !(c.status === "pending" && !stored?.autoDraftQaReply)) continue;
+    const row = rows.find((r) => r.id === c.plannedTicketId);
     attention.push({
-      key: "dr-" + d.id, ticketId: d.ticketId, title: row?.title ?? "", tone: "warning",
-      text: d.needsHuman ? "A reply to QC is drafted and needs your decision." : "A reply to QC is drafted — post or dismiss it.",
-      action: <IconAction action="readDraft" onClick={() => document.getElementById("qc-replies")?.scrollIntoView({ behavior: "smooth" })} />,
+      key: "qa-" + c.id, ticketId: c.ticketId, title: row?.title ?? "",
+      tone: c.status === "failed" || c.recommendation === "fix" ? "danger" : c.status === "fixed" ? "accent" : "warning",
+      text:
+        c.status === "pending"
+          ? "QC gave feedback — analyse it (auto-analysis is off)."
+          : c.status === "failed"
+            ? "The analysis of QC's feedback failed."
+            : c.status === "fixed"
+              ? "The QA fix has a pull request — post the reply to QC."
+              : c.recommendation === "fix"
+                ? "QC found a real defect — approve the fix."
+                : c.recommendation === "decide"
+                  ? "QC's feedback needs your call."
+                  : "A reply to QC is ready — review and post it.",
+      action: toCases,
     });
   }
   attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
@@ -637,7 +641,7 @@ export default function MySprintPage() {
           <span>The scheduler starts acting on this plan on its next pass, with this page closed.</span>
           <span>
             Auto-implement {flag(stored.autoImplement)} · Auto-release {flag(stored.autoRelease)} · Auto-resolve review{" "}
-            {flag(stored.autoResolveReview)} · Auto-draft QC reply {flag(stored.autoDraftQaReply)}
+            {flag(stored.autoResolveReview)} · Auto-analyse QC feedback {flag(stored.autoDraftQaReply)}
           </span>
           <span>
             {stored.autoImplement
@@ -819,7 +823,7 @@ export default function MySprintPage() {
                       {runningRows.length > 0 && reviewingRows.length > 0 && (
                         <span style={pill({ color: COLORS.textDim, size: "xs", weight: 700 })}>{lane}</span>
                       )}
-                      <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId, "execution")} />
+                      <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId)} />
                     </span>
                   ))}
                 </div>
@@ -913,16 +917,23 @@ export default function MySprintPage() {
                 </div>
               )}
 
-              <QcReplies
-                drafts={drafts}
+              <QaFollowUps
+                cases={cases}
                 edits={draftEdits}
+                picks={casePicks}
+                notes={caseNotes}
                 busy={busy}
                 onEdit={(id, body) => setDraftEdits((m) => ({ ...m, [id]: body }))}
+                onPick={(id, picked) => setCasePicks((m) => ({ ...m, [id]: picked }))}
+                onNote={(id, note) => setCaseNotes((m) => ({ ...m, [id]: note }))}
+                onAnalyze={(c) => analyzeQaNow(c.plannedTicketId, c.ticketId)}
+                onApprove={approveFixNow}
                 onPost={askPostReply}
-                onDismiss={dismissReplyNow}
+                onDismiss={dismissCaseNow}
+                onWatch={openExecution}
               />
 
-              <SchedulerLog events={events} onOpen={(id) => openExecution(id, "result")} />
+              <SchedulerLog events={events} onOpen={openExecution} />
               </div>
 
               <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -932,7 +943,6 @@ export default function MySprintPage() {
                   onBuild={buildPlan}
                   onSetStatus={(status) => (status === "active" ? askActivate() : patchPlan({ status }, "activate"))}
                   onToggle={(field, on) => patchPlan({ [field]: on }, field)}
-                  onEngine={(engine) => patchPlan({ engine }, "engine")}
                   onTick={tickNow}
                 />
                 <span style={sectionCaption()}>
@@ -962,7 +972,8 @@ export default function MySprintPage() {
                 <PlanTable
                   rows={shownRows}
                   data={data}
-                  drafts={drafts}
+                  cases={cases}
+                  closed={closedCases}
                   triaged={triaged}
                   busy={busy}
                   releaseDayOptions={releaseDayOptions}
@@ -976,8 +987,7 @@ export default function MySprintPage() {
                     resolveReview: resolveReviewNow,
                     retry: retryNow,
                     release: askRelease,
-                    draftReply: draftReplyNow,
-                    startQaFix: startQaFixNow,
+                    analyzeQa: analyzeQaNow,
                     moveToQa: moveToQaNow,
                     remove: askRemove,
                     move: moveNow,

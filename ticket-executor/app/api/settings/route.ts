@@ -28,10 +28,8 @@ function publicSettings(s: SettingRow, cred: ConnectionView | null) {
     animatedBackground: s.animatedBackground,
     clickEffects: s.clickEffects,
     ringAnimation: s.ringAnimation,
-    multiTicketMode: s.multiTicketMode,
     manageMcp: s.manageMcp,
     concurrentRuns: s.concurrentRuns,
-    hourlyRateUsd: s.hourlyRateUsd,
     hoursPerStoryPoint: s.hoursPerStoryPoint,
     sprintAnchorProject: s.sprintAnchorProject,
     gitUserName: s.gitUserName,
@@ -69,8 +67,6 @@ export async function POST(req: Request) {
     data.clickEffects = body.clickEffects;
   if (typeof body.ringAnimation === "boolean")
     data.ringAnimation = body.ringAnimation;
-  if (typeof body.multiTicketMode === "boolean")
-    data.multiTicketMode = body.multiTicketMode;
   if (typeof body.manageMcp === "boolean") data.manageMcp = body.manageMcp;
   if (
     typeof body.concurrentRuns === "number" &&
@@ -81,10 +77,7 @@ export async function POST(req: Request) {
       Math.min(20, Math.round(body.concurrentRuns)),
     );
   }
-  // Dashboard ROI inputs. 0 is a valid rate (it hides the ROI tile), so these
-  // are clamped rather than treated as unset.
-  if (typeof body.hourlyRateUsd === "number" && Number.isFinite(body.hourlyRateUsd))
-    data.hourlyRateUsd = Math.max(0, body.hourlyRateUsd);
+  // Clamped rather than treated as unset: 0 is a valid value.
   if (typeof body.hoursPerStoryPoint === "number" && Number.isFinite(body.hoursPerStoryPoint))
     data.hoursPerStoryPoint = Math.max(0, body.hoursPerStoryPoint);
 

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { buildNotifications, notificationKey, type AppNotification } from "@/lib/notifications";
+import { buildNotifications, notificationKey, notificationPath, type AppNotification } from "@/lib/notifications";
 import { collectNotificationSources } from "@/lib/notificationSources";
 import { pushEnabled, pushToAll } from "@/lib/push";
 
@@ -53,7 +53,7 @@ function deliveryKey(n: AppNotification): string {
  *  else's work item. */
 function destination(n: AppNotification): string {
   if (!n.ticketId) return n.href ?? "/";
-  return `/ticket-execution?ticket=${encodeURIComponent(n.ticketId)}&tab=${n.tab}`;
+  return notificationPath(n.ticketId, n.tab);
 }
 
 function title(n: AppNotification): string {

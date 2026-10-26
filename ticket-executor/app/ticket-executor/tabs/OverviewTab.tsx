@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, modelIdForLabel, modelLabel, type ClaudeModel } from "@/lib/claudeOptions";
 import { REACTION_KINDS, type MentionCandidate, type ReactionKind, type Ticket, type TicketComment } from "@/lib/types";
-import { COLORS, FONT, RUN_COLOR, RUN_LABEL, avatar, card, ctaButtonStyle, dropdownPanelStyle, initials, runDot, sectionCaption, tintedCard, chipShape } from "@/lib/ui";
+import { COLORS, FONT, avatar, card, ctaButtonStyle, dropdownPanelStyle, initials, sectionCaption, tintedCard, chipShape } from "@/lib/ui";
 import { hasContent } from "@/lib/richText";
 import RichText from "../RichText";
-import type { Action, OverrideField, RunSummary } from "../types";
+import type { Action, OverrideField } from "../types";
 import LoadingRing from "../LoadingRing";
 import { useBoltsContext } from "../../BoltsContext";
 import { menuItemStyle } from "../TicketDetailHeader";
@@ -34,15 +34,12 @@ type Props = {
   onPostComment: () => void;
   onSearchMentions: (query: string) => Promise<MentionCandidate[]>;
   onAddMention: (person: MentionCandidate) => void;
-  history: RunSummary[];
-  onOpenRun: (ticketId: string, execId: string, e?: MouseEvent) => void;
   // resolved per-ticket config (override ?? default) + its editors
   rootRepo: string;
   rootRepoSaved: boolean;
   savingRootRepo: boolean;
   onSaveRootRepo: () => void;
   project: string;
-  skill: string;
   model: string;
   modelOptions: readonly ClaudeModel[];
   effort: string;
@@ -50,10 +47,8 @@ type Props = {
   onProjectChange: (ticketId: string, value: string) => void;
   rootRepoOptions: string[];
   projectOptions: string[];
-  skillOptions: string[];
   branch: string;
   cdCommand: string;
-  command: string;
   onOpenTerminal: () => void;
   // CTA banner
   ctaTitle: string;
@@ -61,8 +56,6 @@ type Props = {
   action: Action;
   gated: boolean;
   bannerCtaStyle: CSSProperties;
-  secondaryAction: { label: string; onClick: (e?: MouseEvent) => void; style: CSSProperties } | null;
-  secondaryCtaButtonStyle: CSSProperties;
   addingToPlan: boolean;
   onAddToReleasePlan: () => void;
 };
@@ -77,14 +70,13 @@ const sectionHeading: CSSProperties = {
 };
 
 // Ticket detail: description, acceptance criteria, discussion, the per-run
-// configuration grid, the command preview, past runs and the CTA banner.
+// configuration grid, the command preview and the CTA banner.
 export default function OverviewTab({
   ticket: t, comments, translations, translating, onTranslateComment,
   reacting, posting, onToggleReaction, draft, onDraftChange, onPostComment, onSearchMentions, onAddMention,
-  history, onOpenRun,
-  rootRepo, rootRepoSaved, savingRootRepo, onSaveRootRepo, project, skill, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
-  rootRepoOptions, projectOptions, skillOptions, branch, cdCommand, command, onOpenTerminal,
-  ctaTitle, ctaSub, action, gated, bannerCtaStyle, secondaryAction, secondaryCtaButtonStyle, addingToPlan, onAddToReleasePlan,
+  rootRepo, rootRepoSaved, savingRootRepo, onSaveRootRepo, project, model, modelOptions = CLAUDE_MODELS, effort, setOverrideValue, onProjectChange,
+  rootRepoOptions, projectOptions, branch, cdCommand, onOpenTerminal,
+  ctaTitle, ctaSub, action, gated, bannerCtaStyle, addingToPlan, onAddToReleasePlan,
 }: Props) {
   const fieldLabel: CSSProperties = { fontSize: FONT.xs, letterSpacing: ".12em", color: COLORS.textDim, fontWeight: 600, marginBottom: "5px" };
   const fieldCard = card({ padding: "9px 11px" });
@@ -359,7 +351,6 @@ export default function OverviewTab({
           <Combobox value={rootRepo} onChange={(v) => setOverrideValue(t.id, "rootRepo", v)} options={rootRepoOptions} placeholder="C:\repos\my-service" ariaLabel="Root repo" />
         </div>
         <div style={fieldCard}><div style={fieldLabel}>PROJECT</div><Combobox value={project} onChange={(v) => onProjectChange(t.id, v)} options={projectOptions} ariaLabel="Project" /></div>
-        <div style={fieldCard}><div style={fieldLabel}>SKILL</div><Combobox value={skill} onChange={(v) => setOverrideValue(t.id, "skill", v)} options={skillOptions} ariaLabel="Skill" /></div>
         <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model, modelOptions)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v, modelOptions))} options={modelOptions.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
         <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "var(--te-indigo)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
@@ -391,24 +382,8 @@ export default function OverviewTab({
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, ...card({ padding: "15px 18px", radius: "12px", border: "var(--te-border)", background: COLORS.panelBgDark }) }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--te-faint)" }}>$</span><span style={{ color: "var(--te-text-dim)" }}>{cdCommand}</span></div>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}><span style={{ color: "var(--accent)" }}>$</span><span style={{ color: "var(--te-text-soft)" }}>{command}</span></div>
         </div>
       </section>
-      {history.length > 0 && (
-        <section>
-          <h3 style={sectionHeading}>PAST RUNS</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {history.map((run) => (
-              <button key={run.id} onClick={(e) => onOpenRun(t.id, run.id, e)} style={{ display: "flex", alignItems: "center", gap: "11px", cursor: "pointer", textAlign: "left", transition: "border-color .18s, background .18s", ...card({ padding: "10px 13px", border: COLORS.borderSubtle }) }}>
-                <span style={{ ...runDot(run.state), width: "8px", height: "8px" }} />
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, color: "var(--te-text-soft)", flex: "0 0 auto" }}>{run.skill}</span>
-                <span style={{ fontSize: FONT.sm, color: "var(--te-faint)", flex: 1 }}>{new Date(run.startedAt).toLocaleString()}</span>
-                <span style={{ fontSize: FONT.sm, fontWeight: 600, color: RUN_COLOR[run.state] }}>{RUN_LABEL[run.state]}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
       <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard("accent", { padding: "20px 22px", radius: "14px" }) }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)", marginBottom: "3px" }}>{ctaTitle}</div>
@@ -459,12 +434,6 @@ export default function OverviewTab({
             </div>
           )}
         </div>
-        {secondaryAction && (
-          <button onClick={secondaryAction.onClick} style={secondaryCtaButtonStyle}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>
-            <span style={{ position: "relative", zIndex: 1 }}>{secondaryAction.label}</span>
-          </button>
-        )}
       </div>
     </div>
   );
