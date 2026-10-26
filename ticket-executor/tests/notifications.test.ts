@@ -16,15 +16,14 @@ import {
   fromPullRequests,
   fromReviews,
   fromTicketActivity,
-  fromRunEvents,
   fromReportReminder,
-  fromWaitingRuns,
   historyWorthy,
   isUnread,
   markAllRead,
   markRead,
   mergeWithHistory,
   notificationKey,
+  notificationPath,
   sortNotifications,
   unreadCount,
   type AppNotification,
@@ -55,10 +54,10 @@ const automation = (over: Partial<Parameters<typeof fromAutomation>[0][number]> 
 
 test("the read key separates kinds and occurrences on one ticket", () => {
   const [rv] = fromReviews([review()]);
-  const [run] = fromWaitingRuns([{ ticketId: "101", runId: "r1" }]);
+  const [run] = fromAutomation([automation({ outcome: "failed", reason: "run-failed" })]);
   assert.notEqual(notificationKey(rv), notificationKey(run));
 
-  // Reading the review comment must not mark the held run read — this is the
+  // Reading the review comment must not mark the failed run read — this is the
   // exact collision the ticket-only key used to have.
   const read = markRead({}, rv, "2026-09-06T11:00:00Z");
   assert.equal(isUnread(rv, read), false);
@@ -89,8 +88,7 @@ test("a new comment that nets out the same count is unread again", () => {
 test("markAllRead clears every notification it is given", () => {
   const list = buildNotifications({
     reviews: [review()],
-    waitingRuns: [{ ticketId: "202", runId: "r9" }],
-    automation: [automation()],
+    automation: [automation(), automation({ id: "ev2", ticketId: "202", outcome: "failed" })],
   });
   const read = markAllRead({}, list, "2026-09-06T11:00:00Z");
   assert.equal(unreadCount(list, read), 0);
@@ -101,11 +99,11 @@ test("markAllRead clears every notification it is given", () => {
 test("the badge counts unread actions only", () => {
   const list = buildNotifications({
     reviews: [review()],
-    runEvents: [
-      { ticketId: "1", runId: "r1", state: "succeeded", at: "2026-09-06T08:00:00Z" },
-      { ticketId: "2", runId: "r2", state: "failed", at: "2026-09-06T08:30:00Z" },
+    automation: [
+      automation({ id: "ev1", ticketId: "1" }),
+      automation({ id: "ev2", ticketId: "2", outcome: "failed", reason: "run-failed" }),
+      automation({ action: "release", outcome: "done", id: "ev3" }),
     ],
-    automation: [automation({ action: "release", outcome: "done", id: "ev3" })],
   });
   // Four notifications, two of them informational.
   assert.equal(list.length, 4);
@@ -122,22 +120,22 @@ test("reading an action drops the badge but not the list", () => {
 
 // ---- sources ----
 
-test("a held run is a standing condition with no timestamp", () => {
-  const [n] = fromWaitingRuns([{ ticketId: "101", runId: "r1" }]);
-  assert.equal(n.severity, "action");
-  assert.equal(n.tab, "execution");
-  assert.equal(n.at, "");
+test("scheduler runs open on /workflow, a release on its pull request", () => {
+  const [started] = fromAutomation([automation({ id: "a" })]);
+  const [failed] = fromAutomation([automation({ id: "b", outcome: "failed", reason: "run-failed" })]);
+  const [released] = fromAutomation([automation({ id: "c", action: "release", outcome: "done" })]);
+  assert.equal(started.tab, "workflow");
+  assert.equal(failed.tab, "workflow");
+  assert.equal(released.tab, "resolve-review");
 });
 
-test("run outcomes split by severity and destination", () => {
-  const [ok, bad] = fromRunEvents([
-    { ticketId: "1", runId: "r1", state: "succeeded", at: "2026-09-06T08:00:00Z" },
-    { ticketId: "2", runId: "r2", state: "failed", at: "2026-09-06T09:00:00Z" },
-  ]);
-  assert.equal(ok.severity, "info");
-  assert.equal(ok.tab, "result");
-  assert.equal(bad.severity, "action");
-  assert.equal(bad.tab, "execution");
+test("a notification path opens /workflow for runs, Ticket Execution for the rest", () => {
+  assert.equal(notificationPath("101", "workflow"), "/workflow?ticket=101");
+  assert.equal(notificationPath("101", "overview"), "/ticket-execution?ticket=101&tab=overview");
+  assert.equal(notificationPath("101", "resolve-review"), "/ticket-execution?ticket=101&tab=resolve-review");
+  // History rows written before the run tabs were retired.
+  assert.equal(notificationPath("101", "execution"), "/workflow?ticket=101");
+  assert.equal(notificationPath("101", "result"), "/workflow?ticket=101");
 });
 
 test("skipped scheduler decisions never reach the bell", () => {
@@ -224,22 +222,22 @@ test("an unrecognised scheduler outcome is dropped rather than guessed at", () =
 
 test("newest first, whatever the severity", () => {
   const list = sortNotifications([
-    ...fromRunEvents([
-      { ticketId: "1", runId: "r1", state: "succeeded", at: "2026-09-06T12:00:00Z" },
-      { ticketId: "2", runId: "r2", state: "failed", at: "2026-09-06T08:00:00Z" },
+    ...fromAutomation([
+      automation({ id: "ev1", ticketId: "1", createdAt: "2026-09-06T12:00:00Z" }),
+      automation({ id: "ev2", ticketId: "2", outcome: "failed", reason: "run-failed", createdAt: "2026-09-06T08:00:00Z" }),
     ]),
     ...fromAutomation([automation({ id: "ev9", action: "release", outcome: "done", createdAt: "2026-09-06T13:00:00Z" })]),
   ]);
   assert.deepEqual(
     list.map((n) => n.kind),
-    ["scheduler.released", "run.succeeded", "run.failed"]
+    ["scheduler.released", "scheduler.started", "scheduler.failed"]
   );
 });
 
 test("sortNotifications does not mutate its input", () => {
-  const input: AppNotification[] = fromRunEvents([
-    { ticketId: "1", runId: "r1", state: "succeeded", at: "2026-09-06T08:00:00Z" },
-    { ticketId: "2", runId: "r2", state: "failed", at: "2026-09-06T09:00:00Z" },
+  const input: AppNotification[] = fromAutomation([
+    automation({ id: "ev1", ticketId: "1", createdAt: "2026-09-06T08:00:00Z" }),
+    automation({ id: "ev2", ticketId: "2", outcome: "failed", reason: "run-failed", createdAt: "2026-09-06T09:00:00Z" }),
   ]);
   const before = input.map((n) => n.kind);
   sortNotifications(input);
@@ -439,7 +437,6 @@ test("a skipped review decision stays in the sprint log and off the bell", () =>
 test("history keeps moments, not standing conditions", () => {
   const list = buildNotifications({
     reviews: [review()],
-    waitingRuns: [{ ticketId: "101", runId: "r1" }],
     ticketActivity: [activity()],
     automation: [automation({ outcome: "failed" })],
   });

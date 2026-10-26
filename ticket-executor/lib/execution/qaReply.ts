@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
-import { commonArgs, runTurn } from "./claudeCli";
+import { commonArgs, runTurn, turnLive } from "./claudeCli";
 import { removeRunMcpConfig, resolveMcp, writeRunMcpConfig } from "../mcp";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { findSkill } from "../skillPack";
 import { normalizeProvider, postTicketComment } from "../tickets";
 import { logAutomation } from "./planStore";
-import { scratchCwd, triageLive } from "./triage";
+import { scratchCwd } from "./triage";
 
 export const QA_REPLY_SKILL = "reply-qa-v4";
 
@@ -104,7 +104,7 @@ export async function startQaReply(
 
 async function execQaReply(id: string, provider: string, rootRepo: string, prompt: string) {
   const cwd = rootRepo || scratchCwd(id);
-  const live = triageLive(id, cwd, provider, QA_REPLY_SKILL);
+  const live = turnLive(cwd);
   let mcpPath = "";
   try {
     const [setting, cred] = await Promise.all([

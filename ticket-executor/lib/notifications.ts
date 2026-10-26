@@ -21,9 +21,6 @@ export type NotificationKind =
   | "pr.conflict"
   | "ticket.mention"
   | "ticket.comment"
-  | "run.waiting"
-  | "run.failed"
-  | "run.succeeded"
   | "scheduler.started"
   | "scheduler.released"
   | "scheduler.review-fixed"
@@ -42,10 +39,17 @@ export type NotificationKind =
  *  is one nobody trusts. */
 export type NotificationSeverity = "action" | "info";
 
-/** Where clicking the notification should land. A subset of the detail pane's
- *  tabs, declared here so this module owns each kind's destination rather than
- *  the component inferring one from `kind`. */
-export type NotificationTab = "overview" | "plan" | "execution" | "result" | "resolve-review";
+/** Where clicking the notification should land: a Ticket Execution tab, or the
+ *  ticket's runs on /workflow. Declared here so this module owns each kind's
+ *  destination rather than the component inferring one from `kind`. */
+export type NotificationTab = "overview" | "resolve-review" | "workflow";
+
+/** The page a ticket notification opens. History rows written before the Ticket
+ *  Execution run tabs were retired carry their old tab names; they open /workflow. */
+export function notificationPath(ticketId: string, tab: string): string {
+  const id = encodeURIComponent(ticketId);
+  return tab === "overview" || tab === "resolve-review" ? `/ticket-execution?ticket=${id}&tab=${tab}` : `/workflow?ticket=${id}`;
+}
 
 export type AppNotification = {
   kind: NotificationKind;
@@ -269,53 +273,6 @@ export function fromPullRequests(rows: PullRequestSource[]): AppNotification[] {
   return out;
 }
 
-/** A run held for a person: the server restarted while it was publishing, and
- *  nobody can tell whether the push landed. Read off current state rather than
- *  off an observed transition, because it is a standing condition: the run stays
- *  held until somebody looks, however long ago it stopped. */
-export type WaitingRunSource = { ticketId: string; runId: string };
-
-export function fromWaitingRuns(rows: WaitingRunSource[]): AppNotification[] {
-  return rows.map((r) => ({
-    kind: "run.waiting" as const,
-    ticketId: r.ticketId,
-    refId: r.runId,
-    severity: "action" as const,
-    summary: "Run held mid-publish — check whether the push landed",
-    at: "",
-    tab: "execution" as const,
-    fingerprint: `waiting::${r.runId}`,
-  }));
-}
-
-/**
- * A run this session watched reach a terminal state.
- *
- * Recorded as an observed event rather than derived from the latest run per
- * ticket, because "succeeded" is a fact about a moment and not a standing
- * condition — deriving it would put a notification on every ticket with any
- * past run the first time the panel opens.
- */
-export type RunEventSource = {
-  ticketId: string;
-  runId: string;
-  state: "succeeded" | "failed";
-  at: string;
-};
-
-export function fromRunEvents(rows: RunEventSource[]): AppNotification[] {
-  return rows.map((r) => ({
-    kind: (r.state === "failed" ? "run.failed" : "run.succeeded") as NotificationKind,
-    ticketId: r.ticketId,
-    refId: r.runId,
-    severity: (r.state === "failed" ? "action" : "info") as NotificationSeverity,
-    summary: r.state === "failed" ? "Run failed" : "Run finished — draft pull request ready to release",
-    at: r.at,
-    tab: (r.state === "failed" ? "execution" : "result") as NotificationTab,
-    fingerprint: `${r.state}::${r.runId}`,
-  }));
-}
-
 /** One `AutomationEvent` row — what the scheduler wrote down about a decision. */
 export type AutomationSource = {
   id: string;
@@ -393,7 +350,7 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
           e.action === "review"
             ? `Could not resolve the review comments${e.reason ? ` — ${e.reason}` : ""}`
             : `Automatic ${e.action} failed${e.reason ? ` — ${e.reason}` : ""}`,
-        tab: e.action === "release" ? "result" : e.action === "review" ? "resolve-review" : "execution",
+        tab: e.action === "review" ? "resolve-review" : "workflow",
       });
       continue;
     }
@@ -420,13 +377,13 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
       continue;
     }
     if (e.action === "release" && e.outcome === "done") {
-      out.push({ ...base, kind: "scheduler.released", severity: "info", summary: "Released — pull request published and status advanced", tab: "result" });
+      out.push({ ...base, kind: "scheduler.released", severity: "info", summary: "Released — pull request published and status advanced", tab: "resolve-review" });
       continue;
     }
     if (e.action === "implement" && e.outcome === "started") {
       const startedAt = Date.parse(e.createdAt);
       if (!Number.isNaN(startedAt) && startedAt <= (concludedAt.get(e.ticketId) ?? -1)) continue;
-      out.push({ ...base, kind: "scheduler.started", severity: "info", summary: "Automation started implementing this ticket", tab: "execution" });
+      out.push({ ...base, kind: "scheduler.started", severity: "info", summary: "Automation started implementing this ticket", tab: "workflow" });
     }
   }
   return out;
@@ -559,8 +516,6 @@ export function buildNotifications(sources: {
   reviews?: ReviewSource[];
   pullRequests?: PullRequestSource[];
   ticketActivity?: TicketActivitySource[];
-  waitingRuns?: WaitingRunSource[];
-  runEvents?: RunEventSource[];
   automation?: AutomationSource[];
   reportReminder?: ReportReminderSource | null;
   lifecycle?: LifecycleSource[];
@@ -569,8 +524,6 @@ export function buildNotifications(sources: {
     ...fromReviews(sources.reviews ?? []),
     ...fromPullRequests(sources.pullRequests ?? []),
     ...fromTicketActivity(sources.ticketActivity ?? []),
-    ...fromWaitingRuns(sources.waitingRuns ?? []),
-    ...fromRunEvents(sources.runEvents ?? []),
     ...fromAutomation(sources.automation ?? []),
     ...fromReportReminder(sources.reportReminder ?? null),
     ...fromLifecycle(sources.lifecycle ?? []),

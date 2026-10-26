@@ -106,9 +106,6 @@
   --te-tab-text: #FFFFFF;
   --te-tab-disabled-text: #4A5C64;
 
-  /* Execution flow map (react-flow) */
-  --te-flow-dot: rgba(255,255,255,.09);
-
   /* Ticket Workflow page */
   --te-wf-dot: rgba(255,255,255,.4);
   --te-accent-soft: color-mix(in srgb, var(--te-accent) 14%, transparent);
@@ -209,23 +206,6 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
    --angle; nothing reads it while this is set. */
 html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border),var(--te-btn-outline-border));}
 
-/* Execution flow map — react-flow reads its chrome from --xy-* variables, so
-   the theme is mapped once here onto the app's tokens. */
-.te-flow .react-flow {
-  --xy-background-color-default: transparent;
-  --xy-background-pattern-dots-color-default: var(--te-flow-dot);
-  --xy-edge-stroke-default: var(--te-btn-outline-border);
-  --xy-node-background-color-default: transparent;
-  --xy-node-border-default: none;
-  --xy-node-boxshadow-default: none;
-  --xy-controls-button-background-color-default: var(--te-inset-bg);
-  --xy-controls-button-background-color-hover-default: var(--te-inset-bg-focus);
-  --xy-controls-button-color-default: var(--te-text-soft);
-  --xy-controls-button-color-hover-default: var(--te-text);
-  --xy-controls-button-border-color-default: var(--te-border);
-  --xy-controls-box-shadow-default: 0 10px 26px -14px #000;
-}
-.te-flow .react-flow__node { cursor: pointer; }
 .te-wf .react-flow {
   --xy-background-color-default: transparent;
   --xy-background-pattern-dots-color-default: var(--te-wf-dot);
@@ -258,36 +238,6 @@ html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border)
   .te-wf-edge-live, .te-wf-running, .te-wf-blink { animation: none !important; }
   .te-wf-particle { display: none; }
 }
-
-.te-flow .react-flow__controls { border-radius: 9px; overflow: hidden; }
-.te-activity summary::-webkit-details-marker { display: none; }
-@media (prefers-reduced-motion: reduce) {
-  .te-flow-particle { display: none; }
-  .te-flow .react-flow__edge-path { animation: none !important; }
-}
-
-/* markdown (Result tab, Plan tab) — inherits prototype palette */
-.md-body{font-size:14.5px;line-height:1.75;color:var(--te-text-soft);}
-.md-body>*:first-child{margin-top:0;}
-.md-body h1,.md-body h2,.md-body h3{font-family:var(--te-font-display);color:var(--te-text);margin:26px 0 12px;line-height:1.25;}
-.md-body h1{font-size:20px;}
-.md-body h2{font-size:15px;letter-spacing:.02em;text-transform:uppercase;padding-left:11px;border-left:3px solid var(--accent);}
-.md-body h3{font-size:14.5px;color:var(--te-text);}
-.md-body p{margin:0 0 12px;}
-.md-body ul,.md-body ol{margin:0 0 12px;padding-left:22px;}
-.md-body li{margin:5px 0;}
-.md-body li::marker{color:var(--te-faint);}
-.md-body hr{border:none;border-top:1px solid var(--te-border-subtle);margin:22px 0;}
-.md-body blockquote{margin:0 0 12px;padding:9px 14px;border-left:3px solid var(--te-btn-outline-border);background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;color:var(--te-text-dim);}
-.md-body a{color:var(--te-indigo);}
-.md-body code{font-family:var(--font-mono),'JetBrains Mono',monospace;font-size:12.5px;background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:5px;padding:1px 5px;color:var(--te-text-soft);}
-.md-body pre{background:var(--te-panel-bg-dark);border:1px solid var(--te-border);border-radius:12px;padding:15px 17px;overflow-x:auto;margin:0 0 14px;}
-.md-body pre code{border:none;background:none;padding:0;}
-.md-body strong{color:var(--te-text);}
-.md-body table{border-collapse:collapse;width:100%;margin:0 0 16px;font-size:14px;border-radius:9px;overflow:hidden;border:1px solid var(--te-border-subtle);}
-.md-body th,.md-body td{border:1px solid var(--te-border-subtle);padding:8px 12px;text-align:left;}
-.md-body th{background:var(--te-raised-bg);color:var(--te-text-soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;}
-.md-body tbody tr:nth-child(even){background:rgba(255,255,255,.015);}
 
 /* Global interaction feedback — every button/link across the app gets the
    same lively hover lift + energetic press-down, so no clickable element
@@ -676,14 +626,6 @@ button:disabled{cursor:not-allowed;}
     padding-bottom: env(safe-area-inset-bottom) !important;
   }
   .te-modal-overlay { padding: 0 !important; }
-
-  /* ---- Execution tab -------------------------------------------------- */
-  /* A pan-and-zoom canvas is not a phone control: the flow becomes a vertical
-     rail of the same nodes, tapped to pick a step. */
-  .te-flow-canvas { display: none !important; }
-  .te-flow-rail { display: flex !important; }
-  .te-activity { height: min(60vh, 520px) !important; }
-  .te-exec-hud { gap: 14px 18px !important; }
 
   /* ---- Ticket Workflow ------------------------------------------------ */
   /* The canvas keeps the top of the screen; the inspector is a bottom sheet

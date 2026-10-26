@@ -26,7 +26,7 @@ const HEADERS = ["QUEUE", "TICKET", "PTS", "TRACKER", "RELEASE", "RUN", "ACTIONS
 const LABELS = ["Queue", "", "Pts", "Tracker", "Release", "Run", ""];
 
 export type PlanHandlers = {
-  openExecution: (ticketId: string, tab: "execution" | "result") => void;
+  openExecution: (ticketId: string) => void;
   setUnblocked: (plannedId: string, unblocked: boolean) => void;
   resolveReview: (plannedId: string, ticketId: string) => void;
   retry: (plannedId: string) => void;
@@ -318,9 +318,9 @@ export default function PlanTable({
                       <IconAction action="forceReady" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
                     ))}
                   {t.implementState === "running" || t.reviewState === "running" ? (
-                    <IconAction action="watch" onClick={() => h.openExecution(t.ticketId, "execution")} />
+                    <IconAction action="watch" onClick={() => h.openExecution(t.ticketId)} />
                   ) : t.runId || t.reviewRunId ? (
-                    <IconAction action="result" onClick={() => h.openExecution(t.ticketId, "result")} />
+                    <IconAction action="result" onClick={() => h.openExecution(t.ticketId)} />
                   ) : null}
                   {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
                     (t.reviewState === "resolved" ? (

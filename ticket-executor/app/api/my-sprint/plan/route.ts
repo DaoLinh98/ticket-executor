@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ events: plan ? await recentAutomation(plan.id, 50, forTicket) : [] });
   }
   const runs = plan?.items.length
-    ? await prisma.run.findMany({
+    ? await prisma.dagentRun.findMany({
         where: { ticketId: { in: plan.items.map((i) => i.ticketId) }, provider, org: key.org },
         select: { ticketId: true, steps: { select: { costUsd: true } } },
       })
@@ -157,14 +157,13 @@ export async function PATCH(req: Request) {
     await setPlanStatus(id, status);
   }
   const patch: {
-    autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[]; engine?: string;
+    autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[];
   } = {};
   if (typeof body.autoImplement === "boolean") patch.autoImplement = body.autoImplement;
   if (typeof body.autoRelease === "boolean") patch.autoRelease = body.autoRelease;
   if (typeof body.autoResolveReview === "boolean") patch.autoResolveReview = body.autoResolveReview;
   if (typeof body.autoDraftQaReply === "boolean") patch.autoDraftQaReply = body.autoDraftQaReply;
   if (Array.isArray(body.reviewers)) patch.reviewers = body.reviewers.map(String).filter(Boolean);
-  if (body.engine === "classic" || body.engine === "dagent") patch.engine = body.engine;
   if (Object.keys(patch).length) await setPlanAutomation(id, patch);
 
   return NextResponse.json({ plan: await planById(id) });

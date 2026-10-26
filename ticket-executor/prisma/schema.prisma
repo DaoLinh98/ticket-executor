@@ -26,16 +26,9 @@ model Setting {
   ringAnimation  Boolean  @default(true)
   scope          String   @default("team") // team | personal
   personalAccount String  @default("") // email or display name to filter by when scope = "personal"
-  concurrentRuns Int      @default(2) // cap for batch "Run selected" concurrency
-  // Dashboard ROI inputs. hourlyRateUsd = 0 (default) hides the ROI tile entirely,
-  // since a made-up rate would be worse than no number at all. hoursPerStoryPoint
-  // converts point-sized tickets to hours when the provider has no hour estimate.
-  hourlyRateUsd  Float    @default(0)
+  concurrentRuns Int      @default(2) // cap on D-Agent runs in flight at once
+  // Converts point-sized tickets to hours when the provider has no hour estimate.
   hoursPerStoryPoint Float @default(6)
-  // true → multi-ticket mode: multi-select/batch runs allowed, each execution
-  // isolated in its own git worktree. false → single-ticket mode: only one
-  // ticket may run at a time, and it runs directly in rootRepo (no worktree).
-  multiTicketMode Boolean @default(true)
   // true (default) → the app hands the Claude CLI a generated MCP config for the
   // selected provider, built from this provider's stored org + PAT, so a fresh
   // install needs no manual `claude mcp add`. It yields to a server the user
@@ -51,18 +44,9 @@ model Setting {
   //
   // Empty is a legitimate state — with the app on a developer's own machine the
   // machine's git identity is the right one, and writing over it would be worse
-  // than leaving it alone. See `applyGitIdentity()` in lib/execution/runner.ts.
+  // than leaving it alone. Passed to every D-Agent run (`lib/dagent/engine.ts`).
   gitUserName    String   @default("")
   gitUserEmail   String   @default("")
-  // No new run may start before this instant. Written by the harness, not by a
-  // person: the Claude account is shared by every run on this machine, so the
-  // moment one turn reports a spent quota, every other ticket would spend a
-  // spawn to be told the same thing. Null (or past) is the normal state.
-  //
-  // It is deliberately a refusal in `admissionDenial()` rather than a check in
-  // the scheduler — a limit applies to a button press exactly as it applies to a
-  // scheduled run, and a second gate would be a second place to drift.
-  agentPausedUntil DateTime?
   sprintAnchorProject String @default("")
   updatedAt      DateTime @updatedAt
 }
@@ -108,214 +92,6 @@ model ProviderCredential {
   @@index([provider])
 }
 
-// One execution of one graph against one ticket. A Run owns no agent output of
-// its own: everything an agent produced belongs to a Step, everything a human
-// can read belongs to an Artifact, and every routing decision belongs to a
-// Transition. The Run row only holds what identifies the run and where it is.
-model Run {
-  id           String    @id @default(cuid())
-  ticketId     String
-  // Provider deep link to the work item, as the skills receive it. Empty when
-  // the caller had no URL — the prompt then falls back to the raw id.
-  ticketUrl    String    @default("")
-  // Ticket provider this run targeted (azure-devops | github | jira | gitlab).
-  // Persisted per-run so the dashboard can group/filter by provider (the global
-  // Setting.provider only reflects the current selection, not each run's).
-  provider     String    @default("")
-  // The organization URL the run authenticated against, snapshotted from the
-  // active ProviderCredential. Persisted for the same reason as `provider`: the
-  // dashboard scopes history to the organization the header is switched to, and
-  // the active connection only says which one that is *now*.
-  org          String    @default("")
-  project      String
-  // The project's real working copy, and the worktree the run actually executes
-  // in. They are equal when the run was not isolated (single-ticket mode).
-  rootRepo     String    @default("")
-  worktreePath String    @default("")
-  // Which graph shape is being driven (implement-v3, fix-review-v2, …). The graph
-  // itself is code; this is the key that resolves it, so a run parked before a
-  // restart resumes on the same shape it started on.
-  graphId      String
-  // The skill the graph drives. An input to the run, kept on the row because the
-  // dashboard groups and compares by it.
-  skill        String    @default("")
-  // Promoted out of the nodes' structured output when they report it, because
-  // every one of these has a consumer that must not have to open a Step row:
-  // prUrl (Result tab, Resolve Review tab, delivery funnel), branch (Result tab),
-  // resultText (the run summary shown when a run finishes). None of them is
-  // sniffed out of the log any more — they are contract fields.
-  prUrl        String    @default("")
-  companionPrUrls String[] @default([])
-  branch       String    @default("")
-  resultText   String    @default("")
-  // The single source of truth for where the run is. `phase`/`planStatus`-style
-  // derived flags are gone: state + currentNodeId is the whole answer.
-  state        String    @default("running") // running | waiting | succeeded | failed | cancelled
-  currentNodeId String   @default("")
-  // Why a run ended somewhere other than plain success: "" | cancelled |
-  // plan-rejected | blocked | hop-limit | needs-review. `cancelled` and
-  // `plan-rejected` are human decisions and must never be scored as agent failures.
-  endReason    String    @default("")
-  errorMessage String    @default("")
-  // Claude CLI session the run's turns share, so a later node can --resume the
-  // context an earlier one built.
-  sessionId    String    @default("")
-  // State channels: nodeId → that node's validated structured output. Append-only;
-  // a node only ever writes its own key. This is what edges read.
-  channels     Json      @default("{}")
-  // Transitions this run has taken. Persisted rather than counted in a local
-  // variable because drive() is re-entered on every gate resolution and on every
-  // crash resume — a counter that resets at each of those is not a loop guard.
-  hops         Int       @default(0)
-  // nodeId → how many times that node has been entered. The accounting a bounded
-  // cycle reads ("stop after two fix attempts"); it used to live only in memory,
-  // so a restart silently reset every cycle's count back to zero.
-  visits       Json      @default("{}")
-  model        String    @default("")
-  effort       String    @default("")
-  // The team's own estimate for this ticket, in hours, snapshotted when the run
-  // started (0 = the ticket was never sized). Snapshotted rather than read live
-  // because re-estimating a ticket later must not rewrite past runs' history.
-  estimateHours Float    @default(0)
-  // Commit the worktree branched from. The run's whole change set is the diff of
-  // HEAD against this, computed by the harness (free, no tokens) rather than
-  // asked of the agent.
-  baseSha      String    @default("")
-  companions   Json      @default("[]")
-  // Scalar summary of that diff, denormalized when the run ends so the dashboard
-  // can aggregate change size without loading the diff blob (which lives in an
-  // Artifact of kind "diff").
-  filesTouched Int       @default(0)
-  linesAdded   Int       @default(0)
-  linesDeleted Int       @default(0)
-  // Set while the run waits at a gate and cleared on resume, with the elapsed
-  // time folded into humanWaitMs — so "the agent was computing" and "a human
-  // hadn't answered" stay separable across however many gate rounds happen.
-  parkedAt     DateTime?
-  humanWaitMs  Int       @default(0)
-  // Set while the run waits for the Claude account's usage limit to reset, and
-  // cleared on resume. Three columns rather than reusing the gate's two, because
-  // a gate waits for a person and this waits for a clock:
-  //   resumeAt    — when the sweep may re-enter the node. Null for a gate park,
-  //                 which is how the two are told apart when the wait is banked.
-  //   limitWaitMs — the elapsed time, kept out of humanWaitMs so the dashboard's
-  //                 "human wait" stays a fact about the team and not about a bill.
-  //   limitParks  — how many times this run has been cut off. The ceiling
-  //                 (MAX_LIMIT_PARKS) that stops a run parking against a quota
-  //                 that never recovers.
-  resumeAt     DateTime?
-  limitWaitMs  Int       @default(0)
-  limitParks   Int       @default(0)
-  // Set when the run had to be rebuilt from this row because the in-process
-  // state was lost (server restart) — a session a bare terminal would have dropped.
-  resumedAfterRestart Boolean @default(false)
-  startedAt    DateTime  @default(now())
-  endedAt      DateTime?
-
-  steps       Step[]
-  artifacts   Artifact[]
-  transitions Transition[]
-
-  @@index([ticketId])
-  @@index([startedAt])
-  // The sweep that wakes limit-parked runs asks this on every scheduler tick.
-  @@index([resumeAt])
-}
-
-// One *attempt* at one node. A node re-entered by a cycle (or resumed after a
-// crash) produces another Step with attempt + 1 rather than overwriting the
-// first — the history of what was tried is the point.
-model Step {
-  id           String    @id @default(cuid())
-  runId        String
-  run          Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
-  nodeId       String
-  label        String    @default("")
-  attempt      Int       @default(1)
-  // Copied from the node definition so recovery can decide what to do with a
-  // Step still marked `running` without having to resolve the graph first:
-  // pure → rerun, local → resume, external → never auto-retry.
-  effects      String    @default("pure") // pure | local | external
-  status       String    @default("running") // running | succeeded | failed | abandoned
-  // The node's validated structured output (agent nodes: result.structured_output).
-  output       Json      @default("{}")
-  errorMessage String    @default("")
-  logLines     Json      @default("[]")
-  // Lease held while a process is driving this step, so two processes cannot
-  // claim the same node after a restart.
-  claimedAt    DateTime?
-  costUsd      Float     @default(0)
-  inputTokens  Int       @default(0)
-  outputTokens Int       @default(0)
-  cacheReadTokens Int    @default(0)
-  cacheCreationTokens Int @default(0)
-  numTurns     Int       @default(0)
-  durationMs   Int       @default(0)
-  startedAt    DateTime  @default(now())
-  endedAt      DateTime?
-
-  @@index([runId])
-  @@unique([runId, nodeId, attempt])
-}
-
-// Something a human reads or edits. The plan used to live only as .te/plan.md on
-// disk — a filesystem side channel the harness had to guess at. It is a first
-// class row now; the file is just where the agent drafts it.
-model Artifact {
-  id        String   @id @default(cuid())
-  runId     String
-  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  kind      String   // plan | feedback | diff
-  // A reviewer's edit creates a new version instead of overwriting the agent's,
-  // so "what the agent proposed" and "what the human approved" stay comparable.
-  version   Int      @default(1)
-  body      String
-  editedBy  String   @default("agent") // agent | human
-  createdAt DateTime @default(now())
-
-  @@index([runId, kind])
-  @@unique([runId, kind, version])
-}
-
-// Why the harness went from one node to the next. Four of these explain a run
-// better than a thousand lines of tool log, and they are what makes a graph
-// auditable rather than merely automated.
-model Transition {
-  id        String   @id @default(cuid())
-  runId     String
-  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  seq       Int
-  fromNode  String
-  toNode    String   // a node id, or "END" / "FAIL"
-  reason    String   @default("")
-  createdAt DateTime @default(now())
-
-  @@index([runId, seq])
-}
-
-// A run request the preflight checks rejected before the Claude CLI was ever
-// spawned. Recorded because "the run that never had to burn tokens" is only
-// visible as a metric if the refusal is persisted — the request itself just
-// returns a 400 and disappears.
-model BlockedAttempt {
-  id          String   @id @default(cuid())
-  ticketId    String
-  provider    String   @default("")
-  org         String   @default("")
-  projectName String   @default("")
-  // root-repo | agent-access        — preflight refused it
-  // duplicate-ticket                — that ticket already has a run in flight
-  // single-ticket-mode              — another ticket holds the only slot
-  // concurrency-cap                 — Setting.concurrentRuns is already reached
-  // unknown-skill                   — the caller asked for a skill no graph serves
-  // missing-skill                   — a node's skill is not installed on this machine
-  reason      String
-  detail      String   @default("")
-  createdAt   DateTime @default(now())
-
-  @@index([createdAt])
-}
-
 // Distinct values ever used for Root Repo / Project / Skill fields, so the
 // Overview tab's Combobox can offer them as saved options next time (any
 // project/session), not just the ones seen in the current tickets list.
@@ -349,7 +125,7 @@ model RootRepoProjectMap {
 
 // Which pull request a ticket's review lives on, once anything has resolved it.
 //
-// `Run.prUrl` already answers this for a PR **this app opened**. It answers
+// `DagentRun.prUrl` already answers this for a PR **this app opened**. It answers
 // nothing for a PR a human opened, and that gap is expensive: resolving a work
 // item's PR from scratch at the provider costs a work-item read with relations
 // expanded, then a repository read to verify the link, before the PR itself —
@@ -361,7 +137,7 @@ model RootRepoProjectMap {
 // nothing is served *from* this row, it only shortens a lookup. A URL that has
 // gone stale — repository renamed, PR deleted — simply fails its read and the
 // caller falls through to the full resolution, which is the same fallback a
-// stale `Run.prUrl` already relies on. That is why there is no TTL to tune and
+// stale `DagentRun.prUrl` already relies on. That is why there is no TTL to tune and
 // no invalidation to get wrong.
 model TicketPullRequest {
   id        String   @id @default(cuid())
@@ -454,9 +230,6 @@ model SprintPlan {
   // their reviewer, so it gets its own switch rather than riding on autoRelease.
   autoResolveReview Boolean @default(false)
   autoDraftQaReply Boolean @default(false)
-  // Which engine starts this plan's runs — implement, review fix and QA fix alike:
-  // "classic" (lib/execution, skills) or "dagent" (lib/dagent, subagents).
-  engine        String   @default("classic")
   // Reviewers every pull request from this plan is assigned when it is released.
   // Held per plan rather than per ticket: the team a sprint is delivered to is
   // the same team all fortnight.
@@ -524,12 +297,8 @@ model PlannedTicket {
   model          String     @default("sonnet")
   effort         String     @default("medium")
   implementState String     @default("pending") // pending | running | implemented | failed | skipped
-  // The run that implemented it, when one has.
+  // The D-Agent run (`DagentRun.id`) that implemented it, when one has.
   runId          String     @default("")
-  // Which engine `runId` / `reviewRunId` belong to — `Run` (classic) or `DagentRun` (dagent). Stamped when the
-  // run starts, so a run outlives a switch of the plan's engine.
-  runEngine      String     @default("classic")
-  reviewEngine   String     @default("classic")
   prUrl          String     @default("")
   companionPrUrls String[] @default([])
   // ---- release: one column per provider write ----

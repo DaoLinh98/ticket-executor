@@ -50,12 +50,6 @@ const NAV: NavItem[] = [
     icon: <path d="M8 3h8l4 4v14H4V3zM8 12h8M8 16h5" />,
   },
   {
-    href: "/dashboard",
-    label: "Dashboard",
-    desktopOnly: true,
-    icon: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
-  },
-  {
     href: "/guide",
     label: "Guide",
     desktopOnly: true,

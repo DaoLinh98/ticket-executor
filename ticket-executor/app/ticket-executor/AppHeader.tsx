@@ -5,7 +5,7 @@ import SprintPicker, { type IterationOption } from "../SprintPicker";
 import ProviderBadge from "../(app)/ProviderBadge";
 import PageHeading from "../(app)/PageHeading";
 import type { ProviderMeta } from "@/lib/providers";
-import { FONT, ringBorder, tabStyle } from "@/lib/ui";
+import { tabStyle } from "@/lib/ui";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import NotificationCenter from "../(app)/NotificationCenter";
 import PageToolbar from "../(app)/PageToolbar";
@@ -24,7 +24,6 @@ type Props = {
   projectOptions: { id: string; name: string }[];
   selectedProject: string;
   onSelectProject: (value: string, e: { clientX: number; clientY: number }) => void;
-  activeCount: number;
 };
 
 // Project picker leading icon (a small grid/folder), distinct from the sprint
@@ -37,12 +36,12 @@ const projectLeading = (
 
 // Top bar (Ticket Execution) plus this page's control strip. The header carries
 // only what is true on every page — the page's identity, the bell, the connected
-// organization; the project, view and sprint pickers and the active-run counter
+// organization; the project, view and sprint pickers
 // are this screen's own and live on the toolbar below it. Cross-page nav /
 // Settings / Logout live in the shared Sidebar.
 export default function AppHeader({
   pm, scope, onScopeChange, sprintLabel, sprintOptions, selectedSprint, currentSprint, onSprintChange,
-  projectOptions, selectedProject, onSelectProject, activeCount,
+  projectOptions, selectedProject, onSelectProject,
 }: Props) {
   return (
     <>
@@ -77,13 +76,6 @@ export default function AppHeader({
         {scope === "sprint" && (
           <SprintPicker label={sprintLabel} options={sprintOptions} value={selectedSprint} currentName={currentSprint} onSelect={onSprintChange} />
         )}
-        <div style={{ flex: 1 }} />
-        {/* A read-only counter, and the first thing to go when the toolbar has
-            to wrap: on a phone it took a whole row to say what the ticket rows
-            already show. */}
-        <div className="te-mobile-hide" style={{ display: "flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 13px", fontSize: FONT.base, color: "var(--te-text-dim)", whiteSpace: "nowrap", ...ringBorder({ fill: "var(--te-raised-bg)", shape: "pill", duration: 3.4 }) }}>
-          <span style={{ fontFamily: "var(--font-mono), monospace", color: "var(--te-text-soft)", fontWeight: 600 }}>{activeCount}</span> active runs
-        </div>
       </PageToolbar>
     </>
   );

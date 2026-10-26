@@ -64,16 +64,16 @@ export function planInputs(claimed: ClaimedTicket[], triage: TriageResult | null
  * having worked each ticket.
  *
  * Evidence is read from two places because the plan is only half the record: a
- * ticket the developer ran by hand from the Ticket Execution screen has a `Run`
- * row and a pull request but no plan progress at all, and calling that untouched
- * would drop it out of the sprint the moment QA takes it over.
+ * ticket the developer ran by hand on /workflow has a `DagentRun` row and a pull
+ * request but no plan progress at all, and calling that untouched would drop it
+ * out of the sprint the moment QA takes it over.
  */
 export async function rememberSprint(key: PlanKey): Promise<Remembered[]> {
   const plan = await findPlan(key);
   if (!plan) return [];
   const ids = plan.items.map((i) => i.ticketId);
   const runs = ids.length
-    ? await prisma.run.findMany({
+    ? await prisma.dagentRun.findMany({
         where: {
           ticketId: { in: ids },
           provider: key.provider,
@@ -300,7 +300,7 @@ export async function setPlanStatus(id: string, status: "draft" | "active" | "ar
 
 export async function setPlanAutomation(
   id: string,
-  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[]; engine?: string }
+  patch: { autoImplement?: boolean; autoRelease?: boolean; autoResolveReview?: boolean; autoDraftQaReply?: boolean; reviewers?: string[] }
 ) {
   return prisma.sprintPlan.update({ where: { id }, data: patch });
 }

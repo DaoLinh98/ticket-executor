@@ -1,29 +1,8 @@
 import { COLORS } from "@/lib/ui";
 
 export const ACCENT = COLORS.accent;
-export const DEFAULT_SKILL = "implement-ticket-v4";
-export const FIX_REVIEW_SKILL = "fix-code-review-v4";
-
-// Result-tab section split: order implementation before review, with friendly titles.
-// "senior-code-review" section disabled along with the run code-review feature below.
-// The retired v2/v3 names stay so a past run still lands in its section.
-export const RESULT_SKILL_ORDER = [
-  "implement-ticket-v4", "implement-ticket-v3", "implement-ticket-v2", /* "senior-code-review", */
-  "fix-code-review-v4", "fix-code-review-v2", "fix-code-review-v3",
-];
-export const RESULT_SKILL_TITLE: Record<string, string> = {
-  "implement-ticket-v4": "Implementation",
-  "implement-ticket-v3": "Implementation",
-  "implement-ticket-v2": "Implementation",
-  // "senior-code-review": "Code Review",
-  "fix-code-review-v4": "Fix Code Review",
-  "fix-code-review-v2": "Fix Code Review",
-  "fix-code-review-v3": "Fix Code Review",
-};
-
-// Suggested skills for the Overview combobox — free text is still allowed.
+// Suggested skills for the Ask tab — free text is still allowed.
 export const SKILL_OPTIONS = [
-  "implement-ticket-v4",
   "fix-issue",
   "fix-code-review",
   // "senior-code-review", // run code-review feature disabled for now

@@ -4,7 +4,7 @@ import { REQUIRED_SKILLS, installDir, installSkill, skillStates } from "@/lib/sk
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/skills/install — bundled-vs-installed state for the four required
+// GET /api/skills/install — bundled-vs-installed state for the bundled
 // skills, so the UI can label each row Install / Update / Overwrite.
 export async function GET() {
   return NextResponse.json({ target: installDir(), skills: skillStates() });
@@ -15,7 +15,7 @@ export async function GET() {
 //
 // This writes outside the project, into the developer's home directory — which
 // is the point (the app runs on their machine, and that folder is where the
-// Claude CLI reads skills from). It is deliberately narrow: only the four
+// Claude CLI reads skills from). It is deliberately narrow: only the bundled
 // allowlisted names, never a delete, and an existing folder whose content
 // differs is refused until the caller passes force.
 export async function POST(req: Request) {

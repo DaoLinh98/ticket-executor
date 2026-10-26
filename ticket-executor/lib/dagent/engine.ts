@@ -331,14 +331,12 @@ export async function startRun(input: StartInput): Promise<StartResult> {
     if (input.retryOf) seeded = await retrySeed(graph, input.retryOf, from);
     row = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('ticket-executor:dagent-admission'))`;
-      const [dup, legacy, running] = await Promise.all([
+      const [dup, running] = await Promise.all([
         tx.dagentRun.findFirst({ where: { ticketId, state: { in: ACTIVE } }, select: { id: true } }),
-        tx.run.findFirst({ where: { ticketId, state: { in: ACTIVE } }, select: { id: true } }),
         tx.dagentRun.count({ where: { state: "running" } }),
       ]);
       const cap = setting?.concurrentRuns ?? 2;
       if (dup) throw new Refused(`${ticketId} already has a D-Agent run in flight.`, 409);
-      if (legacy) throw new Refused(`${ticketId} has a run in flight in the main Ticket Execution flow.`, 409);
       if (running >= cap) throw new Refused(`No concurrency slot: ${running} of ${cap} D-Agent runs are running.`, 429);
       return tx.dagentRun.create({
         data: {

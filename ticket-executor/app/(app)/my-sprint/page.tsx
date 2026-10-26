@@ -441,18 +441,9 @@ export default function MySprintPage() {
       await load();
     });
 
-  // A ticket whose runs went to the D-Agent engine is watched on /workflow, which follows its live run.
-  const openExecution = (ticketId: string, tab: "execution" | "result") => {
-    const row = stored?.items.find((i) => i.ticketId === ticketId);
-    const dagent = row?.runEngine === "dagent" || row?.reviewEngine === "dagent";
-    window.open(
-      dagent
-        ? `/workflow?ticket=${encodeURIComponent(ticketId)}`
-        : `/ticket-execution?ticket=${encodeURIComponent(ticketId)}&tab=${tab}` + `&at=${Date.now()}`,
-      "_blank",
-      "noopener"
-    );
-  };
+  // A ticket's runs are watched on /workflow, which follows its live run.
+  const openExecution = (ticketId: string) =>
+    window.open(`/workflow?ticket=${encodeURIComponent(ticketId)}`, "_blank", "noopener");
 
   const askRelease = (row: PlannedRow) =>
     setConfirm({
@@ -516,9 +507,9 @@ export default function MySprintPage() {
       : (data?.plan?.tickets ?? []).map((t) => ({
           id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
           points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
-          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", runEngine: "classic", prUrl: "",
+          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
           prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
-          reviewState: "idle", reviewRunId: "", reviewEngine: "classic", openComments: 0, threadsReplied: 0, threadsResolved: 0,
+          reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
           reviewRounds: 0, reviewError: "",
           claim: t.claim, assigneeNow: t.assigneeNow,
           model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
@@ -541,7 +532,7 @@ export default function MySprintPage() {
     const base = { ticketId: t.ticketId, title: t.title };
     const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
     const replyWaiting = drafts.some((d) => d.plannedTicketId === t.id && d.status !== "failed");
-    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId, "result")} />;
+    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId)} />;
     if (t.reviewState === "needs-human") {
       attention.push({ ...base, key: "nh-" + t.id, tone: "warning", text: `${t.reviewRounds} rounds of automatic review fixes did not close it — the rest needs a decision.`, action: result });
     }
@@ -819,7 +810,7 @@ export default function MySprintPage() {
                       {runningRows.length > 0 && reviewingRows.length > 0 && (
                         <span style={pill({ color: COLORS.textDim, size: "xs", weight: 700 })}>{lane}</span>
                       )}
-                      <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId, "execution")} />
+                      <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId)} />
                     </span>
                   ))}
                 </div>
@@ -922,7 +913,7 @@ export default function MySprintPage() {
                 onDismiss={dismissReplyNow}
               />
 
-              <SchedulerLog events={events} onOpen={(id) => openExecution(id, "result")} />
+              <SchedulerLog events={events} onOpen={openExecution} />
               </div>
 
               <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -932,7 +923,6 @@ export default function MySprintPage() {
                   onBuild={buildPlan}
                   onSetStatus={(status) => (status === "active" ? askActivate() : patchPlan({ status }, "activate"))}
                   onToggle={(field, on) => patchPlan({ [field]: on }, field)}
-                  onEngine={(engine) => patchPlan({ engine }, "engine")}
                   onTick={tickNow}
                 />
                 <span style={sectionCaption()}>

@@ -46,9 +46,6 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "pr.conflict": "CONFLICT",
   "ticket.mention": "MENTIONED",
   "ticket.comment": "COMMENT",
-  "run.waiting": "NEEDS YOU",
-  "run.failed": "FAILED",
-  "run.succeeded": "DONE",
   "scheduler.started": "AUTO",
   "scheduler.released": "RELEASED",
   "scheduler.review-fixed": "REVIEW FIXED",
@@ -150,7 +147,7 @@ export default function NotificationBell({
                   {n.ticketId && (
                     <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.sm, fontWeight: 700, color: unread ? COLORS.accent : COLORS.textMuted }}>#{n.ticketId}</span>
                   )}
-                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".04em", color: n.severity === "action" ? COLORS.textSoft : COLORS.faint }}>{KIND_LABEL[n.kind]}</span>
+                  <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".04em", color: n.severity === "action" ? COLORS.textSoft : COLORS.faint }}>{KIND_LABEL[n.kind] ?? "RUN"}</span>
                 </div>
                 {/* The ticket, not the conversation. A comment's own words stay
                     in the provider — this row exists to get you there. */}

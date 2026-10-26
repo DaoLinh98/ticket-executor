@@ -41,7 +41,7 @@ export type Remembered = {
   points: number;
   estimateHours: number;
   /** Did the app do work on this ticket: a run started, a pull request opened,
-   *  a release performed. Gathered by the caller from the plan row *and* the Run
+   *  a release performed. Gathered by the caller from the plan row *and* the DagentRun
    *  table — a ticket run by hand has no plan progress but is still worked. */
   worked: boolean;
   /** The developer put this ticket on the plan by hand. */

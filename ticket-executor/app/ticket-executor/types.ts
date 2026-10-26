@@ -1,76 +1,5 @@
 import type { CSSProperties, MouseEvent } from "react";
-import type { FileChange, KnowledgeChange, LogLine, RunState } from "@/lib/types";
 import type { ProviderId } from "@/lib/providers";
-import type { StepTrace, TransitionView } from "@/lib/runTrace";
-
-/** One node of the run's graph as the API reports it. The progress list comes
- *  from the graph the run is walking, so the UI no longer owns a step array. */
-export type NodeView = {
-  id: string;
-  label: string;
-  /** "agent" | "gate" | "check" — what the node *is*. The UI asks this instead
-   *  of recognising a node by its id. */
-  kind: string;
-  effects: string;
-  context?: string;
-  next?: string[];
-  state: "pending" | "running" | "done" | "failed";
-  attempts: number;
-};
-
-// What the UI knows about the run currently attached to a ticket. Mirrors
-// `RunView` in lib/execution/queries.ts — the API's shape, not a second model.
-export type ExecView = {
-  runId?: string;
-  state: RunState;
-  skill?: string;
-  graphId?: string;
-  currentNodeId?: string;
-  nodes: NodeView[];
-  steps?: StepTrace[];
-  transitions?: TransitionView[];
-  endReason?: string;
-  logLines: LogLine[];
-  startedAt?: string;
-  endedAt?: string | null;
-  resultText: string;
-  error: string;
-  prUrl?: string;
-  companionPrUrls?: string[];
-  branch?: string;
-  duration?: string;
-  // Token & cost usage summed from the run's Step rows.
-  costUsd?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  /** Latest plan artifact — drives the Plan tab when the graph has a gate. */
-  planMarkdown?: string;
-  filesChanged?: FileChange[];
-  knowledgeChange?: KnowledgeChange | null;
-  /** nodeId → that node's validated structured output. The Result tab renders
-   *  verification / deviations / assumptions straight out of this. */
-  channels?: Record<string, Record<string, unknown>>;
-};
-
-// One row of a ticket's run history (from the DB).
-export type RunSummary = {
-  id: string;
-  state: RunState;
-  skill: string;
-  prUrl: string;
-  branch: string;
-  startedAt: string;
-  duration?: string;
-  resultText?: string;
-  endReason?: string;
-  filesChanged?: FileChange[];
-  filesTouched?: number;
-  linesAdded?: number;
-  linesDeleted?: number;
-  costUsd?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-};
 
 // The Settings modal's form state (mirrors the persisted Setting row).
 export type SettingsView = {
@@ -86,11 +15,8 @@ export type SettingsView = {
   scope: "team" | "personal";
   personalAccount: string;
   concurrentRuns: number;
-  multiTicketMode: boolean;
   /** Let the app generate the provider's MCP config for each run (see lib/mcp.ts). */
   manageMcp: boolean;
-  /** Dashboard ROI inputs. 0 hides the ROI tile rather than showing a made-up number. */
-  hourlyRateUsd: number;
   hoursPerStoryPoint: number;
   /** The git author every run commits as. Needed because the app executes
    *  inside a container, which has no developer `~/.gitconfig` to inherit —
@@ -101,12 +27,12 @@ export type SettingsView = {
 };
 
 // The detail-pane tabs.
-export type TabId = "overview" | "execution" | "plan" | "resolve-review" | "commits" | "result" | "ask";
+export type TabId = "overview" | "resolve-review" | "commits" | "ask";
 
 // Per-ticket Overview overrides.
-export type OverrideField = "area" | "skill" | "rootRepo" | "model" | "effort";
+export type OverrideField = "area" | "rootRepo" | "model" | "effort";
 
-// The primary CTA, resolved from the current execution status.
+// The primary CTA, resolved from the ticket's status.
 export type Action = {
   label: string;
   spinner: boolean;
@@ -116,16 +42,7 @@ export type Action = {
   title?: string;
 };
 
-// One pre-styled terminal line for the Execution tab.
+// One pre-styled terminal line for the Ask tab.
 export type LogLineView = { text: string; num: number; style: CSSProperties };
-
-// One completed run rendered as its own block on the Result tab.
-export type ResultSection = {
-  key: string;
-  skill: string;
-  title: string;
-  markdown: string;
-  filesChanged: FileChange[];
-};
 
 export type ConnTest = { status: "idle" | "testing" | "ok" | "fail"; message: string };

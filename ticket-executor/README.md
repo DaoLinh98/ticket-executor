@@ -1,10 +1,10 @@
 # Ticket Executor
 
-A local web UI that runs the **Claude Code CLI** against your tickets. Pick a
-sprint ticket from Azure DevOps, hit Implement, and the app spawns `claude`
-non-interactively in the target repo: it creates the branch, writes the code,
-commits, pushes and opens the PR — streaming the live log, progress steps and
-token/cost back into the browser.
+A local web UI that runs the **Claude Code CLI** against your tickets. Flow
+Runner plans your sprint and starts a **D-Agent run** per ticket: a chain of
+subagents works in a git worktree of the target repo — it plans, writes the
+code, has it reviewed, commits, pushes and opens a draft PR. Each run is
+watched live on **Workflow** (`/workflow?ticket=<id>`).
 
 > **This tool makes real changes.** A run commits and pushes to a real
 > repository and opens a real pull request, with `--dangerously-skip-permissions`.
@@ -24,7 +24,7 @@ Install these before touching the app.
 | 1 | Node.js 20+ | `node -v` | `@types/node` is pinned to 20. |
 | 2 | PostgreSQL | `psql --version` | Any local instance. The repo's convention is port **5438**. |
 | 3 | Claude Code CLI, logged in | `claude --version` | The engine spawns this binary. If it is not on `PATH`, set `CLAUDE_BIN`. |
-| 4 | The v4 skills installed | `ls ~/.claude/skills` | Installed by the app on boot. See §4. |
+| 4 | The bundled skills and agents installed | `ls ~/.claude/skills ~/.claude/agents` | Installed by the app on boot. See §4. |
 | 5 | Target repo cloned | `git -C <path> status` | The clone you want runs to happen in. Its path is the ticket's **Root repo** value. See §5. |
 | 6 | Azure DevOps PAT | — | Scopes in §6. |
 
@@ -56,40 +56,30 @@ npx prisma generate           # regenerate the client after schema changes
 npx prisma studio             # optional: inspect the rows
 ```
 
-Five tables are created: `Setting` (a single `default` row mirroring the
-Settings page), `ProviderCredential` (org URL + encrypted PAT per provider),
-`Execution` (one row per Claude run) and two combobox-memory helpers.
+Among the tables: `Setting` (a single `default` row mirroring the Settings
+page), `ProviderCredential` (org URL + encrypted PAT per provider), the sprint
+plan (`SprintPlan`, `PlannedTicket`, `AutomationEvent`) and the D-Agent runs
+(`DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact`).
 
-## 4. Skills
+## 4. Skills and agents
 
-The skills ship in `skills/` and the app copies them into `~/.claude/skills/<name>/`
-when the server boots; an installed copy older than the bundled one is replaced,
-and a run is refused while one is missing or outdated. Every run walks the same
-loop — implement and commit locally, a test gate, an independent review, up to two
-fix rounds, then publish — so there is one skill per job:
+A run is a **D-Agent** run: each step is a subagent shipped in `agents/` and
+copied into `~/.claude/agents/` when the server boots (an older installed copy
+is replaced, and a run is refused while one is missing or outdated). The
+skills in `skills/` are only Flow Runner's own turns:
 
 | Skill | Used when |
 |-------|-----------|
-| `implement-ticket-v4` | Implement |
-| `fix-code-review-v4` | Resolve Review |
-| `fix-qa-v4` | Flow Runner, a ticket QA sent back |
-| `review-changes-v4` | The independent reviewer inside every run |
-| `triage-sprint-v4`, `reply-qa-v4` | Flow Runner triage and the drafted reply to QA |
+| `triage-sprint-v4` | Flow Runner triage (building the plan) |
+| `reply-qa-v4` | The drafted reply to QA |
 
-Sanity check:
+The skills of the retired Ticket Execution engine (`implement-ticket-v4`,
+`fix-code-review-v4`, `review-changes-v4`, `fix-qa-v4`) are no longer bundled;
+a copy left in `~/.claude/skills` is harmless and stays denied to D-Agent turns.
 
-```bash
-ls ~/.claude/skills | grep -E -- '-v4$'
-```
-
-The implement, review-fix and QA skills read the project's `KNOWLEDGE.md` (repo root of
-the **Root repo**) and add the lessons the test gate, the reviewer and QA taught them.
-The file is local project memory: it is excluded from git and never committed.
-
-> **Known sharp edge:** the skill dropdown falls back to a hard-coded list when
-> it cannot read the directory, so a name can appear in the UI that is *not*
-> installed. The run then fails partway through, after spending tokens. Trust
-> the **System Check** page (§8) or the command above, not the dropdown.
+Runs read the project's `KNOWLEDGE.md` (repo root of the **Root repo**) and add
+the lessons the reviewer and QA taught them. The file is local project memory:
+it is excluded from git and never committed.
 
 ## 5. Target repositories
 
@@ -106,13 +96,12 @@ provider connection spans many projects, so the value is per ticket:
 2. Auto-filled from the last root repo used for that project (remembered in the
    `RootRepoProjectMap` table).
 
-So the first run for a project needs the path typed once; after that it is
-prefilled. Until it is set, the field is flagged **REQUIRED** on the Overview
-tab and the run button reminds you instead of starting.
+So the first run for a project needs the path typed once (and **Save**d — Flow
+Runner reads the saved mapping); after that it is prefilled. Until it is set,
+the field is flagged **REQUIRED** on the Overview tab.
 
-`POST /api/tickets/[id]/implement` re-validates it server-side before spawning
-the CLI (exists + is a git repo) and rejects with 400 — so a wrong path costs
-no tokens.
+The D-Agent admission re-validates it server-side before spawning the CLI
+(exists + is a git repo) and refuses the run — so a wrong path costs no tokens.
 
 For each repo you intend to run against:
 
@@ -123,10 +112,10 @@ For each repo you intend to run against:
    `git push --dry-run` inside the clone. This one is **not** covered by the
    System Check page, since it has no repo to check against.
 
-With **Multi-ticket mode** on (the default), each run gets its own git worktree
-under `<repo>\.te-worktrees\`, so concurrent runs don't share one index. The
-worktree is removed when the run finishes; the branch and commits it created
-live in the real repo and are never touched.
+Every run gets its own git worktree, so concurrent runs (up to Settings →
+**Concurrent runs**) don't share one index. The worktree is removed when the
+run finishes; the branch and commits it created live in the real repo and are
+never touched.
 
 ## 6. Azure DevOps connection
 
@@ -159,9 +148,8 @@ There are **two** credential paths to the provider, and they are independent:
 | The app (ticket list, sprints, PR data) | REST, with the PAT above | Settings |
 | The Claude CLI a run spawns | the provider's **MCP server** | see below |
 
-The skills (`implement-ticket-v*`, `fix-code-review-v*`) read the work item and
-drive the PR through provider MCP tools. Without one, a run spends tokens and
-then fails — so this is not optional.
+The D-Agent subagents read the work item and drive the PR through provider MCP
+tools. Without one, a run spends tokens and then fails — so this is not optional.
 
 **Settings → "Manage MCP for me"** (on by default) decides who sets it up:
 
@@ -213,11 +201,11 @@ can point at the same Postgres, and that is the supported setup: one database, o
 set of settings, one run history. What is **not** supported is running both at the
 same time.
 
-`recoverInterruptedRuns()` (`lib/execution/runner.ts`) treats every row with
-`state: "running"` that the *current* process is not holding in memory as an
-orphan and resumes it. That check is an in-memory map, not a database lock — so
-whichever copy starts second adopts the other's live run and spawns a second
-`claude` on the same worktree. Two processes then commit and push the same branch.
+`reconcileOrphans()` (`lib/dagent/engine.ts`) treats every D-Agent row with
+`state: "running"` that the *current* process is not driving as an orphan and
+fails it. That check is an in-memory map, not a database lock — so whichever
+copy looks second fails the other's live run, while its `claude` keeps working
+on the same worktree.
 
 Pick one side per session:
 
@@ -231,7 +219,7 @@ behind is exactly what the other side picks up:
 
 ```bash
 # nothing should be running
-docker exec emesoft-dagent-db-1 psql -U dagent -d dagent -c "select id, state from \"Run\" where state = 'running';"
+docker exec emesoft-dagent-db-1 psql -U dagent -d dagent -c "select id, state from \"DagentRun\" where state = 'running';"
 
 # and when you are on the host, this should print nothing
 docker ps --format "{{.Names}}" | grep dagent-web
@@ -246,7 +234,8 @@ is remembered as "passed" — and it costs no Claude tokens.
 | Section | What it verifies |
 |---|---|
 | ENVIRONMENT | Postgres reachable, all migrations applied, `claude --version` runs, `git --version` runs, plus an advisory warning when `SETTINGS_ENC_KEY` is not set explicitly |
-| SKILLS | Each of the four required skills resolves to a real folder, and shows which one |
+| SKILLS | Each bundled skill resolves to a real folder, and shows which one |
+| AGENTS | Each D-Agent subagent is installed and not older than the bundled copy |
 | PROVIDER CONNECTION | A credential is saved for the selected provider, and that the provider is actually wired up (only Azure DevOps is) |
 | CLAUDE'S PROVIDER ACCESS | Whether the run's MCP path exists at all — app-managed, your own server, or nothing. With your own server it also compares the **organization baked into it** against Settings (a mismatch reads the wrong work items without erroring); app-managed adds a Node/npx check |
 
@@ -273,8 +262,8 @@ button.
 Two things this page deliberately does *not* check, because they belong to a
 single run rather than to your machine:
 
-- **Root repo** — a per-ticket value (§5). It is validated by
-  `POST /api/tickets/[id]/implement` on every start instead.
+- **Root repo** — a per-ticket value (§5). It is validated by the D-Agent
+  admission on every start instead.
 - **git push credentials** — verify manually per clone (§5).
 
 > The page is currently advisory: it reports and links, it does not lock
@@ -284,33 +273,27 @@ single run rather than to your machine:
 
 ## 9. First run
 
-1. **Projects** — the org's projects. Click one; it routes to Ticket Execution.
-2. **Ticket Execution** — pick the project + sprint in the header, select a ticket.
-3. **Overview** tab — set **Root repo** (flagged `· REQUIRED` while empty) and
-   confirm **Skill**. The command preview under the fields shows exactly what
-   will be spawned.
-4. Hit the primary CTA. The run goes end-to-end without stopping: the **Plan** tab
-   shows `.te/plan.md` as a record, and the Execution tab shows the test gate and
-   the reviewer sending work back to be fixed before anything is pushed.
-5. **Execution** tab for the live log, **Result** tab for the diff, duration,
-   tokens and cost, **Commits** tab for what landed.
-6. **Dashboard** for run metrics across tickets.
+1. **Ticket Execution** — pick the project + sprint in the header, select a
+   ticket, and on its **Overview** tab set and **Save** the **Root repo**
+   (flagged `· REQUIRED` while empty).
+2. **Flow Runner** (My Sprint) — **Build plan**, then **Activate**. With
+   **Auto-implement** on, the scheduler starts the next ticket in the queue as a
+   D-Agent run; the row's run icon starts one by hand.
+3. **Workflow** (`/workflow?ticket=<id>`, the row's Watch / Result icon) — the
+   live run: each subagent step, the reviewer sending work back, the draft PR.
 
-A run parked on the account's usage limit survives a dev-server restart (the
-resume state is persisted) and continues by itself when the quota resets.
+The run buttons on Ticket Execution are kept but not wired to D-Agent yet — they
+say so instead of starting a run.
 
-What happens when you press the CTA, in order — the cheap guards come first:
+What happens before a run spends anything — the cheap guards come first:
 
-1. **Client** — is a run already active for this ticket? Is another ticket
-   running while multi-ticket mode is off? Does the status have a runnable
-   action? Is **Root repo** filled in? A miss here shows a toast and jumps to
-   the Overview tab; no request is sent.
-2. **Server** (`POST /api/tickets/[id]/implement`) — project present, Root repo
-   exists and is a git repo, and (single-ticket mode) no other run is active.
-   A miss returns **400/409** and no run row is created — nothing was spawned,
-   so nothing was spent.
-3. **Engine** (`startExecution`) — creates the worktree if multi-ticket mode is
-   on, then spawns `claude`. This is the first step that costs money.
+1. **Scheduler** — the ticket is still yours, not blocked by triage, and its
+   project has a saved Root repo. A miss is logged and nothing is sent.
+2. **D-Agent admission** (`startRun()` in `lib/dagent`) — Root repo exists and
+   is a git repo, the agents are installed, no other run is active for the
+   ticket, and a concurrency slot is free. A refusal creates no run row.
+3. **Engine** — creates the worktree, then spawns `claude`. This is the first
+   step that costs money.
 
 ## 10. Notifications on your phone
 
@@ -359,13 +342,13 @@ is a local tool: nothing pushes while the laptop is asleep.
 |---|---|---|
 | Run fails immediately, log shows `spawn claude ENOENT` | CLI not on `PATH` | Set `CLAUDE_BIN` to the full path — System Check (§8) flags this |
 | `Failed to set up isolated git worktree` before any token is spent, git says `Filename too long` (Windows) | The worktree lives at `<root repo>\.te-worktrees\<project>-<runId>`, which is deeper than the original clone — deep repos cross the 260-char limit | `git config --global core.longpaths true` (the Windows `LongPathsEnabled` policy alone is not enough; git opts in separately) |
-| Run starts, then fails partway with nothing useful done | Selected skill is not installed locally | §4 / System Check |
+| Run is refused before it starts | A D-Agent subagent is missing or older than the bundled copy | §4 / System Check |
 | Log stalls at branch/push | git credentials not cached for the clone | `git push --dry-run` in the repo, fix the credential |
 | `Root repo is required` / `Root repo not found` (400, nothing ran) | Root repo empty or wrong on the Overview tab | Set it to the clone path; it is then remembered for that project |
 | Run works but nothing appears in the expected repo | Root repo points at a different clone | Check the Overview tab value |
 | Tickets list is empty / "not connected" | Provider not `azure-devops`, or org URL/PAT wrong | §6, then **Test connection** |
 | PAT suddenly rejected after a DB change | Encryption key was derived from `DATABASE_URL`, which changed | Set `SETTINGS_ENC_KEY` explicitly and re-enter the PAT |
-| `Ticket #N is currently running` (409) | Multi-ticket mode is off — one run at a time | Finish/cancel that run, or turn multi-ticket mode on |
+| `No concurrency slot` (429) | Settings → Concurrent runs is reached | Wait for a run to finish, or raise the limit |
 | Prisma client type errors after pulling | Schema changed | `npx prisma generate` |
 | Root repo dropdown is empty on a fresh install | It only lists paths used before — there are no built-in suggestions | Type the clone path once; it is remembered per project afterwards |
 | Settings → Notifications says "Add to Home Screen" on an iPhone that already has the icon | The icon predates the app manifest, so iOS treats it as a bookmark | Delete the icon, re-add it from Safari's Share menu, open the app from it |
@@ -376,17 +359,17 @@ is a local tool: nothing pushes while the laptop is asleep.
 
 - `npm run test` runs the unit suite (`node --test` over `tests/*.test.ts`, TypeScript
   via `tests/register.mjs`) — it needs no database and costs no tokens. Run it after
-  any change to a graph, an edge, a node contract or `resolveSkill()`.
+  any change to a D-Agent graph, an edge or a node contract.
 - There is no lint script. Don't add tooling implicitly; ask first.
 - Type-check with `npx tsc --noEmit`.
 - The check logic lives in `lib/preflight.ts` (read-only, token-free) and has two
   consumers: `GET /api/preflight` for the System Check page, and
-  `validateRootRepo()` for the implement route. Add new checks there, not in a
+  `validateRootRepo()` for the D-Agent admission. Add new checks there, not in a
   route.
 - Lock-screen notifications need VAPID keys, a stable HTTPS origin and (on iOS)
   the app installed to the Home Screen — see §10.
 - Cost control: there is no spend ceiling by design (see `CLAUDE.md`). Watch what
-  a run costs on the Dashboard's OPERATIONS tier, and use Cancel to stop one.
+  a run costs on Workflow and in Flow Runner's per-ticket cost, and use Cancel to stop one.
 - Architecture, module layout and conventions: see `CLAUDE.md` (repo root and
   this folder) and `UI-STYLEGUIDE.md` before changing code.
 - This project pins `next@16.2.10` / `react@19.2.4` — read

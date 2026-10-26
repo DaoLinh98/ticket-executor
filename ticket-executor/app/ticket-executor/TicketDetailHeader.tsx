@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject } from "react";
-import type { Ticket, UiRunState } from "@/lib/types";
+import type { Ticket } from "@/lib/types";
 import { motion } from "motion/react";
-import { COLORS, FONT, MOTION, RUN_LABEL, avatar, dropdownPanelStyle, initials, pill, ringBorder, runDot, statusPillActive, typeBadge, chipShape } from "@/lib/ui";
+import { COLORS, FONT, MOTION, avatar, dropdownPanelStyle, initials, pill, ringBorder, statusPillActive, typeBadge, chipShape } from "@/lib/ui";
 import type { Action, TabId } from "./types";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
@@ -13,8 +13,6 @@ type Props = {
   ticket: Ticket;
   effStatus: string;
   projectName: string;
-  state: UiRunState;
-  execPillStyle: CSSProperties;
   onOpenTicketLink: (e: MouseEvent) => void;
   // status dropdown
   statusMenuRef: RefObject<HTMLDivElement | null>;
@@ -30,22 +28,18 @@ type Props = {
   tab: TabId;
   setTab: (tab: TabId) => void;
   tabStyle: (name: string, enabled: boolean) => CSSProperties;
-  execEnabled: boolean;
-  planEnabled: boolean;
-  resultEnabled: boolean;
   unresolvedCount: number;
   // CTA
   action: Action;
   gated: boolean;
-  secondaryAction: { label: string; onClick: (e?: MouseEvent) => void; style: CSSProperties } | null;
 };
 
 // Ticket identity block (id / type / status menu / title / meta) and the tab bar
-// with its primary + secondary run buttons.
+// with its run button.
 export default function TicketDetailHeader({
-  ticket: t, effStatus, projectName, state: st, execPillStyle, onOpenTicketLink,
+  ticket: t, effStatus, projectName, onOpenTicketLink,
   statusMenuRef, statusMenuOpen, statusMenuLoading, statusMenuOptions, onToggleStatusMenu, onSelectStatus, onBack,
-  tab, setTab, tabStyle, execEnabled, planEnabled, resultEnabled, unresolvedCount, action, gated, secondaryAction,
+  tab, setTab, tabStyle, unresolvedCount, action, gated,
 }: Props) {
   const { fireBoltFromEvent } = useBoltsContext();
   // zIndex 2, not 1: the scrolling detail pane below is a sibling that also creates
@@ -114,7 +108,6 @@ export default function TicketDetailHeader({
       <div style={{ display: "flex", alignItems: "center", gap: "18px", marginTop: "13px", fontSize: FONT.base, color: "var(--te-text-dim)", flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: "8px" }}><span style={avatar(t.assignee)}>{initials(t.assignee)}</span>{t.assignee}</span>
         <span style={{ display: "flex", alignItems: "center", gap: "6px" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7283" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span style={{ fontFamily: "var(--font-mono), monospace", color: "#A6ADBB" }}>{projectName}</span></span>
-        <span style={execPillStyle}><span style={{ ...runDot(st), width: "7px", height: "7px" }} />{RUN_LABEL[st]}</span>
         {t.url && (
           <span className="te-mobile-hide" style={{ display: "inline-flex" }}>
             <OpenTicketButton url={t.url} onOpenTicketLink={onOpenTicketLink} />
@@ -123,17 +116,13 @@ export default function TicketDetailHeader({
       </div>
 
       <div className="te-tabbar" style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "22px", borderBottom: "1px solid var(--te-border-subtle)" }}>
-        {/* `display: contents` — above the breakpoint these seven buttons are
+        {/* `display: contents` — above the breakpoint these buttons are
             direct flex children of the bar exactly as they were. Below it the
             wrapper becomes its own scrolling row (globals.css), so the tabs
             take one line instead of three and the run buttons keep the line
             under them rather than being scrolled out of reach. */}
         <div className="te-tabbar-tabs" style={{ display: "contents" }}>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("overview"); }} style={tabStyle("overview", true)}>Overview</button>
-        <button onClick={(e) => { if (execEnabled) { fireBoltFromEvent(e); setTab("execution"); } }} style={tabStyle("execution", execEnabled)}>Execution</button>
-        {planEnabled && (
-          <button onClick={(e) => { fireBoltFromEvent(e); setTab("plan"); }} style={tabStyle("plan", true)}>Plan</button>
-        )}
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("resolve-review"); }} style={{ ...tabStyle("resolve-review", true), display: "flex", alignItems: "center", gap: "6px" }}>
           Resolve Review
           {unresolvedCount > 0 && (
@@ -141,17 +130,14 @@ export default function TicketDetailHeader({
           )}
         </button>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("commits"); }} style={tabStyle("commits", true)}>Commits</button>
-        <button onClick={(e) => { if (resultEnabled) { fireBoltFromEvent(e); setTab("result"); } }} style={tabStyle("result", resultEnabled)}>Result</button>
         <button onClick={(e) => { fireBoltFromEvent(e); setTab("ask"); }} style={tabStyle("ask", true)}>Ask Claude</button>
         </div>
         <div style={{ flex: 1 }} />
-        {/* The run controls belong to the two tabs about the run itself:
-            Overview, where the ticket is read and the decision to start one is
-            made, and Execution, where the same button is "Running… (cancel)"
-            and the log you are watching is the reason to press it. On the rest
-            they were a row of chrome above content that has nothing to do with
-            a run — and on a phone that row costs a third of the fold. */}
-        {(tab === "overview" || tab === "execution") && (
+        {/* The run controls belong to Overview, where the ticket is read and the
+            decision to start one is made. On the rest they were a row of chrome
+            above content that has nothing to do with a run — and on a phone that
+            row costs a third of the fold. */}
+        {tab === "overview" && (
         <div className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
             {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
@@ -159,12 +145,6 @@ export default function TicketDetailHeader({
             {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
             <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
           </button>
-          {secondaryAction && (
-            <button onClick={secondaryAction.onClick} style={secondaryAction.style}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>
-              <span style={{ position: "relative", zIndex: 1 }}>{secondaryAction.label}</span>
-            </button>
-          )}
         </div>
         )}
       </div>

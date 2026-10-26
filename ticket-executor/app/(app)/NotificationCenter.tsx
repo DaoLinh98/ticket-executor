@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import NotificationBell from "../ticket-executor/NotificationBell";
 import { useBoltsContext } from "../BoltsContext";
 import { useNotifications } from "./NotificationsProvider";
-import type { AppNotification } from "@/lib/notifications";
+import { notificationPath, type AppNotification } from "@/lib/notifications";
 
 /**
  * The bell, as every page's header renders it.
@@ -45,7 +45,7 @@ export default function NotificationCenter() {
     }
     // `at` is a nonce: without it, clicking the same notification twice pushes
     // an identical URL and the screen has nothing to react to.
-    router.push(`/ticket-execution?ticket=${encodeURIComponent(n.ticketId)}&tab=${n.tab}&at=${Date.now()}`);
+    router.push(`${notificationPath(n.ticketId, n.tab)}&at=${Date.now()}`);
   };
 
   return (

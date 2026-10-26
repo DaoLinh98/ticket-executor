@@ -17,12 +17,12 @@ import DesktopOnly from "../DesktopOnly";
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
   { id: "environment", title: "ENVIRONMENT", blurb: "Local tooling and database the app itself needs." },
-  { id: "skills", title: "SKILLS", blurb: "The four skills a run can be started with. They live on your machine; this repo ships a copy you can install from here." },
+  { id: "skills", title: "SKILLS", blurb: "The skills Flow Runner's turns use. They live on your machine; this repo ships a copy you can install from here." },
   { id: "agents", title: "AGENTS", blurb: "The subagents a D-Agent workflow run spawns. They live in ~/.claude/agents; this repo ships a copy you can install from here." },
   { id: "connection", title: "PROVIDER CONNECTION", blurb: "The organization-level connection tickets are read from." },
   { id: "agent-access", title: "CLAUDE'S PROVIDER ACCESS", blurb: "How the Claude CLI itself reaches the provider — its MCP path, separate from the app's connection above. Without it a skill cannot read the ticket." },
   // No "repo" section: Root repo belongs to a ticket, not to this page. It is
-  // validated per run by POST /api/tickets/[id]/implement before the CLI starts.
+  // validated per run by the D-Agent admission (lib/dagent startRun) before the CLI starts.
 ];
 
 // Which Guide section explains how to clear this group's failures.
