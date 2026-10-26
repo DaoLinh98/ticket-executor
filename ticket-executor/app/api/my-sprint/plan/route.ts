@@ -31,7 +31,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveCredential, reviewersFor } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
 import { DEFAULT_PLAN_CONFIG, deliverablesOnly, type PlanConfig } from "@/lib/sprintPlan";
-import { loadMyCycle, loadSprintCycle, normalizeProvider } from "@/lib/tickets";
+import { loadMyCycle, loadSprintCycle, normalizeProvider, readPullRequestAbandoned } from "@/lib/tickets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -258,7 +258,8 @@ export async function PUT(req: Request) {
         estimateHours: number(t.estimateHours),
         status: String(t.status ?? ""),
       },
-      new Date().toISOString().slice(0, 10)
+      new Date().toISOString().slice(0, 10),
+      (prUrl) => readPullRequestAbandoned(provider, prUrl)
     );
     return NextResponse.json({ outcome, plan: await planById(plan.id) }, outcome.ok ? undefined : { status: 400 });
   }
@@ -272,7 +273,8 @@ export async function PUT(req: Request) {
   }
   if (body.moveInQueue && typeof body.moveInQueue === "object" && typeof body.moveInQueue.id === "string") {
     const { id, move } = body.moveInQueue;
-    if (!["up", "down", "top"].includes(move)) return NextResponse.json({ error: "Unknown move." }, { status: 400 });
+    const valid = ["up", "down", "top"].includes(move) || (typeof move === "object" && move !== null && typeof move.to === "string");
+    if (!valid) return NextResponse.json({ error: "Unknown move." }, { status: 400 });
     const outcome = await moveInQueue(id, move);
     const item = await prisma.plannedTicket.findUnique({ where: { id } });
     return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });

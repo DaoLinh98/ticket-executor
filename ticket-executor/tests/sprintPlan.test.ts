@@ -18,6 +18,7 @@ import {
   reorderQueue,
   releasesOn,
   retryDenial,
+  startsOver,
   summarize,
   ticketHours,
   workingDays,
@@ -420,6 +421,18 @@ test("reorderQueue moves one row and keeps the set of positions dense", () => {
   assert.deepEqual([...reorderQueue(rows, "a", "down")!], [["b", 1], ["a", 3], ["c", 4]]);
 });
 
+test("reorderQueue drops a row onto another row's position", () => {
+  const rows = [
+    { id: "a", implementOrder: 1 },
+    { id: "b", implementOrder: 3 },
+    { id: "c", implementOrder: 4 },
+  ];
+  assert.deepEqual([...reorderQueue(rows, "a", { to: "c" })!], [["b", 1], ["c", 3], ["a", 4]]);
+  assert.deepEqual([...reorderQueue(rows, "c", { to: "b" })!], [["a", 1], ["c", 3], ["b", 4]]);
+  assert.equal(reorderQueue(rows, "a", { to: "a" }), null);
+  assert.equal(reorderQueue(rows, "a", { to: "missing" }), null);
+});
+
 test("reorderQueue refuses a move that changes nothing", () => {
   const rows = [{ id: "a", implementOrder: 1 }, { id: "b", implementOrder: 2 }];
   assert.equal(reorderQueue(rows, "a", "up"), null);
@@ -458,4 +471,25 @@ test("forecastFinish has nothing to say before any point is done or without a ca
   assert.equal(forecastFinish({ donePoints: 0, remainingPoints: 8, window: SPRINT, today: "2026-09-10" }), null);
   assert.equal(forecastFinish({ donePoints: 4, remainingPoints: 8, window: { startDate: "", finishDate: "" }, today: "2026-09-10" }), null);
   assert.equal(forecastFinish({ donePoints: 4, remainingPoints: 8, window: SPRINT, today: "2026-09-01" }), null);
+});
+
+test("a ticket added back starts over only when every pull request was abandoned and nothing was released", () => {
+  const pr = "https://dev.azure.com/o/p/_git/r/pullrequest/1";
+  const companion = "https://dev.azure.com/o/p/_git/r2/pullrequest/2";
+  assert.equal(startsOver({ prUrls: [pr], abandoned: [pr], released: false, implementState: "implemented" }), true);
+  assert.equal(startsOver({ prUrls: [pr, companion], abandoned: [pr], released: false, implementState: "implemented" }), false);
+  assert.equal(startsOver({ prUrls: [pr], abandoned: [pr], released: true, implementState: "implemented" }), false);
+  assert.equal(startsOver({ prUrls: [], abandoned: [], released: false, implementState: "pending" }), false);
+});
+
+test("a ticket added back with no pull request starts over only when its run stopped", () => {
+  const none = { prUrls: [], abandoned: [], released: false };
+  assert.equal(startsOver({ ...none, implementState: "failed" }), true);
+  assert.equal(startsOver({ ...none, implementState: "skipped" }), true);
+  for (const implementState of ["running", "implemented", "pending"]) {
+    assert.equal(startsOver({ ...none, implementState }), false);
+  }
+  assert.equal(startsOver({ ...none, released: true, implementState: "failed" }), false);
+  const pr = "https://dev.azure.com/o/p/_git/r/pullrequest/1";
+  assert.equal(startsOver({ prUrls: [pr], abandoned: [], released: false, implementState: "failed" }), false);
 });

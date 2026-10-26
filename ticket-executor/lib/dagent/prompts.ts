@@ -1,5 +1,6 @@
 import path from "path";
-import { bundleOf, deliveryOf, findingsOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, threadsOf, warningsOf } from "./rules";
+import { basesOf, bundleOf, deliveryOf, findingsOf, lastDelivery, LOCAL_INSTRUCTIONS, scopeOf, skillsOf, threadsOf, warningsOf } from "./rules";
+import { skillCatalog } from "./skills";
 import type { Ctx, Refusal } from "./types";
 
 export const PLAN_FILE = path.join(".te", "plan.md");
@@ -14,7 +15,35 @@ function header(c: Ctx): string {
   if (c.prUrl && c.flow === "review") lines.push(`Pull request under review: ${c.prUrl}`);
   lines.push(...repoMap(c));
   if (c.knowledgeFile) lines.push(`Project knowledge: ${c.knowledgeFile} (absolute path; may not exist yet)`);
+  lines.push(...skillLines(c));
   return lines.join("\n");
+}
+
+function skillLines(c: Ctx): string[] {
+  const skills = skillsOf(c);
+  if (!skills.length) return [];
+  const bases = Object.entries(basesOf(c));
+  return [
+    "Skills that apply to this ticket — read each SKILL.md (and the files it links) before you start, and follow its rules. " +
+      "Where one conflicts with this brief (branching, committing, pushing, pull requests), this brief wins:",
+    ...skills.map((s) => `- ${s.name}: ${s.file} — ${s.reason}`),
+    ...(bases.length ? [`The harness already started the work from the base a skill requires: ${bases.map(([r, b]) => `${r} on origin/${b}`).join(", ")}.`] : []),
+  ];
+}
+
+// The installed skills the first judging role chooses from.
+function skillMenu(c: Ctx, withBase: boolean): string {
+  const catalog = skillCatalog(c.rootRepo);
+  if (!catalog.length) return `\n\nNo skill is installed — report \`skills\` empty${withBase ? " and `baseBranch` empty" : ""}.`;
+  return (
+    `\n\nInstalled skills — pick every one whose description fits this ticket (none is a valid answer), read its SKILL.md, and report it in \`skills\`. ` +
+    `Every later role is told to follow the skills you pick.` +
+    (withBase
+      ? ` When a picked skill requires the work to start from a branch other than the default branch (and the pull request to target it), ` +
+        `report that branch in \`baseBranch\`; otherwise leave it empty. The harness moves the working tree onto it before the plan.`
+      : "") +
+    `\n${catalog.map((s) => `- ${s.name} (${s.file}): ${s.description}`).join("\n")}`
+  );
 }
 
 function repoMap(c: Ctx): string[] {
@@ -60,8 +89,9 @@ const numbered = (list: Refusal[]) =>
 export function readinessPrompt(c: Ctx): string {
   return (
     `${header(c)}\n\nRead this work item and decide whether it is ready to implement.\n` +
-    `Then check every acceptance criterion against the base commits above — they are the latest origin default branch — ` +
-    `and report in \`delivery\` whether it is already delivered by an earlier merged pull request or commit.`
+    `Then check every acceptance criterion against the base commits above — they are the latest origin default branch; ` +
+    `when you report a \`baseBranch\`, check against \`origin/<baseBranch>\` instead (\`git fetch origin <baseBranch>\`, \`git show origin/<baseBranch>:<file>\`) — ` +
+    `and report in \`delivery\` whether it is already delivered by an earlier merged pull request or commit.${skillMenu(c, true)}`
   );
 }
 
@@ -132,17 +162,21 @@ export function reflectPrompt(c: Ctx): string {
   );
 }
 
+// The worktree on the pull request's branch — a related repo's when the pull request lives there.
+const prTree = (c: Ctx) => c.companions.find((m) => m.name === c.channels.setup?.prRepo)?.cwd ?? c.cwd;
+
 export function reviewTriagePrompt(c: Ctx): string {
   return (
-    `${header(c)}\n\nThe working tree is on the pull request's source branch \`${branchOf(c)}\`. ` +
+    `${header(c)}\n\nThe working tree \`${prTree(c)}\` is on the pull request's source branch \`${branchOf(c)}\`. ` +
     `Read every open review thread on the pull request above and judge each one against the code and the ticket. ` +
-    `Return one \`threads\` entry per open thread and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files and do not reply to any thread.`
+    `Return one \`threads\` entry per open thread and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files and do not reply to any thread.` +
+    skillMenu(c, false)
   );
 }
 
 export function reviewImplementPrompt(c: Ctx): string {
   return (
-    `${header(c)}\n\n${acceptance(c)}\n\nThe decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` — ` +
+    `${header(c)}\n\n${acceptance(c)}\n\nThe decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` of \`${prTree(c)}\` — ` +
     `do not create or switch branches, do not rebase. Commit locally. Do not push and do not reply to any thread.`
   );
 }
@@ -153,7 +187,7 @@ export function respondPrompt(c: Ctx): string {
   const list = answer.map((t, i) => `${i + 1}. thread ${t.threadId} (${t.decision})${t.file ? ` ${t.file}` : ""} — ${t.reason}`).join("\n");
   return (
     `${header(c)}\n\n` +
-    (changed ? `Push branch \`${branchOf(c)}\` from \`${c.cwd}\` to origin (never force-push). Then answer` : "Nothing was committed — push nothing. Answer") +
+    (changed ? `Push branch \`${branchOf(c)}\` from \`${prTree(c)}\` to origin (never force-push). Then answer` : "Nothing was committed — push nothing. Answer") +
     ` these threads on the pull request, one reply each:\n${list}\n\n` +
     `Never resolve a thread or change its status. Skip a thread that already carries your reply — this step may be retried after a crash.`
   );
@@ -163,7 +197,8 @@ export function qaTriagePrompt(c: Ctx): string {
   return (
     `${header(c)}\n\nQA sent this ticket back. Read the work item and the QC comments left since the last delivery, and judge every finding ` +
     `against the code on the base commits above. Return the verdicts in \`findings\`; when at least one is a real defect, propose \`branch\` and the fix plan in \`planMd\` ` +
-    `(the harness writes it to \`${PLAN_FILE}\`). When none is, draft \`qaReply\`. Do not write files and do not comment on the ticket.`
+    `(the harness writes it to \`${PLAN_FILE}\`). When none is, draft \`qaReply\`. Do not write files and do not comment on the ticket.` +
+    skillMenu(c, true)
   );
 }
 
@@ -175,17 +210,18 @@ export function qaImplementPrompt(c: Ctx): string {
   );
 }
 
-export type PublishTarget = { repo: string; cwd: string; branch: string };
+export type PublishTarget = { repo: string; cwd: string; branch: string; base: string };
 
 export function publishTargets(c: Ctx): PublishTarget[] {
   const rows = Array.isArray(c.channels.diffGuard?.changed) ? (c.channels.diffGuard.changed as { repo: string; branch: string }[]) : [];
   const cwdOf = (name: string) => (name === rootName(c) ? c.cwd : c.companions.find((m) => m.name === name)?.cwd ?? "");
-  return rows.map((r) => ({ repo: r.repo, cwd: cwdOf(r.repo), branch: r.branch })).filter((t) => t.cwd && t.branch);
+  const bases = basesOf(c);
+  return rows.map((r) => ({ repo: r.repo, cwd: cwdOf(r.repo), branch: r.branch, base: bases[r.repo] ?? "" })).filter((t) => t.cwd && t.branch);
 }
 
 export function publishPrompt(c: Ctx): string {
   const list = publishTargets(c)
-    .map((t) => `- ${t.repo}: working tree \`${t.cwd}\`, branch \`${t.branch}\``)
+    .map((t) => `- ${t.repo}: working tree \`${t.cwd}\`, branch \`${t.branch}\` → pull request into ${t.base ? `\`${t.base}\` (required by a skill)` : "the default branch"}`)
     .join("\n");
   return `${header(c)}\n\nPublish these repositories (and only these):\n${list}\n\nReport one \`prs\` entry per repository above.`;
 }

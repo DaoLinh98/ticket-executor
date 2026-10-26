@@ -73,7 +73,7 @@ export function WorkflowHud(p: HudProps) {
           </span>
         </span>
         <span className="te-wf-desk" style={{ display: "flex", gap: 18, alignItems: "center" }}>
-          <Metric label="Cost">
+          <Metric label="Run cost">
             <b style={{ fontSize: FONT.base, fontFamily: MONO }}>{hud.cost}</b>
           </Metric>
           <Metric label="Tokens in / out">
@@ -108,7 +108,7 @@ export function WorkflowHud(p: HudProps) {
       {p.mobileOpen ? (
         <div className="te-wf-mob">
           <div className="te-wf-hud-grid" style={{ display: "grid", gap: 8, padding: "2px 0 8px" }}>
-            <Metric label="Cost">
+            <Metric label="Run cost">
               <b style={{ fontSize: FONT.base, fontFamily: MONO }}>{hud.cost}</b>
             </Metric>
             <Metric label="Tokens in/out">

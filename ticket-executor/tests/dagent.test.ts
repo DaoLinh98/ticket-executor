@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
-import { agentsOf, allAgents, GRAPH, GRAPHS, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
-import { implementPrompt, readinessPrompt } from "../lib/dagent/prompts";
-import { bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, warningsOf } from "../lib/dagent/rules";
+import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
+import { implementPrompt, publishPrompt, readinessPrompt } from "../lib/dagent/prompts";
+import { basesOf, bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, skillFrontMatter, skillsOf, warningsOf } from "../lib/dagent/rules";
 import { companionNote } from "../lib/repoContext";
 import { readFileSync } from "fs";
 import path from "path";
@@ -167,9 +167,24 @@ test("a blocked fixer records a lesson before failing; a turn error never reache
 });
 
 test("implement and fix must commit before anything is verified", () => {
-  assert.equal(edge("implement", ctx(), ok({ ...clear, committed: false })).to, FAIL);
+  assert.equal(edge("implement", ctx(), ok({ ...clear, committed: false, filesChanged: 0, uncommitted: 3 })).to, FAIL);
+  assert.equal(edge("implement", ctx(), ok({ ...clear, committed: false, filesChanged: 0, uncommitted: 0, blocked: { is: true, reason: "x" } })).to, FAIL);
+  assert.equal(edge("fix", ctx(), ok({ ...clear, committed: false, filesChanged: 0, uncommitted: 0 })).to, FAIL);
   assert.equal(edge("fix", ctx(), ok({ ...clear, committed: true })).to, "syncBase");
   assert.equal(edge("implement", ctx(), notOk("turn failed")).to, FAIL);
+});
+
+test("an implement that rightly changes nothing parks for a person instead of failing", () => {
+  const clean = ok({ ...clear, committed: false, filesChanged: 0, uncommitted: 0 });
+  assert.deepEqual(GRAPH.edges.implement(ctx(), clean), { to: NEEDS_REVIEW, reason: "no code change needed — a person confirms" });
+  assert.equal(QA_GRAPH.edges.implement(ctx(), clean).to, NEEDS_REVIEW);
+  assert.equal(REVIEW_GRAPH.edges.implement(ctx(), clean).to, FAIL);
+  for (const id of ["dagent-implement-v2", "dagent-fix-qa-v1"]) {
+    const old = graphById(id)!;
+    assert.ok(!old.nodes.implement.next.includes(NEEDS_REVIEW), id);
+    assert.equal(old.edges.implement(ctx(), clean).to, FAIL, id);
+  }
+  assert.equal(flowOf("dagent-fix-qa-v1"), "qa");
 });
 
 test("pre-publish re-syncs when the base moved, and fails on anything else", () => {
@@ -266,4 +281,30 @@ test("the repo ships every agent the graph runs, each valid and versioned", () =
     assert.equal(agentProblem(name, parseAgent(readFileSync(file, "utf8"))), "", name);
     assert.notEqual(readVersion(file), "0.0.0", `${name} has no version`);
   }
+});
+
+test("a skill's name and description come from its front matter, folded descriptions included", () => {
+  assert.deepEqual(skillFrontMatter("---\nname: dotnet-upgrade-10\ndescription: Upgrades .NET to net10.0.\n---\n# body"), {
+    name: "dotnet-upgrade-10",
+    description: "Upgrades .NET to net10.0.",
+  });
+  assert.deepEqual(skillFrontMatter("---\r\nname: x\r\ndescription: >\r\n  first line\r\n  second line\r\n---\r\n"), { name: "x", description: "first line second line" });
+  assert.deepEqual(skillFrontMatter("# no front matter"), { name: "", description: "" });
+});
+
+test("picked skills and their base branch reach every later brief and the publisher", () => {
+  const readiness = {
+    skills: [{ name: "dotnet-upgrade-10", file: "/home/.claude/skills/dotnet-upgrade-10/SKILL.md", reason: "upgrade ticket" }],
+    bases: { "billing-api": "feature/dotnet-10-upgrade" },
+  };
+  const c = ctx({ readiness, plan: { branch: "feature/4182-x" }, diffGuard: { changed: [{ repo: "billing-api", branch: "feature/4182-x", files: 2 }] } });
+  assert.equal(skillsOf(c).length, 1);
+  assert.deepEqual(basesOf(c), { "billing-api": "feature/dotnet-10-upgrade" });
+  const impl = implementPrompt(c);
+  assert.match(impl, /dotnet-upgrade-10: \/home\/\.claude\/skills\/dotnet-upgrade-10\/SKILL\.md/);
+  assert.match(impl, /this brief wins/);
+  assert.match(impl, /billing-api on origin\/feature\/dotnet-10-upgrade/);
+  assert.match(publishPrompt(c), /pull request into `feature\/dotnet-10-upgrade`/);
+  assert.match(publishPrompt(ctx({ diffGuard: c.channels.diffGuard })), /pull request into the default branch/);
+  assert.doesNotMatch(implementPrompt(ctx({ plan: { branch: "b" } })), /Skills that apply/);
 });

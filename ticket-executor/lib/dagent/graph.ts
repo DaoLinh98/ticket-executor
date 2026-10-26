@@ -27,9 +27,9 @@ import {
 } from "./schemas";
 import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
 
-export const GRAPH_ID = "dagent-implement-v2";
+export const GRAPH_ID = "dagent-implement-v3";
 export const REVIEW_GRAPH_ID = "dagent-fix-review-v1";
-export const QA_GRAPH_ID = "dagent-fix-qa-v1";
+export const QA_GRAPH_ID = "dagent-fix-qa-v2";
 export const MAX_FIX_ATTEMPTS = 5;
 export const MAX_PLAN_ATTEMPTS = 2;
 export const MAX_PRE_PUBLISH = 3;
@@ -59,7 +59,7 @@ const NODES: Node[] = [
   { id: "planCheck", label: "Plan check", phase: "understand", kind: "check", effects: "pure", next: ["implement", "plan", FAIL] },
   {
     id: "implement", label: "Implement", phase: "build", kind: "agent", agent: "implementer", effects: "local",
-    next: ["syncBase", FAIL], output: schema(STEP_OUTPUT), prompt: implementPrompt,
+    next: ["syncBase", NEEDS_REVIEW, FAIL], output: schema(STEP_OUTPUT), prompt: implementPrompt,
   },
   { id: "syncBase", label: "Sync with base", phase: "build", kind: "harness", effects: "local", next: ["diffGuard", FAIL] },
   { id: "diffGuard", label: "Diff guard", phase: "verify", kind: "check", effects: "pure", next: ["evaluate", FAIL] },
@@ -88,6 +88,17 @@ const delivered: Edge = (_c, r) => {
   if (bad) return bad;
   if (!r.data.committed) return { to: FAIL, reason: "nothing was committed" };
   return { to: "syncBase", reason: "committed locally" };
+};
+
+// Implement may rightly change nothing: the base already does what the ticket asks. Only a clean worktree with no
+// commit, no changed file and no blocker counts — a person confirms it instead of the run failing a job it did.
+const NO_CHANGE = "no code change needed — a person confirms";
+
+const implemented: Edge = (c, r) => {
+  const e = delivered(c, r);
+  const b = (r.data.blocked ?? {}) as Blocked;
+  const clean = !r.data.committed && Number(r.data.filesChanged ?? 0) === 0 && Number(r.data.uncommitted ?? 0) === 0;
+  return e.to === FAIL && r.ok && !b.is && clean ? { to: NEEDS_REVIEW, reason: NO_CHANGE } : e;
 };
 
 const fixed: Edge = (c, r) => {
@@ -119,7 +130,7 @@ const EDGES: Record<string, Edge> = {
     if ((c.visits.plan ?? 0) >= MAX_PLAN_ATTEMPTS) return { to: FAIL, reason: `plan still refused (${n} issue(s)) after ${c.visits.plan} attempt(s)` };
     return { to: "plan", reason: `${n} plan issue(s) → re-plan` };
   },
-  implement: delivered,
+  implement: implemented,
   fix: fixed,
   syncBase: (_c, r) => {
     if (!r.ok) return { to: FAIL, reason: r.error || "sync failed" };
@@ -278,12 +289,26 @@ export const QA_GRAPH: Graph = {
 
 export const GRAPHS: Record<Flow, Graph> = { implement: GRAPH, review: REVIEW_GRAPH, qa: QA_GRAPH };
 
+// The shapes before implement could park a no-change result — kept so a run begun on one finishes on it.
+const beforeNoChange = (g: Graph, id: string): Graph => ({
+  ...g,
+  id,
+  nodes: { ...g.nodes, implement: { ...g.nodes.implement, next: g.nodes.implement.next.filter((t) => t !== NEEDS_REVIEW) } },
+  edges: { ...g.edges, implement: delivered },
+});
+
+const LEGACY: Record<Flow, Graph[]> = {
+  implement: [beforeNoChange(GRAPH, "dagent-implement-v2")],
+  review: [],
+  qa: [beforeNoChange(QA_GRAPH, "dagent-fix-qa-v1")],
+};
+
 export function graphById(id: string): Graph | null {
-  return Object.values(GRAPHS).find((g) => g.id === id) ?? null;
+  return [...Object.values(GRAPHS), ...Object.values(LEGACY).flat()].find((g) => g.id === id) ?? null;
 }
 
 export function flowOf(graphId: string): Flow {
-  return (Object.keys(GRAPHS) as Flow[]).find((f) => GRAPHS[f].id === graphId) ?? "implement";
+  return (Object.keys(GRAPHS) as Flow[]).find((f) => GRAPHS[f].id === graphId || LEGACY[f].some((g) => g.id === graphId)) ?? "implement";
 }
 
 export type NodeOutline = {

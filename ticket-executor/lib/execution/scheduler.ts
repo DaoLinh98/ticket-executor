@@ -37,7 +37,7 @@ import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
 import { cancelRun, resumeRateLimitedRuns, startRun, type StartRunInput } from "./runner";
-import { cancelRun as cancelDagentRun, runOutcomes, startRun as startDagentRun } from "../dagent";
+import { cancelRun as cancelDagentRun, onRunEnded as onDagentRunEnded, runOutcomes, startRun as startDagentRun } from "../dagent";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
  *  faster than a Claude turn finishes, and a tighter loop would only add
@@ -868,6 +868,14 @@ async function reconcileImplement(): Promise<void> {
       await settleNoFixNeeded(item, out);
       continue;
     }
+    if (run.state === "succeeded" && out.noChange === true) {
+      await prisma.plannedTicket.update({ where: { id: item.id }, data: { implementState: "no-fix-needed" } });
+      await logAutomation({
+        planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done", reason: "no-change",
+        detail: "No code change needed — the base already does what the ticket asks. Nothing was published.",
+      });
+      continue;
+    }
     const implemented = run.state === "succeeded" && !!run.prUrl;
     await prisma.plannedTicket.update({
       where: { id: item.id },
@@ -1042,7 +1050,34 @@ async function safeTick() {
     console.error("[ticket-executor] scheduler tick failed:", e);
   } finally {
     running = false;
+    settleAgain();
   }
+}
+
+let settlePending = false;
+
+/** Reconcile now, outside the tick — a D-Agent run just ended and its row should not wait up to `TICK_MS`.
+ *  Shares the tick's guard, so a busy tick defers it to its own end instead of reconciling twice at once. */
+async function settleNow() {
+  if (running) {
+    settlePending = true;
+    return;
+  }
+  running = true;
+  try {
+    await reconcile();
+  } catch (e) {
+    console.error("[ticket-executor] reconcile after a D-Agent run failed:", e);
+  } finally {
+    running = false;
+    settleAgain();
+  }
+}
+
+function settleAgain() {
+  if (!settlePending) return;
+  settlePending = false;
+  void settleNow();
 }
 
 /** Start the ticker. Idempotent — a second call is a no-op, which matters
@@ -1053,6 +1088,7 @@ export function startScheduler() {
   // Do not run one immediately: a server that has just started is also a server
   // whose `recoverInterruptedRuns()` sweep is still deciding what is alive.
   timer.unref?.();
+  onDagentRunEnded(() => void settleNow());
   console.log(`[ticket-executor] scheduler started (every ${TICK_MS / 1000}s)`);
 }
 

@@ -579,6 +579,8 @@ export function dropdownPanelStyle(opts?: {
     background: SURFACE.inset,
     boxShadow: "0 22px 54px -24px #000",
     padding: "5px",
+    transformOrigin: "top",
+    animation: "popIn .22s both",
     ...(opts?.minWidth ? { minWidth: opts.minWidth } : {}),
     ...(opts?.maxHeight
       ? { maxHeight: opts.maxHeight, overflowY: "auto" }

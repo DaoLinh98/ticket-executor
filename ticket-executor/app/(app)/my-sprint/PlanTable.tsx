@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import { COLORS, FONT, card, fieldInput, pill, sectionCaption, statusPill } from "@/lib/ui";
 import { isFixingQa, MAX_QA_ROUNDS, QA_STAGES, stageOf } from "@/lib/ticketLifecycle";
@@ -21,8 +22,8 @@ import {
 } from "./model";
 
 const GRID = "84px 1fr 60px 132px 132px 104px 176px";
-const HEADERS = ["#", "TICKET", "PTS", "STATUS", "RELEASE", "STATE", "ACTIONS"];
-const LABELS = ["Queue", "", "Pts", "Status", "Release", "State", ""];
+const HEADERS = ["QUEUE", "TICKET", "PTS", "TRACKER", "RELEASE", "RUN", "ACTIONS"];
+const LABELS = ["Queue", "", "Pts", "Tracker", "Release", "Run", ""];
 
 export type PlanHandlers = {
   openExecution: (ticketId: string, tab: "execution" | "result") => void;
@@ -71,6 +72,8 @@ export default function PlanTable({
   releaseDayOptions,
   costs,
   reorderable,
+  selected,
+  onSelect,
   handlers: h,
 }: {
   rows: PlannedRow[];
@@ -81,9 +84,14 @@ export default function PlanTable({
   releaseDayOptions: string[];
   costs: Record<string, number>;
   reorderable: boolean;
+  selected: ReadonlySet<string>;
+  onSelect: (plannedId: string, on: boolean) => void;
   handlers: PlanHandlers;
 }) {
   const modelOptions = useClaudeModels().data?.models ?? CLAUDE_MODELS;
+  // Drag a queued row onto another queued row to take its place; the arrows stay for touch screens.
+  const [dragId, setDragId] = useState("");
+  const [overId, setOverId] = useState("");
   const movable = rows.filter(isMovable).sort((a, b) => a.implementOrder - b.implementOrder);
   const firstMovable = movable[0]?.id;
   const lastMovable = movable[movable.length - 1]?.id;
@@ -93,9 +101,9 @@ export default function PlanTable({
     url || (adoBase && t.project ? `${adoBase}/${encodeURIComponent(t.project)}/_workitems/edit/${t.ticketId}` : undefined);
 
   return (
-    <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), overflow: "hidden" }}>
+    <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), flex: "1 1 auto", minWidth: 0, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
       <div className="te-table-body te-plan-table">
-        <div className="te-plan-head" style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
+        <div className="te-plan-head" style={{ position: "sticky", top: 0, zIndex: 2, background: COLORS.panelBg, display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
           {HEADERS.map((hd) => (
             <span key={hd} style={{ ...sectionCaption(), ...(hd === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{hd}</span>
           ))}
@@ -124,6 +132,15 @@ export default function PlanTable({
             const stage = stageOf(t.stage || ticket?.status || "");
             const cells = [
               <span key="order" style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+                {t.id && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select #${t.ticketId}`}
+                    checked={selected.has(t.id)}
+                    onChange={(e) => onSelect(t.id, e.target.checked)}
+                    style={{ width: "16px", height: "16px", margin: "0 6px 0 0", accentColor: COLORS.accent, cursor: "pointer", flex: "0 0 auto" }}
+                  />
+                )}
                 <span style={{ fontSize: FONT.sm, fontWeight: 700, minWidth: "20px", color: t.implementOrder ? COLORS.accent : COLORS.faint }}>
                   {t.implementOrder || "—"}
                 </span>
@@ -149,7 +166,11 @@ export default function PlanTable({
                     {READINESS[tri.readiness]?.label ?? tri.readiness}
                   </span>
                 ) : (
-                  <span style={statusPill(ticket?.status ?? "")}>{ticket?.status ?? "—"}</span>
+                  ticket?.status ? (
+                  <span style={statusPill(ticket.status)}>{ticket.status}</span>
+                ) : (
+                  <span style={{ fontSize: FONT.base, color: COLORS.faint }}>—</span>
+                )
                 )}
               </span>,
               redatable ? (
@@ -166,7 +187,7 @@ export default function PlanTable({
                 </select>
               ) : (
                 <span key="release" style={{ fontSize: FONT.base, fontWeight: 600, color: t.releasedAt ? COLORS.success : t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted }}>
-                  {t.releasedAt ? "released" : dayLabel(t.releaseDay)}
+                  {dayLabel(t.releasedAt ? t.releasedAt.slice(0, 10) : t.releaseDay)}
                 </span>
               ),
               <span key="state" style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
@@ -179,7 +200,15 @@ export default function PlanTable({
               <div
                 key={t.ticketId}
                 className="te-plan-row"
+                draggable={canMove}
+                onDragStart={canMove ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragId(t.id); } : undefined}
+                onDragEnd={() => { setDragId(""); setOverId(""); }}
+                onDragOver={canMove && dragId && dragId !== t.id ? (e) => { e.preventDefault(); setOverId(t.id); } : undefined}
+                onDragLeave={() => setOverId((o) => (o === t.id ? "" : o))}
+                onDrop={canMove && dragId && dragId !== t.id ? (e) => { e.preventDefault(); h.move(dragId, { to: t.id }); setDragId(""); setOverId(""); } : undefined}
                 style={{
+                  cursor: canMove ? "grab" : undefined,
+                  boxShadow: overId === t.id ? `inset 0 2px 0 ${COLORS.accent}` : undefined,
                   display: "grid", gridTemplateColumns: GRID, gap: "10px",
                   padding: "11px 14px", alignItems: "center",
                   borderTop: i === 0 ? "none" : "1px solid " + COLORS.borderSubtle,
@@ -232,7 +261,7 @@ export default function PlanTable({
                             <span style={pill({ color: COLORS.info, size: "xs", weight: 700 })}>{t.project || ticket?.project}</span>
                           )}
                           {origin && <span style={pill({ color: COLORS.indigo, size: "xs", weight: 700 })}>{origin}</span>}
-                          {cost > 0 && <span title="Spent on runs for this ticket" style={pill({ color: COLORS.textMuted, size: "xs", weight: 700 })}>{usd(cost)}</span>}
+                          {cost > 0 && <span title="Spent on all runs for this ticket" style={pill({ color: COLORS.textMuted, size: "xs", weight: 700 })}>{usd(cost)} all runs</span>}
                         </span>
                       )}
                       {tri?.reason && (

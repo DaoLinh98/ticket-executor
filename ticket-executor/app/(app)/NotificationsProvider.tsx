@@ -223,6 +223,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
         fetch("/api/notifications", { cache: "no-store" }),
         fetch("/api/notifications/read", { cache: "no-store" }),
       ]);
+      if (!sourcesRes.ok) throw new Error(`GET /api/notifications -> ${sourcesRes.status}`);
       const data = await sourcesRes.json();
       if (Array.isArray(data.automation)) setAutomation(data.automation);
       if (Array.isArray(data.pullRequests)) setPullRequests(data.pullRequests);

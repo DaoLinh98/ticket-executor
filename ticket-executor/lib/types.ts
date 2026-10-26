@@ -129,6 +129,7 @@ export type PullRequestOverview = {
   status: string; // Active | Approved | Changes requested | Completed | Abandoned
   branch: string;
   targetBranch: string;
+  repo?: string; // the repository the pull request lives in
   author: string;
   reviewers: string[];
   createdAt: string; // ISO

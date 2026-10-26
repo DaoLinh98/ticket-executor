@@ -11,6 +11,7 @@ import {
   COLORS,
   FONT,
   card,
+  ctaButtonStyle,
   dropdownPanelStyle,
   fieldInput,
   fieldLabel,
@@ -33,7 +34,7 @@ import type { Ticket } from "@/lib/types";
 import type { TriagedTicket } from "@/lib/execution/triage";
 import ActionButton from "./ActionButton";
 import { ActionLegend, IconAction } from "./actionIcons";
-import AutomationPanel, { type PlanSettings } from "./AutomationPanel";
+import AutomationPanel from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import RunOptionsDialog from "./RunOptionsDialog";
 import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
@@ -43,6 +44,7 @@ import PlanTable from "./PlanTable";
 import QcReplies from "./QcReplies";
 import RebuildPreviewDialog from "./RebuildPreviewDialog";
 import SchedulerLog from "./SchedulerLog";
+import CapacityStrip from "./CapacityStrip";
 import TicketTimeline from "./TicketTimeline";
 import {
   LANE_COLOR,
@@ -58,6 +60,8 @@ import {
   type QaDraft,
   type RebuildPreview,
   type StoredPlan,
+  PLAN_KEY,
+  fetchPlan,
 } from "./model";
 
 // The developer's own view of one iteration: what they are carrying, whether it
@@ -72,7 +76,6 @@ import {
 type Confirm = { title: string; confirmLabel: string; busyKey: string; body: ReactNode; run: () => Promise<void> };
 
 const SPRINT_KEY = ["my-sprint"] as const;
-const PLAN_KEY = ["my-sprint", "plan"] as const;
 const PLAN_POLL_MS = 5000;
 const PLAN_IDLE_POLL_MS = 30000;
 const SPRINT_POLL_MS = 60000;
@@ -81,16 +84,6 @@ const TONE_RANK = { danger: 0, warning: 1, accent: 2 } as const;
 
 const planRunning = (p?: PlanResponse) =>
   (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.drafts ?? []).some((d) => d.status === "running");
-
-const fetchPlan = async (): Promise<PlanResponse> => {
-  const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
-  return {
-    plan: d.plan ?? null,
-    events: Array.isArray(d.events) ? d.events : [],
-    drafts: Array.isArray(d.drafts) ? d.drafts : [],
-    costs: d.costs && typeof d.costs === "object" ? d.costs : {},
-  };
-};
 
 export default function MySprintPage() {
   const router = useRouter();
@@ -103,10 +96,11 @@ export default function MySprintPage() {
   // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [settledNeedle, setSettledNeedle] = useState("");
-  const [settingsDraft, setSettingsDraft] = useState<Partial<PlanSettings>>({});
   const [preview, setPreview] = useState<RebuildPreview | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [filter, setFilter] = useState<PlanFilter>("all");
@@ -141,12 +135,6 @@ export default function MySprintPage() {
   const initialLoading = sprintQuery.isPending || planQuery.isPending;
   const refreshing = !initialLoading && (sprintQuery.isFetching || planQuery.isFetching);
   const loadError = data?.error || (sprintQuery.error as Error | null)?.message || (planQuery.error as Error | null)?.message || "";
-
-  const settings: PlanSettings = {
-    pointsPerDay: settingsDraft.pointsPerDay ?? String(stored?.pointsPerDay ?? data?.config.pointsPerDay ?? ""),
-    hoursPerDay: settingsDraft.hoursPerDay ?? String(stored?.hoursPerDay ?? data?.config.hoursPerDay ?? ""),
-    maxTicketsPerDay: settingsDraft.maxTicketsPerDay ?? String(stored?.maxTicketsPerDay ?? data?.config.maxTicketsPerDay ?? 0),
-  };
 
   const reloadSprint = () => queryClient.invalidateQueries({ queryKey: SPRINT_KEY, exact: true });
   const load = () => { void reloadSprint(); };
@@ -277,15 +265,14 @@ export default function MySprintPage() {
   //   });
 
   const planConfig = () => ({
-    pointsPerDay: Number(settings.pointsPerDay) || undefined,
-    hoursPerDay: Number(settings.hoursPerDay) || undefined,
-    maxTicketsPerDay: Number(settings.maxTicketsPerDay) || 0,
+    pointsPerDay: stored?.pointsPerDay ?? data?.config.pointsPerDay,
+    hoursPerDay: stored?.hoursPerDay ?? data?.config.hoursPerDay,
+    maxTicketsPerDay: stored?.maxTicketsPerDay ?? data?.config.maxTicketsPerDay ?? 0,
   });
 
   const applyRebuild = async () => {
     const d = await post("/api/my-sprint/plan", planConfig());
     setStored(d.plan);
-    setSettingsDraft({});
     setMessage("Plan rebuilt.");
     if (d.warning) showToast(d.warning, "warning");
     await load();
@@ -538,6 +525,8 @@ export default function MySprintPage() {
           stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
         }));
 
+  // Removed from the plan by hand but still in the sprint — named so the header total matches the table.
+  const untrackedCount = stored?.items?.filter((i) => i.untracked).length ?? 0;
   const planned = new Set(rows.map((t) => t.ticketId));
   const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
 
@@ -622,6 +611,69 @@ export default function MySprintPage() {
     .filter((t) => matchesFilter(t, filter, attentionIds) && (!projectFilter || t.project === projectFilter))
     .sort((a, b) => (sort === "release" ? (a.releaseDay || "9999").localeCompare(b.releaseDay || "9999") : 0));
   const reorderable = filter === "all" && sort === "queue" && !projectFilter;
+
+  // Bulk actions reuse the per-row writes one after another, each only on the rows its row button would show on.
+  const chosen = rows.filter((t) => t.id && selected.has(t.id));
+  const bulkHold = chosen.filter(queued);
+  const bulkRetry = chosen.filter((t) => t.claim === "mine" && !t.prUrl && t.implementOrder > 0 && (t.implementState === "failed" || t.implementState === "skipped"));
+  const bulkRemove = chosen.filter((t) => t.implementState !== "running" && t.reviewState !== "running");
+  const clearSelection = () => setSelected(new Set());
+  const bulk = async (list: PlannedRow[], fn: (t: PlannedRow) => Promise<unknown>) => {
+    for (const t of list) await fn(t);
+    clearSelection();
+  };
+  // Activating hands the plan to the unattended scheduler, so say what it will do before it does it.
+  const askActivate = () => {
+    if (!stored) return;
+    const next = rows.filter(queued).sort((x, y) => x.implementOrder - y.implementOrder)[0];
+    const dueToday = rows.filter((t) => !!t.prUrl && t.implementState === "implemented" && !t.releasedAt && !!data?.today && !!t.releaseDay && t.releaseDay <= data.today);
+    const flag = (on: boolean) => (on ? "on" : "off");
+    setConfirm({
+      title: "Activate the plan?",
+      confirmLabel: "Activate",
+      busyKey: "activate",
+      body: (
+        <>
+          <span>The scheduler starts acting on this plan on its next pass, with this page closed.</span>
+          <span>
+            Auto-implement {flag(stored.autoImplement)} · Auto-release {flag(stored.autoRelease)} · Auto-resolve review{" "}
+            {flag(stored.autoResolveReview)} · Auto-draft QC reply {flag(stored.autoDraftQaReply)}
+          </span>
+          <span>
+            {stored.autoImplement
+              ? next
+                ? `First to implement: #${next.ticketId} · ${next.title}. ${rows.filter(queued).length} tickets queued.`
+                : "Nothing is queued to implement."
+              : "Auto-implement is off — no run starts on its own."}
+          </span>
+          {dueToday.length > 0 && (
+            <span>
+              {stored.autoRelease ? "Released on the next pass" : "Due for release (auto-release is off)"}:{" "}
+              {dueToday.map((t) => "#" + t.ticketId).join(", ")}
+            </span>
+          )}
+        </>
+      ),
+      run: () => patchPlan({ status: "active" }, "activate"),
+    });
+  };
+
+  const askBulkRemove = () =>
+    setConfirm({
+      title: `Stop tracking ${bulkRemove.length} tickets?`,
+      confirmLabel: "Remove",
+      busyKey: "remove-" + (bulkRemove[0]?.id ?? ""),
+      body: (
+        <>
+          <span>{bulkRemove.map((t) => "#" + t.ticketId).join(", ")}</span>
+          <span>
+            They leave the plan: no runs, release, review or QA watch, and a rebuild will not bring them back. Their runs
+            and pull requests stay as they are.
+          </span>
+        </>
+      ),
+      run: () => bulk(bulkRemove, (t) => removeNow(t.id, t.ticketId)),
+    });
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
@@ -736,6 +788,7 @@ export default function MySprintPage() {
                 <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
                   {summary.ticketCount} tickets across {projectCount} project{projectCount === 1 ? "" : "s"}
                   {summary.handedOff.tickets > 0 ? ` · ${summary.handedOff.tickets} handed off` : ""}
+                  {untrackedCount > 0 ? ` · ${untrackedCount} untracked` : ""}
                   {data?.truncated ? " · list truncated" : ""}
                   {data?.identity?.name ? " · " + data.identity.name : ""}
                 </span>
@@ -743,7 +796,7 @@ export default function MySprintPage() {
 
               <div
                 className="te-sprint-split"
-                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 460px 200px", gridTemplateRows: "minmax(0, 1fr)", gap: "20px" }}
+                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: `minmax(0, 1fr) 460px ${legendOpen ? "200px" : "40px"}`, gridTemplateRows: "minmax(0, 1fr)", gap: "20px", transition: "grid-template-columns .38s var(--te-ease-expo)" }}
               >
               <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
@@ -772,7 +825,8 @@ export default function MySprintPage() {
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <span style={fieldLabel()} title="Tracker status of the tickets still yours — the plan table shows the run state">TRACKER STATUS</span>
                 {(Object.keys(LANE_LABEL) as Lane[]).map((lane) => (
                   <span key={lane} style={{ ...card({ padding: "8px 13px" }), display: "inline-flex", alignItems: "center", gap: "8px" }}>
                     <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: LANE_COLOR[lane] }} />
@@ -848,6 +902,8 @@ export default function MySprintPage() {
               </div>
               */}
 
+              <CapacityStrip days={releaseDayOptions} rows={rows} pointsPerDay={Number(stored?.pointsPerDay ?? data?.config.pointsPerDay) || 0} today={data?.today ?? ""} />
+
               {(data?.plan?.overflowPoints ?? 0) > 0 && (
                 <div style={tintedCard("danger")}>
                   <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>
@@ -866,22 +922,18 @@ export default function MySprintPage() {
                 onDismiss={dismissReplyNow}
               />
 
-              <SchedulerLog events={events} />
+              <SchedulerLog events={events} onOpen={(id) => openExecution(id, "result")} />
               </div>
 
               <div style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <AutomationPanel
                   stored={stored}
                   busy={busy}
-                  settings={settings}
-                  onSettings={(next) => setSettingsDraft(next)}
                   onBuild={buildPlan}
-                  onApplySettings={buildPlan}
-                  onSetStatus={(status) => patchPlan({ status }, "activate")}
+                  onSetStatus={(status) => (status === "active" ? askActivate() : patchPlan({ status }, "activate"))}
                   onToggle={(field, on) => patchPlan({ [field]: on }, field)}
                   onEngine={(engine) => patchPlan({ engine }, "engine")}
                   onTick={tickNow}
-                  onSaveReviewers={(reviewers) => patchPlan({ reviewers }, "reviewers")}
                 />
                 <span style={sectionCaption()}>
                   RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
@@ -896,7 +948,17 @@ export default function MySprintPage() {
                   onSort={setSort}
                   onProject={setProjectFilter}
                 />
-                <div className="te-scroll te-sprint-pane" style={{ flex: "1 1 auto", minHeight: "360px", overflowY: "auto" }}>
+                {chosen.length > 0 && (
+                  <div style={{ ...card({ padding: "8px 12px" }), display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.text }}>{chosen.length} selected</span>
+                    <div style={{ flex: 1 }} />
+                    <button type="button" className="te-action-btn" disabled={!bulkHold.length} onClick={() => bulk(bulkHold, (t) => holdNow(t.id))} style={{ ...ctaButtonStyle("ghost"), opacity: bulkHold.length ? 1 : 0.4 }}>Hold {bulkHold.length}</button>
+                    <button type="button" className="te-action-btn" disabled={!bulkRetry.length} onClick={() => bulk(bulkRetry, (t) => retryNow(t.id))} style={{ ...ctaButtonStyle("warning"), opacity: bulkRetry.length ? 1 : 0.4 }}>Retry / resume {bulkRetry.length}</button>
+                    <button type="button" className="te-action-btn" disabled={!bulkRemove.length} onClick={askBulkRemove} style={{ ...ctaButtonStyle("outline"), opacity: bulkRemove.length ? 1 : 0.4 }}>Remove {bulkRemove.length}</button>
+                    <button type="button" className="te-action-btn" onClick={clearSelection} style={ctaButtonStyle("ghost")}>Clear</button>
+                  </div>
+                )}
+                <div className="te-scroll te-sprint-pane" style={{ flex: "1 1 auto", minHeight: "360px", minWidth: 0, display: "flex" }}>
                 <PlanTable
                   rows={shownRows}
                   data={data}
@@ -906,6 +968,8 @@ export default function MySprintPage() {
                   releaseDayOptions={releaseDayOptions}
                   costs={costs}
                   reorderable={reorderable}
+                  selected={selected}
+                  onSelect={(id, on) => setSelected((cur) => { const next = new Set(cur); if (on) next.add(id); else next.delete(id); return next; })}
                   handlers={{
                     openExecution,
                     setUnblocked,
@@ -926,7 +990,7 @@ export default function MySprintPage() {
                 </div>
               </div>
               <div className="te-scroll te-sprint-pane" style={{ gridColumn: 3, gridRow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                <ActionLegend />
+                <ActionLegend open={legendOpen} onToggle={() => setLegendOpen((o) => !o)} />
               </div>
               </div>
             </>

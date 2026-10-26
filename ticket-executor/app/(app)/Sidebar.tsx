@@ -89,6 +89,18 @@ const NAV: NavItem[] = [
   },
 ];
 
+// A label that fades and narrows instead of unmounting, so the rail's width
+// transition has something to reveal rather than text that vanishes on the
+// first frame. `inert`-style: invisible and unclickable once collapsed.
+function collapseFade(collapsed: boolean, maxWidth: number, vertical = false): CSSProperties {
+  return {
+    opacity: collapsed ? 0 : 1,
+    ...(vertical ? { maxHeight: collapsed ? 0 : 80 } : { maxWidth: collapsed ? 0 : maxWidth }),
+    pointerEvents: collapsed ? "none" : "auto",
+    transition: `opacity ${collapsed ? ".12s" : ".3s .1s"} ease, ${vertical ? "max-height" : "max-width"} .38s var(--te-ease-expo)`,
+  };
+}
+
 // `authEnabled` comes from the layout, which reads the gate on the server. When
 // the shared password is unset there is no session to end, so the Log out
 // control is hidden rather than left to bounce off a login page that redirects
@@ -144,7 +156,8 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         zIndex: 6,
         flex: "0 0 auto",
         width: railCollapsed ? "68px" : "272px",
-        transition: "width .18s ease",
+        transition: "width .38s var(--te-ease-expo), padding .38s var(--te-ease-expo)",
+        overflow: "visible",
         height: "var(--te-app-h)",
         display: "flex",
         flexDirection: "column",
@@ -162,8 +175,8 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         <div style={{ flex: "0 0 auto", width: "34px", height: "34px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 22px -8px var(--accent)", ...ringBorder({ fill: "var(--accent)", variant: "filled", duration: 3.4 }) }}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M8 5l8 7-8 7" stroke="#0B0C10" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
-        {!railCollapsed && (
-          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, minWidth: 0 }}>
+        {(
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", ...collapseFade(railCollapsed, 190) }}>
             <span style={logoText(FONT.xl)}>D-Agent</span>
             <span style={{ fontSize: "11px", letterSpacing: ".16em", fontWeight: 600, marginTop: "4px", background: "linear-gradient(90deg,var(--te-faint) 0%,var(--te-faint) 30%,#FFD9BE 45%,var(--accent) 52%,var(--te-faint) 65%,var(--te-faint) 100%)", backgroundSize: "220% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", animation: "subtitleFlow 3.2s linear infinite" }}>SHIP TICKETS FASTER</span>
           </div>
@@ -211,15 +224,17 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
             display: "flex",
             alignItems: "center",
             gap: "11px",
-            justifyContent: railCollapsed ? "center" : "flex-start",
+            justifyContent: "flex-start",
             height: "40px",
-            padding: railCollapsed ? "0" : "0 13px",
+            padding: railCollapsed ? "0 0 0 11px" : "0 13px",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
             fontSize: FONT.base,
             fontWeight: active ? 700 : 600,
             textDecoration: "none",
             color: active ? "var(--accent)" : COLORS.textDim,
             cursor: "pointer",
-            transition: "color .15s, background .15s",
+            transition: "color .15s, background .15s, padding .38s var(--te-ease-expo)",
           };
           const style: CSSProperties = active
             ? { ...baseStyle, ...ringBorder({ fill: "var(--te-btn-ghost-fill)", duration: 4, cornerPx: 8 }) }
@@ -237,7 +252,7 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
                 {item.icon}
               </svg>
-              {!railCollapsed && item.label}
+              <span style={collapseFade(railCollapsed, 160)}>{item.label}</span>
             </Link>
           );
         })}
@@ -245,11 +260,9 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
 
       <div style={{ flex: 1 }} />
 
-      {!railCollapsed && (
-        <div style={{ padding: "0 6px 12px" }}>
-          <ProviderTag />
-        </div>
-      )}
+      <div style={{ padding: "0 6px 12px", overflow: "hidden", ...collapseFade(railCollapsed, 190, true) }}>
+        <ProviderTag />
+      </div>
 
       {/* Logout */}
       {authEnabled && <button
@@ -262,10 +275,12 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: railCollapsed ? "center" : "flex-start",
+          justifyContent: "flex-start",
           gap: "11px",
           height: "40px",
-          padding: railCollapsed ? "0" : "0 13px",
+          padding: railCollapsed ? "0 0 0 11px" : "0 13px",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
           fontSize: FONT.base,
           fontWeight: 600,
           color: COLORS.textDim,
@@ -273,13 +288,13 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
           border: "1.5px solid var(--te-btn-outline-border)",
           background: "transparent",
           clipPath: clipCorner(8),
-          transition: "color .15s, border-color .15s",
+          transition: "color .15s, border-color .15s, padding .38s var(--te-ease-expo)",
         }}
       >
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "0 0 auto" }}>
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
         </svg>
-        {!railCollapsed && "Log out"}
+        <span style={collapseFade(railCollapsed, 160)}>Log out</span>
       </button>}
       </aside>
     </>

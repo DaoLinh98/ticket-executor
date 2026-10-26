@@ -65,7 +65,7 @@ const LANE_IDS = ["pre-run", ...PHASES, "unknown", "terminal"];
 
 function sizeOf(kind: LayoutKind, LR: boolean) {
   const wh: [number, number] =
-    kind === "gate" ? (LR ? [200, 96] : [176, 92]) : kind === "terminal" ? (LR ? [176, 58] : [176, 54]) : [240, 124];
+    kind === "gate" ? (LR ? [200, 96] : [176, 92]) : kind === "terminal" ? (LR ? [232, 58] : [232, 54]) : [240, 124];
   return LR ? { m: wh[0], c: wh[1], w: wh[0], h: wh[1] } : { m: wh[1], c: wh[0], w: wh[0], h: wh[1] };
 }
 

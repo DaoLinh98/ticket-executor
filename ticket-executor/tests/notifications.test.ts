@@ -478,6 +478,22 @@ test("the report reminder is unread again every five minutes", () => {
   assert.equal(first.href, "/report");
 });
 
+test("the report reminder nudges three times, then stays put", () => {
+  const at = (m: number) => `2026-09-28T10:${String(m).padStart(2, "0")}:30.000Z`;
+  const r = (m: number) => fromReportReminder({ day: "2026-09-28", minuteOfDay: 17 * 60 + m, at: at(m), sent: false })[0];
+  assert.equal(new Set([r(15), r(20), r(25)].map((n) => n.fingerprint)).size, 3);
+  assert.equal(r(30).fingerprint, r(25).fingerprint);
+  assert.equal(r(55).fingerprint, r(25).fingerprint);
+  assert.equal(r(55).at, "2026-09-28T10:25:00.000Z");
+});
+
+test("the report reminder is quiet on Saturday and Sunday", () => {
+  const on = (day: string) => fromReportReminder({ day, minuteOfDay: 18 * 60, at: `${day}T11:00:00.000Z`, sent: false });
+  assert.equal(on("2026-10-24").length, 0);
+  assert.equal(on("2026-10-25").length, 0);
+  assert.equal(on("2026-10-26").length, 1);
+});
+
 test("a merged pull request waiting for the QA move is one actionable notification pointing at Flow Runner", () => {
   const [n, ...rest] = fromLifecycle([{ ticketId: "201", pendingAction: "move-to-qa", pendingSince: "2026-09-30T02:00:00Z" }]);
   assert.equal(rest.length, 0);

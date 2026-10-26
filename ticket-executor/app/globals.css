@@ -174,6 +174,7 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
 @keyframes blink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0);}}
 @keyframes fadeIn{from{opacity:0;animation-timing-function:var(--te-ease-out);}to{opacity:1;}}
+@keyframes popIn{from{opacity:0;transform:translateY(-6px) scale(.97);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0) scale(1);}}
 @keyframes slideIn{from{opacity:0;transform:translateY(24px) scale(.97);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0) scale(1);}}
 @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.82);}}
 @keyframes gridScroll{to{background-position:44px 44px;}}
@@ -298,6 +299,12 @@ button:not(:disabled):hover,a[href]:hover{transform:translateY(-2px) scale(1.03)
 button:not(:disabled):active,a[href]:active{transform:scale(.97);transition:transform .08s var(--te-ease-out),filter .08s ease;filter:brightness(.95);}
 button:disabled{cursor:not-allowed;}
 .te-action-btn[data-state="off"]{opacity:.4;filter:grayscale(.8);box-shadow:none;}
+/* Tooltip layer (app/Tooltip.tsx): fades in after a short delay instead of the
+   browser's abrupt native title popup. */
+.te-tip{position:fixed;z-index:200;pointer-events:none;max-width:260px;padding:6px 10px;border-radius:7px;font-size:12.5px;font-weight:600;line-height:1.35;color:var(--te-text);background:var(--te-raised-bg);border:1px solid var(--te-border);box-shadow:0 12px 30px -12px #000;opacity:0;transform:translateY(3px);transition:opacity .18s ease,transform .24s var(--te-ease-expo);}
+.te-tip[data-show="true"]{opacity:1;transform:translateY(0);}
+@media (hover:none){.te-tip{display:none;}}
+@media (prefers-reduced-motion: reduce){.te-tip,.te-tip[data-show="true"]{transition:opacity .01s;transform:none;}}
 @media (prefers-reduced-motion: reduce){
   button:not(:disabled):hover,a[href]:hover,button:not(:disabled):active,a[href]:active{transform:none;}
 }
@@ -540,6 +547,8 @@ button:disabled{cursor:not-allowed;}
   .te-sprint-split { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
   .te-sprint-split > * { grid-column: 1 !important; grid-row: auto !important; }
   .te-sprint-pane { overflow: visible !important; }
+  .te-legend-rail { flex-direction: row !important; min-height: 40px; }
+  .te-legend-rail > span { writing-mode: horizontal-tb !important; }
 
   /* Fixed-column sections collapse; `auto-fit` grids already do it themselves. */
   .te-grid-2, .te-grid-3 { grid-template-columns: 1fr !important; }
