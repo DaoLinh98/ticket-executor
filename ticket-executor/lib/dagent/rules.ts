@@ -117,6 +117,35 @@ export function scopeOf(c: Pick<Ctx, "channels">): string[] {
   return Array.isArray(repos) ? (repos as string[]) : [];
 }
 
+export type ChosenSkill = { name: string; file: string; reason: string };
+
+/** The skills the first judging role picked for this ticket, resolved by the harness to their SKILL.md. */
+export function skillsOf(c: Pick<Ctx, "channels">): ChosenSkill[] {
+  const v = c.channels.readiness?.skills ?? c.channels.qaTriage?.skills ?? c.channels.reviewTriage?.skills;
+  return Array.isArray(v) ? (v as ChosenSkill[]).filter((s) => s.file) : [];
+}
+
+/** Repo name → the base branch a picked skill requires, for every repo the harness seated on it. Others use origin's default. */
+export function basesOf(c: Pick<Ctx, "channels">): Record<string, string> {
+  const v = c.channels.readiness?.bases ?? c.channels.qaTriage?.bases;
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string>) : {};
+}
+
+/** `name` and `description` from a SKILL.md front matter, folded block scalars included. */
+export function skillFrontMatter(text: string): { name: string; description: string } {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const out: Record<string, string> = {};
+  let key = "";
+  for (const line of m ? m[1].split(/\r?\n/) : []) {
+    const kv = line.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
+    if (kv) {
+      key = kv[1];
+      out[key] = /^[>|][-+]?$/.test(kv[2].trim()) ? "" : kv[2].trim().replace(/^(["'])(.*)\1$/, "$2");
+    } else if (key && /^\s+\S/.test(line)) out[key] = `${out[key]} ${line.trim()}`.trim();
+  }
+  return { name: out.name ?? "", description: out.description ?? "" };
+}
+
 export type Thread = { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string };
 
 export function threadsOf(c: Pick<Ctx, "channels">): Thread[] {

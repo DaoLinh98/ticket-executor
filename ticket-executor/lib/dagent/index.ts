@@ -38,7 +38,9 @@ export type RunOutcome = {
   prUrl: string;
   companionPrUrls: string[];
   endReason: string;
-  /** The contract output Flow Runner settles on: `qaTriage` (outcome, qaReply, summary) and `respond` (threadsReplied, threadsResolved). */
+  /** The contract output Flow Runner settles on: `qaTriage` (outcome, qaReply, summary), `respond` (threadsReplied,
+   *  threadsResolved), and `noChange` — the run succeeded with nothing to publish (already delivered, or a person
+   *  accepted that implement needed no change). */
   output: Record<string, unknown>;
 };
 
@@ -46,7 +48,7 @@ export type RunOutcome = {
 export async function runOutcomes(ids: string[]): Promise<RunOutcome[]> {
   if (!ids.length) return [];
   const [rows, steps] = await Promise.all([
-    prisma.dagentRun.findMany({ where: { id: { in: ids } }, select: { id: true, state: true, prUrl: true, errorMessage: true, graphId: true } }),
+    prisma.dagentRun.findMany({ where: { id: { in: ids } }, select: { id: true, state: true, prUrl: true, errorMessage: true, graphId: true, currentNodeId: true } }),
     prisma.dagentStep.findMany({
       where: { runId: { in: ids }, nodeId: { in: ["qaTriage", "publish", "respond"] }, status: "succeeded" },
       orderBy: { startedAt: "asc" },
@@ -63,7 +65,7 @@ export async function runOutcomes(ids: string[]): Promise<RunOutcome[]> {
       prUrl: r.prUrl,
       companionPrUrls: prs.map((p) => p.prUrl ?? "").filter((u) => u && u !== r.prUrl),
       endReason: r.errorMessage,
-      output: { ...out("qaTriage"), ...out("respond") },
+      output: { ...out("qaTriage"), ...out("respond"), noChange: r.state === "succeeded" && (r.currentNodeId === "readiness" || r.currentNodeId === "implement") },
     };
   });
 }

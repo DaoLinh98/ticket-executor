@@ -868,6 +868,14 @@ async function reconcileImplement(): Promise<void> {
       await settleNoFixNeeded(item, out);
       continue;
     }
+    if (run.state === "succeeded" && out.noChange === true) {
+      await prisma.plannedTicket.update({ where: { id: item.id }, data: { implementState: "no-fix-needed" } });
+      await logAutomation({
+        planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done", reason: "no-change",
+        detail: "No code change needed — the base already does what the ticket asks. Nothing was published.",
+      });
+      continue;
+    }
     const implemented = run.state === "succeeded" && !!run.prUrl;
     await prisma.plannedTicket.update({
       where: { id: item.id },

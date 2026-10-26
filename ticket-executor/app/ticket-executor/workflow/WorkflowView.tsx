@@ -272,7 +272,7 @@ export default function WorkflowView() {
           ) : null}
           {waiting === "needs-review" ? (
             <button type="button" className="te-action-btn" disabled={actM.isPending} onClick={() => actM.mutate({ url: `/api/dagent/runs/${runId}/resume`, body: { action: "accept" } })} style={ctaButtonStyle("ghost")}>
-              Accept PRs
+              {curId === "implement" ? "Accept — no change" : "Accept PRs"}
             </button>
           ) : null}
         </PageToolbar>

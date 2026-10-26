@@ -4,7 +4,7 @@ import path from "path";
 import { discoverCompanionRepos } from "../preflight";
 import { loadLinkedPullRequest, loadPullRequestBranch, normalizeProvider } from "../tickets";
 import { PLAN_FILE } from "./prompts";
-import { diffViolations, isScratch, LOCAL_INSTRUCTIONS, planIssues, plannedFiles, scopeOf, violationWarnings, type AddedLine, type ChangedFile } from "./rules";
+import { basesOf, diffViolations, isScratch, LOCAL_INSTRUCTIONS, planIssues, plannedFiles, scopeOf, violationWarnings, type AddedLine, type ChangedFile } from "./rules";
 import { ZERO_USAGE, type Ctx, type LogEntry, type NodeResult, type Refusal, type Repo } from "./types";
 
 export type RetrySeed = { baseSha: string; branches: Record<string, string>; companionBases: Record<string, string>; planMd: string };
@@ -229,12 +229,13 @@ export async function setup(c: Ctx, env: CheckEnv): Promise<NodeResult> {
   );
 }
 
-type RepoRef = { name: string; cwd: string; base: string; root: boolean; setBase: (sha: string) => void };
+type RepoRef = { name: string; cwd: string; base: string; baseBranch: string; root: boolean; setBase: (sha: string) => void };
 
 function reposOf(c: Ctx): RepoRef[] {
+  const bases = basesOf(c);
   return [
-    { name: rootName(c), cwd: c.cwd, base: c.baseSha, root: true, setBase: (s: string) => (c.baseSha = s) },
-    ...c.companions.map((m) => ({ name: m.name, cwd: m.cwd, base: m.baseSha, root: false, setBase: (s: string) => (m.baseSha = s) })),
+    { name: rootName(c), cwd: c.cwd, base: c.baseSha, baseBranch: bases[rootName(c)] ?? "", root: true, setBase: (s: string) => (c.baseSha = s) },
+    ...c.companions.map((m) => ({ name: m.name, cwd: m.cwd, base: m.baseSha, baseBranch: bases[m.name] ?? "", root: false, setBase: (s: string) => (m.baseSha = s) })),
   ];
 }
 
@@ -245,9 +246,11 @@ function defaultBranch(cwd: string): string {
   return "";
 }
 
-function upstream(cwd: string): { name: string; behind: number } | null {
+// The branch a repo's work sits on: the one a picked skill seated it on, else origin's default. Never falls back from
+// the first to the second — a work branch rebased onto the default would carry the wrong base into its pull request.
+function upstream(cwd: string, baseBranch = ""): { name: string; behind: number } | null {
   if (!git(cwd, ["remote", "get-url", "origin"]).ok) return null;
-  const name = defaultBranch(cwd);
+  const name = baseBranch || defaultBranch(cwd);
   if (!name || !git(cwd, ["fetch", "origin", name], 90000).ok) return null;
   const n = Number(git(cwd, ["rev-list", "--count", `HEAD..origin/${name}`]).out);
   return { name, behind: Number.isFinite(n) ? n : 0 };
@@ -257,6 +260,36 @@ const changedFiles = (cwd: string, base: string) => (base ? lines(git(cwd, ["dif
 
 const branchOf = (cwd: string) => git(cwd, ["branch", "--show-current"]).out;
 
+/**
+ * Moves every repo of the run that has `origin/<branch>` onto it, before any work is committed, because a picked
+ * skill requires the work to start there. Repos without it stay on their default branch; none having it fails.
+ */
+export function seatBase(c: Ctx, branch: string): { error: string; bases: Record<string, string>; log: LogEntry[] } {
+  const L = logger();
+  const bases: Record<string, string> = {};
+  if (!git(c.rootRepo, ["check-ref-format", "--branch", branch]).ok || branch.startsWith("-")) {
+    return { error: `"${branch}" is not a valid branch name.`, bases, log: L.log };
+  }
+  for (const r of reposOf(c)) {
+    if (!git(r.cwd, ["ls-remote", "--exit-code", "--heads", "origin", branch], 30000).ok) {
+      L.info(`${r.name}: no origin/${branch} — stays on its default branch`);
+      continue;
+    }
+    const fetched = git(r.cwd, ["fetch", "origin", branch], 90000);
+    if (!fetched.ok) return { error: `${r.name}: could not fetch origin/${branch}: ${fetched.err}`, bases, log: L.log };
+    const dirty = lines(git(r.cwd, ["status", "--porcelain"]).out).map((l) => l.replace(/^\S+\s+/, "")).filter((p) => !isScratch(p));
+    if (branchOf(r.cwd) || dirty.length) return { error: `${r.name}: the worktree already carries work — cannot move it onto origin/${branch}.`, bases, log: L.log };
+    const sha = git(r.cwd, ["rev-parse", `origin/${branch}`]).out;
+    const moved = git(r.cwd, ["checkout", "--detach", sha]);
+    if (!sha || !moved.ok) return { error: `${r.name}: could not check out origin/${branch}: ${moved.err}`, bases, log: L.log };
+    r.setBase(sha);
+    bases[r.name] = branch;
+    L.info(`${r.name}: base is origin/${branch} @ ${sha.slice(0, 7)} — required by a picked skill`);
+  }
+  if (!Object.keys(bases).length) return { error: `A picked skill requires the base branch ${branch}, but no repository of this run has origin/${branch}.`, bases, log: L.log };
+  return { error: "", bases, log: L.log };
+}
+
 export async function syncBase(c: Ctx): Promise<NodeResult> {
   const L = logger();
   let rebased = false;
@@ -265,9 +298,9 @@ export async function syncBase(c: Ctx): Promise<NodeResult> {
   const warnings: Refusal[] = [];
   for (const r of reposOf(c)) {
     if (!branchOf(r.cwd)) continue;
-    const up = upstream(r.cwd);
+    const up = upstream(r.cwd, r.baseBranch);
     if (!up) {
-      L.warn(`${r.name}: no reachable origin default branch — not synced`);
+      L.warn(`${r.name}: no reachable origin/${r.baseBranch || "<default branch>"} — not synced`);
       continue;
     }
     behindBy = Math.max(behindBy, up.behind);
@@ -358,7 +391,7 @@ export async function prePublish(c: Ctx): Promise<NodeResult> {
     if (git(r.cwd, ["rev-parse", "HEAD"]).out !== heads[r.name]) issues.push(`${r.name}: HEAD changed after it was verified`);
     // A review fix stays on the published PR branch; catching up with the default branch would need a force-push.
     if (c.flow === "review") continue;
-    const up = upstream(r.cwd);
+    const up = upstream(r.cwd, r.baseBranch);
     if (up && up.behind) {
       baseMoved = true;
       issues.push(`${r.name}: origin/${up.name} moved ${up.behind} commit(s) ahead since the sync`);
@@ -398,10 +431,14 @@ export async function verifyPublish(c: Ctx): Promise<NodeResult> {
   return result({ passed: checks.length > 0 && checks.every((x) => x.ok), checks }, L.log);
 }
 
-export function deliveryFacts(c: Ctx): { commitSha: string; filesChanged: number } {
+export function deliveryFacts(c: Ctx): { commitSha: string; filesChanged: number; uncommitted: number } {
   const repos = reposOf(c);
   const filesChanged = repos.reduce((n, r) => n + changedFiles(r.cwd, r.base).filter((f) => !isScratch(f)).length, 0);
-  return { commitSha: git(c.cwd, ["rev-parse", "--short", "HEAD"]).out, filesChanged };
+  const uncommitted = repos.reduce(
+    (n, r) => n + lines(git(r.cwd, ["status", "--porcelain"]).out).map((l) => l.replace(/^\S+\s+/, "")).filter((p) => !isScratch(p)).length,
+    0,
+  );
+  return { commitSha: git(c.cwd, ["rev-parse", "--short", "HEAD"]).out, filesChanged, uncommitted };
 }
 
 export const CHECKS: Record<string, (c: Ctx, env: CheckEnv) => Promise<NodeResult>> = {

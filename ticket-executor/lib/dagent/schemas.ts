@@ -11,13 +11,32 @@ const BLOCKED = {
 
 const STRINGS = { type: "array", items: { type: "string" } } as const;
 
+const SKILLS = {
+  type: "array",
+  description: "Every installed skill from the brief whose description fits this ticket — empty when none does.",
+  items: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "The skill's name exactly as the brief lists it." },
+      reason: { type: "string", description: "One sentence: what in the ticket makes it apply." },
+    },
+    required: ["name", "reason"],
+    additionalProperties: false,
+  },
+} as const;
+
+const BASE_BRANCH = {
+  type: "string",
+  description: "The branch a picked skill requires the work to start from and the pull request to target, when it is not the default branch. Empty otherwise.",
+} as const;
+
 export const READINESS_OUTPUT = {
   type: "object",
   properties: {
     title: { type: "string", description: "The work item's title." },
     type: { type: "string", description: "The work item's type, e.g. User Story, Bug, Task." },
     ready: { type: "boolean" },
-    acceptanceCriteria: { ...STRINGS, description: "Every acceptance criterion, stated or derived, one per entry." },
+    acceptanceCriteria: { ...STRINGS, description: "The ticket's stated acceptance criteria, one per entry in its order — never items from the description. Only when it states none: criteria derived from the description, each prefixed '(derived)'." },
     missing: { ...STRINGS, description: "Information the ticket lacks. Empty when ready." },
     ambiguities: { ...STRINGS, description: "Requirements with materially different readings. Empty when ready." },
     questions: { ...STRINGS, description: "Questions for the Product Owner. Empty when ready." },
@@ -44,9 +63,11 @@ export const READINESS_OUTPUT = {
       required: ["status", "evidence"],
       additionalProperties: false,
     },
+    skills: SKILLS,
+    baseBranch: BASE_BRANCH,
     blocked: BLOCKED,
   },
-  required: ["title", "type", "ready", "acceptanceCriteria", "missing", "ambiguities", "questions", "delivery", "blocked"],
+  required: ["title", "type", "ready", "acceptanceCriteria", "missing", "ambiguities", "questions", "delivery", "skills", "baseBranch", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -80,7 +101,7 @@ export const PLAN_OUTPUT = {
 export const STEP_OUTPUT = {
   type: "object",
   properties: {
-    committed: { type: "boolean", description: "True only if the work is committed locally. Do NOT push." },
+    committed: { type: "boolean", description: "True only if the work is committed locally. Do NOT push. False with a clean, unchanged worktree only when the base already does everything asked — say why in summary; a person confirms it." },
     branch: { type: "string", description: "The branch you committed on." },
     summary: { type: "string", description: "One or two sentences: what changed." },
     verification: {
@@ -210,9 +231,10 @@ export const REVIEW_TRIAGE_OUTPUT = {
       },
     },
     planMd: { type: "string", description: "A short Markdown plan: a Thread Decisions table and, for each fix, the files to change. The harness writes it to .te/plan.md." },
+    skills: SKILLS,
     blocked: BLOCKED,
   },
-  required: ["threads", "planMd", "blocked"],
+  required: ["threads", "planMd", "skills", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -245,9 +267,11 @@ export const QA_TRIAGE_OUTPUT = {
     planMd: { type: "string", description: "The fix plan in Markdown, under 60 lines. Empty when outcome is no-fix-needed. The harness writes it to .te/plan.md." },
     qaReply: { type: "string", description: "When outcome is no-fix-needed: the developer's reply to QA, plain text, one line per finding. Empty otherwise." },
     summary: { type: "string", description: "One sentence: what QA reported and what this run decided." },
+    skills: SKILLS,
+    baseBranch: BASE_BRANCH,
     blocked: BLOCKED,
   },
-  required: ["title", "findings", "outcome", "branch", "repos", "planMd", "qaReply", "summary", "blocked"],
+  required: ["title", "findings", "outcome", "branch", "repos", "planMd", "qaReply", "summary", "skills", "baseBranch", "blocked"],
   additionalProperties: false,
 } as const;
 

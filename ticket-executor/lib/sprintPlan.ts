@@ -564,6 +564,20 @@ export function retryDenial(f: RetryFacts): string {
   return "";
 }
 
+/**
+ * Whether a ticket added back by hand starts over instead of keeping its record.
+ *
+ * Only when it shipped nothing: never released, and every pull request it
+ * recorded was abandoned — or, with no pull request at all, its last run
+ * stopped (`failed` / `skipped`). A live pull request is still work under way,
+ * and running the ticket again beside it would open a second one.
+ */
+export function startsOver(f: { prUrls: string[]; abandoned: string[]; released: boolean; implementState: string }): boolean {
+  if (f.released) return false;
+  if (f.prUrls.length === 0) return f.implementState === "failed" || f.implementState === "skipped";
+  return f.prUrls.every((u) => f.abandoned.includes(u));
+}
+
 /** `{ to }` drops the row onto another queued row's position (drag and drop). */
 export type QueueMove = "up" | "down" | "top" | { to: string };
 

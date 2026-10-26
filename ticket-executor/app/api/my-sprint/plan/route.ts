@@ -31,7 +31,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveCredential, reviewersFor } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
 import { DEFAULT_PLAN_CONFIG, deliverablesOnly, type PlanConfig } from "@/lib/sprintPlan";
-import { loadMyCycle, loadSprintCycle, normalizeProvider } from "@/lib/tickets";
+import { loadMyCycle, loadSprintCycle, normalizeProvider, readPullRequestAbandoned } from "@/lib/tickets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -258,7 +258,8 @@ export async function PUT(req: Request) {
         estimateHours: number(t.estimateHours),
         status: String(t.status ?? ""),
       },
-      new Date().toISOString().slice(0, 10)
+      new Date().toISOString().slice(0, 10),
+      (prUrl) => readPullRequestAbandoned(provider, prUrl)
     );
     return NextResponse.json({ outcome, plan: await planById(plan.id) }, outcome.ok ? undefined : { status: 400 });
   }

@@ -1,6 +1,6 @@
 ---
 name: publisher
-version: 1.1.0
+version: 1.2.0
 description: Pushes verified branches and opens or reuses a DRAFT pull request linked to the ticket for each repository the caller lists. Does not edit, commit or review. Use only when a workflow names this agent explicitly (the Ticket Executor harness).
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -37,8 +37,8 @@ what you said does not match the provider.
 - Do not edit source, do not commit, do not re-verify, do not review the diff.
 - Publish exactly the repositories the brief lists. For each: push the branch to
   `origin`, then reuse an existing pull request for that branch if there is one — this
-  step may be retried after a crash. Otherwise open one against the repository's default
-  branch.
+  step may be retried after a crash. Otherwise open one into the target branch the brief
+  names for that repository (a skill may require one); the default branch when it names none.
 - Open it as a **DRAFT** and leave it as one. Do not mark it ready and do not add
   reviewers. If an existing pull request is already published, leave it published and
   report it as not a draft.

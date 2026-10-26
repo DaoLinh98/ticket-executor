@@ -1404,6 +1404,15 @@ export async function getPullRequestOutcomes(prUrls: string[]): Promise<(PrOutco
   return out;
 }
 
+/** Whether one pull request was abandoned — read fresh, never cached: it decides whether a ticket may run again. */
+export async function isPullRequestAbandoned(prUrl: string): Promise<boolean> {
+  const ref = refFromPrUrl(prUrl);
+  if (!ref) return false;
+  const { org, pat } = await loadCreds();
+  const raw = await adoGet<RawPullRequest>(`${repoBaseUrl(org, ref)}/pullrequests/${ref.prId}?${API}`, pat);
+  return (raw.status ?? "").toLowerCase() === "abandoned";
+}
+
 // ---- Commits tab ----
 
 type RawCommitRef = {

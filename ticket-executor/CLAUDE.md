@@ -74,8 +74,13 @@ runner beyond `node --test`; ask before adding tooling.
 **Run `npm run test` after touching a graph, edge, node contract, `resolveSkill()` or a pure rule module.**
 
 ## D-Agent workflow engine (`/workflow`, `lib/dagent/`)
-`dagent-implement-v2` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
---json-schema …` from `cli.ts`. **No skill is invoked** — behaviour = `~/.claude/agents/<name>.md` + `prompts.ts` brief.
+`dagent-implement-v3` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
+--json-schema …` from `cli.ts`. **No skill runs as a step** — behaviour = `~/.claude/agents/<name>.md` + `prompts.ts` brief.
+**Ticket skills:** the first judging role (`readiness` / `qaTriage` / `reviewTriage`) picks from `skillCatalog()`
+(`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS`) into `skills`; `applySkills()`
+(`engine.ts`) resolves each to its `SKILL.md`, which every later brief names (brief wins on branch/commit/push/PR).
+A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<branch>` onto it before `plan`
+(none has it = FAIL); `basesOf()` then drives `syncBase`, `prePublish` and the publisher's PR target.
 
 | Node | Kind | Runs | Does | Next |
 |---|---|---|---|---|
@@ -83,8 +88,8 @@ runner beyond `node --test`; ask before adding tooling.
 | `readiness` | agent | `analyst` | ready?, AC, `delivery` (none/partial/done) on base | plan / END / NEEDS_INPUT / FAIL |
 | `plan` | agent | `planner` | `planMd`, `branch`, `acMap`, `repos`; ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
 | `planCheck` | check | `planIssues()` | plan file, branch, every AC → files + test, repos in scope | implement / plan / FAIL |
-| `implement` | agent | `implementer` | code, build/test, **commit locally, no push** | syncBase / FAIL |
-| `syncBase` | harness | git | fetch + rebase onto origin default; conflict → abort + warning | diffGuard |
+| `implement` | agent | `implementer` | code, build/test, **commit locally, no push**; nothing to change (clean, 0 files, not blocked) → park | syncBase / NEEDS_REVIEW / FAIL |
+| `syncBase` | harness | git | fetch + rebase onto origin default (or the skill's base); conflict → abort + warning | diffGuard |
 | `diffGuard` | check | `diffViolations()` | agent/secret/unplanned-config files, credential lines; `changed` + `heads` | evaluate |
 | `evaluate` | agent | `reviewer` | `base..HEAD` vs AC + plan + warnings → `blockers` | prePublish / fix / reflect |
 | `fix` | agent | `fixer` | exactly the blockers, commit; ≤ `MAX_FIX_ATTEMPTS` (5) | syncBase / reflect |
@@ -97,7 +102,7 @@ Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
 **`dagent-fix-review-v1`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
 (`review-triager`) → `implement` → `diffGuard` ⇄ `evaluate` ⇄ `fix` → `prePublish` → `respond` (`responder`: push,
 one reply per thread, **never resolve**). No `syncBase` — a published PR branch is never rebased.
-**`dagent-fix-qa-v1`** — `setup` → `qaTriage` (`qa-triager`; `no-fix-needed` → END with `qaReply`) → `implement` …
+**`dagent-fix-qa-v2`** — `setup` → `qaTriage` (`qa-triager`; `no-fix-needed` → END with `qaReply`) → `implement` …
 `verifyPublish`. `/workflow` has no picker or start form: it shows the run in flight (else latest) for `?ticket=`.
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`), only to the node's `next` (or a
@@ -108,7 +113,8 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
 4. **Admission is `startRun()`**: preflight + `checkAgents()` (installed, named right, allows `StructuredOutput`,
    has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run or
    main-flow `Run` for the ticket, and a free slot (`concurrentRuns`).
-5. **Park, don't fail, for humans**: `NEEDS_INPUT` → `recheck-readiness`; `NEEDS_REVIEW` → `accept`. Failed or
+5. **Park, don't fail, for humans**: `NEEDS_INPUT` → `recheck-readiness`; `NEEDS_REVIEW` (read-back mismatch, or
+   implement changed nothing) → `accept`; `runOutcomes().output.noChange` settles the plan row `no-fix-needed`. Failed or
    cancelled → new run from `plan` / `implement` / `syncBase`, seeded with old base, branches, plan.
 6. **Worktrees are per run, removed in `finish()`**; a `running` row not held by this process is failed by `reconcileOrphans()`.
 7. **`KNOWLEDGE.md` is audited**: start content on the run, diff saved as artifact `knowledge`.

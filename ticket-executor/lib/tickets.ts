@@ -3,11 +3,11 @@ import {
   adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, searchIdentities, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
   getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
-  getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds, searchWorkItems,
+  getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds, searchWorkItems, isPullRequestAbandoned,
   type CommentMark, type LinkedPullRequest, type ProjectInfo,
 } from "./ado";
 import {
-  getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus,
+  getGithubIssues, getGithubPullRequestReview, getGithubStatusOptions, updateGithubStatus, isGithubPullRequestAbandoned,
   getGithubPullRequestCommits, getGithubCommitFiles,
 } from "./github";
 import { prisma } from "./prisma";
@@ -273,6 +273,20 @@ export async function loadPullRequestBranch(provider: ProviderId, ticketId: stri
   if (provider !== "azure-devops" && provider !== "github") return { branch: "", repo: "" };
   const review = provider === "azure-devops" ? await getPullRequestReview(ticketId, prUrl, { fast: true }) : await githubReviewFor(ticketId, prUrl);
   return { branch: review.pr?.branch ?? "", repo: review.pr?.repo ?? "" };
+}
+
+/** Whether a pull request was abandoned, read fresh. Unknown — another provider, no credentials, unreadable — is false. */
+export async function readPullRequestAbandoned(provider: ProviderId, prUrl: string): Promise<boolean> {
+  try {
+    if (provider === "azure-devops") return (await adoCreds()) ? await isPullRequestAbandoned(prUrl) : false;
+    if (provider === "github") {
+      const creds = await githubCreds();
+      return creds ? await isGithubPullRequestAbandoned(prUrl, creds.token) : false;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 export async function searchTickets(provider: ProviderId, query: string): Promise<Ticket[]> {

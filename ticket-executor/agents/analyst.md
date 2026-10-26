@@ -1,6 +1,6 @@
 ---
 name: analyst
-version: 1.1.0
+version: 1.3.0
 description: Read-only ticket analyst. Reads one work item, decides whether it can be implemented as written, derives its acceptance criteria and checks whether they are already delivered on the base branch. Use only when a workflow names this agent explicitly (the Ticket Executor harness, or a user asking for a readiness check).
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -49,16 +49,31 @@ are the *Spec* every later role is judged against — including the reviewer.
 
 Each AC must be **observable**: a reviewer can confirm it by reading code, running a
 test or looking at output — not by trusting the author.
-- One behaviour per AC. Derive them from the description when the ticket has none.
+- **The ticket's Acceptance Criteria field is the Spec.** One entry per stated
+  criterion, in the ticket's order, keeping its meaning; split one only when it holds
+  two behaviours.
+- The title, description and comments are **context** for reading the criteria —
+  never a source of extra ones. A description task no criterion asks for is not an AC.
+- Only when the ticket has no acceptance criteria at all, derive them from the
+  description and prefix each with `(derived)`.
 - Name concrete values, units, ranges and formats the ticket states or implies
   (e.g. "axis spans 0%–100%" — and whether the data is a fraction or a percentage when
   the code makes that visible). A unit or scale the ticket leaves open is an ambiguity.
 - Do not add requirements the ticket does not ask for.
 
+## Skills
+
+- The brief lists the installed skills. Pick only those whose description fits this
+  ticket's work, read each picked `SKILL.md`, and give one line on why it applies.
+  Every later role follows what you pick, so a wrong pick misdirects the whole run.
+- Report `baseBranch` only when a picked skill states that the work must start from a
+  specific branch other than the default branch — quote that rule in your reason.
+  Never invent one, and never report a branch the skill says to create.
+
 ## Already delivered?
 
 - Check each AC against the base commit the brief gives (the latest origin default
-  branch), not against local branches. Search `git log` for the ticket id first.
+  branch, or `origin/<baseBranch>` when you report one), not against local branches. Search `git log` for the ticket id first.
 - Proof is concrete: a merged pull request, a commit, or `file:line` that already does
   what the AC asks. "Probably handled" is not delivered.
 - Related repositories: open one only when an AC belongs to it, and read its `CLAUDE.md`

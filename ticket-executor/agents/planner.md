@@ -1,6 +1,6 @@
 ---
 name: planner
-version: 1.1.0
+version: 1.2.0
 description: Read-only implementation planner. Turns a ticket, task or bug report into a concrete plan that maps every acceptance criterion to files and a test. Use only when a workflow names this agent explicitly (the dev-team skill or the Ticket Executor harness), before any code is written.
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -55,6 +55,9 @@ the diff against.
 - No features beyond what was asked. Prefer the simplest plan that fully solves it.
 
 ## Mapping every AC
+
+The AC list in the brief is the whole Spec. The work item's description is context for
+understanding it — plan no step, file or test for a description item no AC needs.
 
 For **every** AC: the files that implement it, and the test that proves it — or, when
 the project has no test that can cover it, say so and how it will be verified instead.

@@ -375,7 +375,10 @@ export function nodeStatus(run: Run | null, gates: GateResult[], n: NodeLike): N
   if (n.kind === "gate") return gates.find((g) => g.gate === n.id)?.status ?? "pending";
   if (n.kind === "terminal") {
     if (!run?.transitions.some((t) => t.toNode === n.id)) return "pending";
-    return n.id === "END" ? "reached" : n.id === "FAIL" ? "failed" : "parked";
+    if (n.id === "END") return "reached";
+    if (n.id === "FAIL") return "failed";
+    // A park the run has since left (accepted, or rechecked) is behind it, not where it stands.
+    return run.state === "waiting" && run.transitions[run.transitions.length - 1]?.toNode === n.id ? "parked" : "passed";
   }
   const ss = stepsOf(run, n.id);
   if (!ss.length || !run) return "pending";
@@ -484,7 +487,7 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
     outcome = g?.reason ?? "";
     outcomeColor = status === "refused" ? "var(--te-danger)" : "var(--te-text-dim)";
   } else if (isTerm) {
-    outcome = TERMS[n.id]?.sub ?? "";
+    outcome = (status === "passed" ? TERMS[n.id]?.left : undefined) ?? TERMS[n.id]?.sub ?? "";
     outcomeColor = "var(--te-text-dim)";
   } else if (isRun || status === "parked" || status === "abandoned") {
     const inp = lastS?.input;
@@ -589,9 +592,9 @@ export function laneViews(run: Run | null, gates: GateResult[], layout: Layout, 
     let status: NodeStatus = "pending";
     if (l.id === "pre-run") status = gates.some((g) => g.status === "refused") ? "refused" : "passed";
     else if (l.id === "terminal") {
-      status = trans.some((t) => TERMS[t.toNode]) ? "reached" : "pending";
+      status = trans.some((t) => t.toNode === "END") ? "reached" : trans.some((t) => TERMS[t.toNode]) ? "passed" : "pending";
       if (trans.some((t) => t.toNode === "FAIL")) status = "failed";
-      if (trans.some((t) => t.toNode === "NEEDS_INPUT" || t.toNode === "NEEDS_REVIEW")) status = "parked";
+      if (run?.state === "waiting" && TERMS[trans[trans.length - 1]?.toNode]?.left) status = "parked";
     } else if (ss.some((s) => s.status === "running")) {
       status = run?.state === "waiting" ? "parked" : run?.state === "cancelled" ? "abandoned" : "running";
     } else if (ss.length && run) {
@@ -628,6 +631,8 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
   }
   if (run.state === "waiting" && run.waitReason === "rate-limited" && run.resumeAt)
     return b("info", IC.clock, "Account quota reached.", `Implement is paused mid-turn and resumes automatically at ${hhmm(run.resumeAt)}.`, { countdown: mmss((run.resumeAt - now) / 1000) });
+  if (run.state === "waiting" && run.waitReason === "needs-review" && run.currentNodeId === "implement")
+    return b("warning", IC.alert, "No code change needed?", "Implement changed nothing — it found the base already does what the ticket asks. Read its summary, then accept it or retry.", { action: { label: "Open implement", kind: "open-node", nodeId: "implement" } });
   if (run.state === "waiting" && run.waitReason === "needs-review")
     return b("warning", IC.alert, "Publish needs a human.", "The PR read-back did not match — check the branch and the tracker before anything else runs.", { action: { label: "Open read-back", kind: "open-node", nodeId: "verifyPublish" } });
   if (run.state === "failed")
@@ -636,6 +641,8 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
     // An END reached before publish means nothing was pushed — say why instead of claiming PRs.
     if (run.currentNodeId === "readiness")
       return b("success", IC.check, "Already delivered.", `Every acceptance criterion is already on the base — nothing was implemented or published · ${usd(run.costUsd)} total.`);
+    if (run.currentNodeId === "implement")
+      return b("success", IC.check, "No change needed.", `A person confirmed the base already does what the ticket asks — nothing was committed or published · ${usd(run.costUsd)} total.`);
     if (run.currentNodeId === "qaTriage")
       return b("success", IC.check, "No defect found.", `The reply to QA is drafted — nothing was changed or pushed · ${usd(run.costUsd)} total.`);
     return b("success", IC.check, "Succeeded.", run.flow === "implement" ? `Draft PRs are open and verified · ${usd(run.costUsd)} total.` : `Fix pushed to the existing PRs and verified · ${usd(run.costUsd)}.`);

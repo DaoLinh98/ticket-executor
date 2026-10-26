@@ -15,6 +15,7 @@ import {
   releaseDays,
   reorderQueue,
   retryDenial,
+  startsOver,
   type PlanConfig,
   type PlanDiff,
   type PlanInput,
@@ -440,24 +441,60 @@ export async function removeTicketFromPlan(plannedId: string): Promise<{ ok: boo
   return { ok: true };
 }
 
+// What a row that starts over forgets: its run, its pull requests and their review.
+const STARTED_OVER = {
+  implementState: "pending",
+  runId: "",
+  prUrl: "",
+  companionPrUrls: [],
+  prPublished: false,
+  reviewersSet: false,
+  statusMoved: false,
+  releaseError: "",
+  reviewState: "idle",
+  reviewRunId: "",
+  openComments: 0,
+  threadsReplied: 0,
+  threadsResolved: 0,
+  lastCommentAt: "",
+  reviewRounds: 0,
+  reviewedAt: null,
+  reviewError: "",
+  prMerged: false,
+  pendingAction: "",
+  pendingSince: null,
+};
+
 /** Add a ticket to the plan by hand — new, or one that was untracked.
  *
  *  Only a ticket whose status is still before review and that nothing has worked
  *  yet joins the implement queue, last, released on the last release day the
  *  plan already uses (or the first one left). One already in Code Review or QA is
- *  tracked from where it stands: review comments, QA sending it back. */
+ *  tracked from where it stands: review comments, QA sending it back.
+ *
+ *  A row whose every pull request was abandoned (or that has none and whose run
+ *  failed or was skipped) and that was never released starts over (`startsOver()`): its run and review record is cleared so it
+ *  queues like a ticket nothing has worked. `prAbandoned` reads the provider fresh. */
 export async function addTicketToPlan(
   plan: { id: string; startDate: string; finishDate: string },
   ticket: { ticketId: string; title: string; project: string; points: number; estimateHours: number; status: string },
-  today: string
+  today: string,
+  prAbandoned: (prUrl: string) => Promise<boolean>
 ): Promise<{ ok: boolean; error?: string }> {
   const existing = await prisma.plannedTicket.findUnique({
     where: { planId_ticketId: { planId: plan.id, ticketId: ticket.ticketId } },
   });
   if (existing && !existing.untracked) return { ok: false, error: "This ticket is already in the plan." };
 
+  const prUrls = existing ? [existing.prUrl, ...existing.companionPrUrls].filter(Boolean) : [];
+  const abandoned: string[] = [];
+  for (const url of prUrls) {
+    if (!(await prAbandoned(url))) break;
+    abandoned.push(url);
+  }
+  const restart = !!existing && startsOver({ prUrls, abandoned, released: !!existing.releasedAt, implementState: existing.implementState });
   const stage = stageOf(ticket.status);
-  const worked = !!existing && (existing.implementState !== "pending" || !!existing.runId || !!existing.prUrl || !!existing.releasedAt);
+  const worked = !!existing && !restart && (existing.implementState !== "pending" || !!existing.runId || !!existing.prUrl || !!existing.releasedAt);
   const queued = isQueueable(stage) && !worked;
   const rows = await prisma.plannedTicket.findMany({ where: { planId: plan.id }, select: { implementOrder: true, releaseDay: true } });
   const days = releaseDays({ startDate: plan.startDate, finishDate: plan.finishDate }, today);
@@ -466,8 +503,9 @@ export async function addTicketToPlan(
   if (existing) {
     await prisma.plannedTicket.update({
       where: { id: existing.id },
-      data: { untracked: false, addedByUser: true, stage, ...placed },
+      data: { untracked: false, addedByUser: true, stage, ...placed, ...(restart ? STARTED_OVER : {}) },
     });
+    if (restart) await prisma.plannedTicketPr.deleteMany({ where: { plannedTicketId: existing.id, prUrl: { in: abandoned } } });
   } else {
     await prisma.plannedTicket.create({
       data: {
@@ -490,7 +528,7 @@ export async function addTicketToPlan(
     outcome: "skipped",
     reason: "added-by-user",
     detail: queued
-      ? `Added to the plan by hand, last in the implement queue, release day ${lastDay}.`
+      ? `Added to the plan by hand${restart ? ", starting over — every pull request it had was abandoned" : ""}, last in the implement queue, release day ${lastDay}.`
       : `Added to the plan by hand at "${ticket.status}" — tracked, not queued.`,
   });
   return { ok: true };

@@ -200,6 +200,13 @@ export async function getGithubPullRequestReview(
   return cached(`${GITHUB_CACHE_PREFIX}review:${prUrl}`, TTL.review, () => fetchPullRequestReview(ref, token));
 }
 
+/** Whether one pull request was closed unmerged — read fresh, never cached: it decides whether a ticket may run again. */
+export async function isGithubPullRequestAbandoned(prUrl: string, token: string): Promise<boolean> {
+  const ref = parsePrUrl(prUrl);
+  if (!ref) return false;
+  return (await fetchPullRequestReview(ref, token)).pr?.status === "Abandoned";
+}
+
 async function fetchPullRequestReview(
   ref: { owner: string; repo: string; number: number },
   token: string,

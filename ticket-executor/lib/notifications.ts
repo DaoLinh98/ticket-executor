@@ -472,6 +472,8 @@ export function fromTicketActivity(rows: TicketActivitySource[]): AppNotificatio
 
 export const REPORT_REMINDER_START_MINUTE = 17 * 60 + 15;
 export const REPORT_REMINDER_EVERY_MINUTES = 5;
+// After the last nudge the reminder stays in the bell, but is not made unread again.
+export const REPORT_REMINDER_TIMES = 3;
 
 export type ReportReminderSource = {
   day: string;
@@ -482,9 +484,11 @@ export type ReportReminderSource = {
 
 export function fromReportReminder(r: ReportReminderSource | null): AppNotification[] {
   if (!r || r.sent || r.minuteOfDay < REPORT_REMINDER_START_MINUTE) return [];
+  const weekday = new Date(`${r.day}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return [];
   const elapsed = r.minuteOfDay - REPORT_REMINDER_START_MINUTE;
-  const slot = Math.floor(elapsed / REPORT_REMINDER_EVERY_MINUTES);
-  const slotAt = new Date(Date.parse(r.at) - (elapsed % REPORT_REMINDER_EVERY_MINUTES) * 60_000);
+  const slot = Math.min(Math.floor(elapsed / REPORT_REMINDER_EVERY_MINUTES), REPORT_REMINDER_TIMES - 1);
+  const slotAt = new Date(Date.parse(r.at) - (elapsed - slot * REPORT_REMINDER_EVERY_MINUTES) * 60_000);
   slotAt.setSeconds(0, 0);
   return [{
     kind: "report.unsent",
