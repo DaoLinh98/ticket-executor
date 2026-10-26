@@ -132,9 +132,12 @@ export function reflectPrompt(c: Ctx): string {
   );
 }
 
+// The worktree on the pull request's branch — a related repo's when the pull request lives there.
+const prTree = (c: Ctx) => c.companions.find((m) => m.name === c.channels.setup?.prRepo)?.cwd ?? c.cwd;
+
 export function reviewTriagePrompt(c: Ctx): string {
   return (
-    `${header(c)}\n\nThe working tree is on the pull request's source branch \`${branchOf(c)}\`. ` +
+    `${header(c)}\n\nThe working tree \`${prTree(c)}\` is on the pull request's source branch \`${branchOf(c)}\`. ` +
     `Read every open review thread on the pull request above and judge each one against the code and the ticket. ` +
     `Return one \`threads\` entry per open thread and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files and do not reply to any thread.`
   );
@@ -142,7 +145,7 @@ export function reviewTriagePrompt(c: Ctx): string {
 
 export function reviewImplementPrompt(c: Ctx): string {
   return (
-    `${header(c)}\n\n${acceptance(c)}\n\nThe decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` — ` +
+    `${header(c)}\n\n${acceptance(c)}\n\nThe decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` of \`${prTree(c)}\` — ` +
     `do not create or switch branches, do not rebase. Commit locally. Do not push and do not reply to any thread.`
   );
 }
@@ -153,7 +156,7 @@ export function respondPrompt(c: Ctx): string {
   const list = answer.map((t, i) => `${i + 1}. thread ${t.threadId} (${t.decision})${t.file ? ` ${t.file}` : ""} — ${t.reason}`).join("\n");
   return (
     `${header(c)}\n\n` +
-    (changed ? `Push branch \`${branchOf(c)}\` from \`${c.cwd}\` to origin (never force-push). Then answer` : "Nothing was committed — push nothing. Answer") +
+    (changed ? `Push branch \`${branchOf(c)}\` from \`${prTree(c)}\` to origin (never force-push). Then answer` : "Nothing was committed — push nothing. Answer") +
     ` these threads on the pull request, one reply each:\n${list}\n\n` +
     `Never resolve a thread or change its status. Skip a thread that already carries your reply — this step may be retried after a crash.`
   );

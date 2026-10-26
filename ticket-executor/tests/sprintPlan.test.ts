@@ -420,6 +420,18 @@ test("reorderQueue moves one row and keeps the set of positions dense", () => {
   assert.deepEqual([...reorderQueue(rows, "a", "down")!], [["b", 1], ["a", 3], ["c", 4]]);
 });
 
+test("reorderQueue drops a row onto another row's position", () => {
+  const rows = [
+    { id: "a", implementOrder: 1 },
+    { id: "b", implementOrder: 3 },
+    { id: "c", implementOrder: 4 },
+  ];
+  assert.deepEqual([...reorderQueue(rows, "a", { to: "c" })!], [["b", 1], ["c", 3], ["a", 4]]);
+  assert.deepEqual([...reorderQueue(rows, "c", { to: "b" })!], [["a", 1], ["c", 3], ["b", 4]]);
+  assert.equal(reorderQueue(rows, "a", { to: "a" }), null);
+  assert.equal(reorderQueue(rows, "a", { to: "missing" }), null);
+});
+
 test("reorderQueue refuses a move that changes nothing", () => {
   const rows = [{ id: "a", implementOrder: 1 }, { id: "b", implementOrder: 2 }];
   assert.equal(reorderQueue(rows, "a", "up"), null);

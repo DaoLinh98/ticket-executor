@@ -301,3 +301,15 @@ export function matchesFilter(t: PlannedRow, filter: PlanFilter, attentionIds: S
       return true;
   }
 }
+
+export const PLAN_KEY = ["my-sprint", "plan"] as const;
+
+export const fetchPlan = async (): Promise<PlanResponse> => {
+  const d = await fetch("/api/my-sprint/plan").then((r) => r.json());
+  return {
+    plan: d.plan ?? null,
+    events: Array.isArray(d.events) ? d.events : [],
+    drafts: Array.isArray(d.drafts) ? d.drafts : [],
+    costs: d.costs && typeof d.costs === "object" ? d.costs : {},
+  };
+};

@@ -36,6 +36,7 @@ import NodeInspector, { type InspectorTab, type LogFilter, type SheetState } fro
 import { MONO } from "./parts";
 import TicketLifecycle from "./TicketLifecycle";
 import { RawLog, TimelineView } from "./Views";
+import RunPicker from "./RunPicker";
 import WorkflowCanvas from "./WorkflowCanvas";
 
 type Ui = {
@@ -72,7 +73,7 @@ const INITIAL: Ui = {
   retryFrom: null,
   copied: false,
   fixOpen: false,
-  lcOpen: true,
+  lcOpen: false,
   hudOpen: false,
   mLcOpen: false,
   allPaths: false,
@@ -111,6 +112,10 @@ export default function WorkflowView() {
   const ticketParam = params.get("ticket");
   const [ui, setUi] = useState<Ui>(INITIAL);
   const [refusedGates, setRefusedGates] = useState<GateResult[] | null>(null);
+  // An older run the user chose to look at; null follows the ticket's live (else latest) run.
+  const [pickedRun, setPickedRun] = useState<string | null>(null);
+  // A ticket picked from the run dropdown overrides the one in the URL.
+  const [pickedTicket, setPickedTicket] = useState<string | null>(null);
   const now = useNow(true);
 
   const patch = useCallback((p: Partial<Ui>) => setUi((u) => ({ ...u, ...p })), []);
@@ -121,8 +126,14 @@ export default function WorkflowView() {
   // The run on screen is derived, never stored: the ticket's run in flight (or its latest), so a run the
   // scheduler starts takes the screen over through the list stream alone.
   const runs = runsQ.data?.runs ?? [];
-  const pool = ticketParam ? runs.filter((r) => r.ticketId === ticketParam) : runs;
-  const runId = (pool.find((r) => ACTIVE.includes(r.state)) ?? pool[0])?.id ?? null;
+  const ticketKey = pickedTicket ?? ticketParam;
+  const pool = ticketKey ? runs.filter((r) => r.ticketId === ticketKey) : runs;
+  const runId = pool.find((r) => r.id === pickedRun)?.id ?? (pool.find((r) => ACTIVE.includes(r.state)) ?? pool[0])?.id ?? null;
+  const pickRun = (r: RunListItem, newest: boolean) => {
+    setPickedTicket(r.ticketId);
+    setPickedRun(newest ? null : r.id);
+    reset();
+  };
   const viewQ = useQuery({ queryKey: runKeyOf(runId), queryFn: () => readJson<RunView>(`/api/dagent/runs/${runId}`), enabled: !!runId, staleTime: 0 });
   useLiveInvalidate(runId ? `/api/dagent/runs/${runId}/stream` : null, runKeyOf(runId));
 
@@ -150,7 +161,9 @@ export default function WorkflowView() {
   const timeline = useMemo(() => timelineOf(run, now), [run, now]);
   const allLogs = useMemo(() => logLinesOf(run, now, gates), [run, now, gates]);
   const inspector = useMemo(() => inspectNode(run, gates, selected, ui.attempt, now), [run, gates, selected, ui.attempt, now]);
-  const runSecs = useMemo(() => runSections(run, gates, now), [run, gates, now]);
+  // Only the ticket's newest run may be retried or cancelled — acting from an older one would race the run that replaced it.
+  const latest = !pool.length || runId === pool[0].id;
+  const runSecs = useMemo(() => runSections(run, gates, now).filter((s) => latest || s.kind !== "retry"), [run, gates, now, latest]);
 
   const q = ui.query.toLowerCase();
   const attemptNo = inspector.attempts[inspector.attemptIndex]?.n;
@@ -221,6 +234,7 @@ export default function WorkflowView() {
   };
 
   const onRetry = () => {
+    if (!latest) return;
     const from = ui.retryFrom ?? run?.failure?.retryableFrom[0];
     if (!real || !from) return;
     startM.mutate({ ticketId: real.ticket.id, ticketUrl: real.ticket.url, project: real.ticket.project, rootRepo: real.ticket.rootRepo, provider: real.ticket.provider, retryOf: real.run.id, from });
@@ -235,6 +249,7 @@ export default function WorkflowView() {
     id: real?.ticket.id ?? ticketParam ?? "…",
     title: real?.ticket.title || (refusedGates ? "Refused before a run existed" : "Loading run…"),
     meta: real ? `${real.ticket.provider} · ${real.ticket.project}` : "",
+    url: real?.ticket.url ?? "",
   };
   const waiting = run?.state === "waiting" ? run.waitReason : undefined;
   const empty = !runId;
@@ -275,10 +290,18 @@ export default function WorkflowView() {
         </div>
       ) : (
         <div className="te-wf" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 1, background: COLORS.panelBgDark }}>
-          <div style={{ flex: "0 0 auto", height: 48, display: "flex", alignItems: "center", gap: 10, padding: "0 16px", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.panelBg }}>
-            <span style={{ ...chipShape(6), flex: "0 0 auto", padding: "4px 7px", fontSize: FONT.xs, fontWeight: 500, fontFamily: MONO, background: "var(--te-indigo-soft)", color: COLORS.indigo }}>{ticket.id}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: FONT.base, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ticket.title}</span>
-            <span className="te-mobile-hide" style={{ flex: "0 0 auto", fontSize: FONT.sm, color: COLORS.textMuted }}>{ticket.meta}</span>
+          <div style={{ position: "relative", zIndex: 5, flex: "0 0 auto", height: 48, display: "flex", alignItems: "center", gap: 10, padding: "0 16px", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.panelBg }}>
+            <a href="/my-sprint" className="te-mobile-hide" title="Back to the Flow Runner sprint plan" style={{ ...chipShape(6), flex: "0 0 auto", height: 28, display: "inline-flex", alignItems: "center", gap: 5, padding: "0 9px", border: `1px solid ${COLORS.border}`, fontSize: FONT.sm, fontWeight: 600, color: COLORS.textSoft, textDecoration: "none", whiteSpace: "nowrap" }}>
+              ← Sprint plan
+            </a>
+            {ticket.url ? (
+              <a href={ticket.url} target="_blank" rel="noreferrer" title="Open the ticket in the tracker" style={{ ...chipShape(6), flex: "0 0 auto", padding: "4px 7px", fontSize: FONT.xs, fontWeight: 500, fontFamily: MONO, background: "var(--te-indigo-soft)", color: COLORS.indigo, textDecoration: "none" }}>{ticket.id} ↗</a>
+            ) : (
+              <span style={{ ...chipShape(6), flex: "0 0 auto", padding: "4px 7px", fontSize: FONT.xs, fontWeight: 500, fontFamily: MONO, background: "var(--te-indigo-soft)", color: COLORS.indigo }}>{ticket.id}</span>
+            )}
+            <span style={{ flex: "0 1 auto", minWidth: 0, fontSize: FONT.lg, fontWeight: 700, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ticket.title}</span>
+            <RunPicker runs={runs} currentId={runId} onPick={pickRun} />
+            <span className="te-mobile-hide" style={{ flex: "0 0 auto", fontSize: FONT.sm, fontWeight: 600, color: COLORS.textSoft, whiteSpace: "nowrap" }}>{ticket.meta}</span>
           </div>
 
           <TicketLifecycle
@@ -305,15 +328,15 @@ export default function WorkflowView() {
             hud={hud}
             mode={ui.mode}
             onMode={(m) => patch({ mode: m })}
-            canCancel={!!run && (live || run.state === "waiting")}
-            canRetry={run?.state === "failed"}
+            canCancel={latest && !!run && (live || run.state === "waiting")}
+            canRetry={latest && run?.state === "failed"}
             onCancel={onCancel}
             onRetry={() => patch({ tab: "run", sheet: "full", mode: "flow" })}
             mobileOpen={ui.hudOpen}
             onMobileToggle={() => patch({ hudOpen: !ui.hudOpen })}
           />
 
-          {banner ? <StateBanner banner={banner} copied={ui.copied} onAction={onBanner} /> : null}
+          {banner ? <StateBanner banner={latest || banner.action?.kind !== "open-run" ? banner : { ...banner, action: undefined }} copied={ui.copied} onAction={onBanner} /> : null}
 
           <div className="te-wf-body" data-sheet={ui.sheet} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
             <div className="te-wf-canvas" style={{ flex: 1, minWidth: 0, position: "relative", overflow: "hidden" }}>

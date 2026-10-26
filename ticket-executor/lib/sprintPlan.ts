@@ -564,7 +564,8 @@ export function retryDenial(f: RetryFacts): string {
   return "";
 }
 
-export type QueueMove = "up" | "down" | "top";
+/** `{ to }` drops the row onto another queued row's position (drag and drop). */
+export type QueueMove = "up" | "down" | "top" | { to: string };
 
 export function reorderQueue(
   rows: { id: string; implementOrder: number }[],
@@ -574,7 +575,7 @@ export function reorderQueue(
   const sorted = [...rows].sort((a, b) => a.implementOrder - b.implementOrder);
   const from = sorted.findIndex((r) => r.id === id);
   if (from < 0) return null;
-  const to = move === "top" ? 0 : move === "up" ? from - 1 : from + 1;
+  const to = typeof move === "object" ? sorted.findIndex((r) => r.id === move.to) : move === "top" ? 0 : move === "up" ? from - 1 : from + 1;
   if (to < 0 || to >= sorted.length || to === from) return null;
   const orders = sorted.map((r) => r.implementOrder);
   const sequence = sorted.map((r) => r.id);

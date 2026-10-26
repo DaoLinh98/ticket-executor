@@ -514,7 +514,7 @@ export async function moveInQueue(plannedId: string, move: QueueMove): Promise<{
     action: "implement",
     outcome: "skipped",
     reason: "reordered-by-user",
-    detail: move === "top" ? "Moved to the front of the implement queue." : `Moved ${move} in the implement queue.`,
+    detail: typeof move === "object" ? "Dragged to a new place in the implement queue." : move === "top" ? "Moved to the front of the implement queue." : `Moved ${move} in the implement queue.`,
   });
   return { ok: true };
 }

@@ -85,11 +85,11 @@ export default function TicketLifecycle({ stages, runKey, open, onToggle, mobile
     <>
       <section aria-label="Ticket lifecycle" className="te-wf-desk" style={{ flex: "0 0 auto", ...header }}>
         <div style={{ height: 36, display: "flex", alignItems: "center", gap: 10, padding: "0 16px" }}>
-          <button type="button" aria-expanded={open} onClick={onToggle} style={{ ...chipShape(6), height: 26, display: "flex", alignItems: "center", gap: 6, padding: "0 8px", border: 0, cursor: "pointer", background: COLORS.panelBgDark, fontSize: FONT.sm, fontWeight: 600, color: COLORS.textSoft }}>
-            <Ico d={open ? IC.up : IC.down} size={14} />
+          <span style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{summary}</span>
+          <button type="button" aria-expanded={open} onClick={onToggle} title={open ? "Hide the ticket's 9 lifecycle stages" : "Show the ticket's 9 lifecycle stages"} style={{ ...chipShape(6), flex: "0 0 auto", height: 28, display: "flex", alignItems: "center", gap: 6, padding: "0 10px", border: 0, cursor: "pointer", background: COLORS.panelBgDark, fontSize: FONT.sm, fontWeight: 600, color: COLORS.textSoft }}>
             Ticket lifecycle
+            <Ico d={open ? IC.up : IC.down} size={14} />
           </button>
-          <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{summary}</span>
         </div>
         {open ? (
           <ol style={{ listStyle: "none", margin: 0, padding: "0 16px 10px", display: "grid", gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))`, minHeight: 108 }}>

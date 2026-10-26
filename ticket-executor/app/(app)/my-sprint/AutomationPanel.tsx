@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useBoltsContext } from "../../BoltsContext";
-import { COLORS, FONT, SHAPE, SURFACE, card, chipShape, ctaButtonStyle, fieldInput, fieldLabel, sectionCaption, tabStyle } from "@/lib/ui";
+import { COLORS, FONT, SHAPE, SURFACE, card, chipShape, ctaButtonStyle, sectionCaption, tabStyle } from "@/lib/ui";
 import ActionButton from "./ActionButton";
 import type { StoredPlan } from "./model";
-
-export type PlanSettings = { pointsPerDay: string; hoursPerDay: string; maxTicketsPerDay: string };
 
 type AutoField = "autoImplement" | "autoRelease" | "autoResolveReview" | "autoDraftQaReply";
 
@@ -24,50 +21,24 @@ const ENGINES: readonly [Engine, string, string][] = [
   ["dagent", "D-Agent", "Run tickets on the D-Agent engine (subagents) — implement, review fix and QA fix. Watch them live on Workflow."],
 ];
 
-const SETTING_FIELDS: readonly [keyof PlanSettings, string, string][] = [
-  ["pointsPerDay", "POINTS / DAY", "decimal"],
-  ["hoursPerDay", "HOURS / DAY", "decimal"],
-  ["maxTicketsPerDay", "MAX TICKETS / DAY (0 = NO LIMIT)", "numeric"],
-];
-
 export default function AutomationPanel({
   stored,
   busy,
-  settings,
-  onSettings,
   onBuild,
-  onApplySettings,
   onSetStatus,
   onToggle,
   onEngine,
   onTick,
-  onSaveReviewers,
 }: {
   stored: StoredPlan | null;
   busy: ReadonlySet<string>;
-  settings: PlanSettings;
-  onSettings: (next: PlanSettings) => void;
   onBuild: () => void;
-  onApplySettings: () => void;
   onSetStatus: (status: "active" | "draft") => void;
   onToggle: (field: AutoField, on: boolean) => void;
   onEngine: (engine: Engine) => void;
   onTick: () => void;
-  onSaveReviewers: (reviewers: string[]) => void;
 }) {
   const { fireBoltFromEvent } = useBoltsContext();
-  const [open, setOpen] = useState(false);
-  const savedReviewers = (stored?.reviewers ?? []).join(", ");
-  const [reviewers, setReviewers] = useState(savedReviewers);
-  useEffect(() => setReviewers(savedReviewers), [savedReviewers]);
-  const parsedReviewers = reviewers.split(/[,;\n]/).map((r) => r.trim()).filter(Boolean);
-  const valid = Number(settings.pointsPerDay) > 0 && Number(settings.hoursPerDay) > 0 && Number(settings.maxTicketsPerDay) >= 0;
-  const settingsChanged =
-    !!stored &&
-    (Number(settings.pointsPerDay) !== stored.pointsPerDay ||
-      Number(settings.hoursPerDay) !== stored.hoursPerDay ||
-      Number(settings.maxTicketsPerDay) !== stored.maxTicketsPerDay);
-
   return (
     <div style={{ ...card({ padding: "10px 12px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px 10px", flexWrap: "wrap" }}>
@@ -143,58 +114,7 @@ export default function AutomationPanel({
           );
         })}
         <div style={{ flex: 1 }} />
-        <button
-          className="te-action-btn"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          style={{ background: "transparent", border: "none", padding: "0 2px", cursor: "pointer", ...sectionCaption(), color: COLORS.textMuted, display: "inline-flex", alignItems: "center", gap: "6px" }}
-        >
-          <span style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
-          SETTINGS
-        </button>
       </div>
-
-      {open && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "14px", borderTop: `1px solid ${COLORS.borderSubtle}`, paddingTop: "12px" }}>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
-            {SETTING_FIELDS.map(([field, label, mode]) => (
-              <label key={field} style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 140px", minWidth: 0 }}>
-                <span style={{ ...fieldLabel(), fontSize: FONT.sm }}>{label}</span>
-                <input
-                  value={settings[field]}
-                  onChange={(e) => onSettings({ ...settings, [field]: e.target.value })}
-                  inputMode={mode as "decimal" | "numeric"}
-                  autoComplete="off"
-                  style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
-                />
-              </label>
-            ))}
-            <ActionButton tall label="Apply & rebuild" variant="outline" onClick={onApplySettings} busy={busy.has("plan")} disabled={!settingsChanged || !valid} />
-          </div>
-
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 260px", minWidth: 0 }}>
-              <span style={{ ...fieldLabel(), fontSize: FONT.sm }}>REVIEWERS (COMMA-SEPARATED)</span>
-              <input
-                value={reviewers}
-                onChange={(e) => setReviewers(e.target.value)}
-                placeholder="name@company.com, other@company.com"
-                autoComplete="off"
-                spellCheck={false}
-                style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
-              />
-            </label>
-            <ActionButton
-              tall
-              label="Save reviewers"
-              variant="outline"
-              onClick={() => onSaveReviewers(parsedReviewers)}
-              busy={busy.has("reviewers")}
-              disabled={!stored || parsedReviewers.join(", ") === savedReviewers}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

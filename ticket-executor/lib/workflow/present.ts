@@ -632,8 +632,14 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
     return b("warning", IC.alert, "Publish needs a human.", "The PR read-back did not match — check the branch and the tracker before anything else runs.", { action: { label: "Open read-back", kind: "open-node", nodeId: "verifyPublish" } });
   if (run.state === "failed")
     return b("danger", IC.x, "Failed.", `${run.failure ? run.failure.reason.split(". ")[0] : "Reached FAIL"}.${run.failure?.lesson ? " Lesson recorded to KNOWLEDGE.md." : ""}`, { action: { label: "Retry from…", kind: "open-run" } });
-  if (run.state === "succeeded")
+  if (run.state === "succeeded") {
+    // An END reached before publish means nothing was pushed — say why instead of claiming PRs.
+    if (run.currentNodeId === "readiness")
+      return b("success", IC.check, "Already delivered.", `Every acceptance criterion is already on the base — nothing was implemented or published · ${usd(run.costUsd)} total.`);
+    if (run.currentNodeId === "qaTriage")
+      return b("success", IC.check, "No defect found.", `The reply to QA is drafted — nothing was changed or pushed · ${usd(run.costUsd)} total.`);
     return b("success", IC.check, "Succeeded.", run.flow === "implement" ? `Draft PRs are open and verified · ${usd(run.costUsd)} total.` : `Fix pushed to the existing PRs and verified · ${usd(run.costUsd)}.`);
+  }
   return null;
 }
 

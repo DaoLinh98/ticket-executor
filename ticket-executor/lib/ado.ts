@@ -1284,6 +1284,7 @@ export async function getPullRequestReview(
     status: prStatusLabel(raw),
     branch: (raw.sourceRefName ?? "").replace(/^refs\/heads\//, ""),
     targetBranch: (raw.targetRefName ?? "").replace(/^refs\/heads\//, ""),
+    repo: raw.repository?.name ?? "",
     author: raw.createdBy?.displayName ?? "Unknown",
     reviewers: (raw.reviewers ?? []).map((r) => r.displayName ?? "").filter(Boolean),
     createdAt: raw.creationDate ?? "",

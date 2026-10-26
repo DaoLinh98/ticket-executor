@@ -6,6 +6,7 @@ import RingAnimation from "./RingAnimation";
 import SettingsProvider from "./SettingsProvider";
 import QueryProvider from "./QueryProvider";
 import { MotionProvider } from "./Motion";
+import Tooltip from "./Tooltip";
 import { getOrCreateSetting } from "@/lib/settings";
 
 const barlowCondensed = Barlow_Condensed({
@@ -77,6 +78,7 @@ export default async function RootLayout({
             <RingAnimation />
             <MotionProvider>
               <BoltsProvider>{children}</BoltsProvider>
+              <Tooltip />
             </MotionProvider>
           </SettingsProvider>
         </QueryProvider>

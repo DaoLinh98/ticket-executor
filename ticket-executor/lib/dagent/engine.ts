@@ -31,8 +31,14 @@ type Live = {
   knowledgeAtStart: string | null;
 };
 
-const g = globalThis as unknown as { __dagentLive?: Map<string, Live> };
+const g = globalThis as unknown as { __dagentLive?: Map<string, Live>; __dagentEnded?: Set<(runId: string) => void> };
 const LIVE: Map<string, Live> = (g.__dagentLive ??= new Map());
+const ENDED: Set<(runId: string) => void> = (g.__dagentEnded ??= new Set());
+
+/** Called once a run reaches a terminal state, so Flow Runner can settle its row without waiting for the next tick. */
+export function onRunEnded(fn: (runId: string) => void) {
+  ENDED.add(fn);
+}
 
 const ACTIVE = ["running", "waiting"];
 const CANCELLED = "CANCELLED";
@@ -134,6 +140,7 @@ async function finish(live: Live, state: "succeeded" | "failed" | "cancelled", e
   await saveRun(live.id, live.ctx, { state, waitReason: "", errorMessage: error, hops: live.hops, endedAt: new Date() });
   removeWorktrees(live.ctx);
   LIVE.delete(live.id);
+  ENDED.forEach((fn) => fn(live.id));
 }
 
 async function park(live: Live, waitReason: string, reason: string) {

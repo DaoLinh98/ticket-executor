@@ -113,7 +113,7 @@ export function warningsOf(c: Pick<Ctx, "channels">): Refusal[] {
 }
 
 export function scopeOf(c: Pick<Ctx, "channels">): string[] {
-  const repos = c.channels.plan?.repos ?? c.channels.qaTriage?.repos;
+  const repos = c.channels.plan?.repos ?? c.channels.qaTriage?.repos ?? c.channels.setup?.scope;
   return Array.isArray(repos) ? (repos as string[]) : [];
 }
 

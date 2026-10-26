@@ -40,12 +40,28 @@ export function IconAction({ action, onClick, busy, disabled }: { action: Action
   return <ActionButton label={a.label} variant={a.variant} icon={<ActionGlyph action={action} />} onClick={onClick} busy={busy} disabled={disabled} />;
 }
 
-export function ActionLegend() {
+const toggleStyle = { width: "26px", height: "26px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.textDim, cursor: "pointer", padding: 0, flex: "0 0 auto" } as const;
+
+// Collapsed, the legend is a narrow rail with one button, so the plan keeps the width; open, it is the full list.
+export function ActionLegend({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  if (!open) {
+    return (
+      <button type="button" className="te-icon-btn te-legend-rail" aria-label="Show what each action icon means" title="Action legend" onClick={onToggle} style={{ ...card({ padding: "8px 0" }), ...toggleStyle, animation: "fadeIn .3s both", width: "100%", height: "auto", flexDirection: "column", gap: "8px", color: COLORS.textMuted }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3 M12 17h.01" /></svg>
+        <span style={{ ...sectionCaption(), writingMode: "vertical-rl" }}>ACTIONS</span>
+      </button>
+    );
+  }
   return (
-    <div style={{ ...card({ padding: "12px 0 12px 12px" }), display: "flex", flexDirection: "column", gap: "10px", minHeight: 0, maxHeight: "100%" }}>
-      <span style={sectionCaption()}>ACTIONS</span>
+    <div style={{ ...card({ padding: "12px 0 12px 12px" }), animation: "fadeIn .35s both", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0, maxHeight: "100%" }}>
+      <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: "8px" }}>
+        <span style={sectionCaption()}>ACTIONS</span>
+        <button type="button" className="te-icon-btn" aria-label="Hide the action legend" title="Hide" onClick={onToggle} style={toggleStyle}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 6l6 6-6 6" /></svg>
+        </button>
+      </span>
       <div className="te-scroll" style={{ display: "flex", flexDirection: "column", gap: "10px", minHeight: 0, overflowY: "auto", paddingRight: "12px" }}>
-      {(Object.keys(ACTIONS) as ActionKey[]).map((key) => {
+      {(Object.keys(ACTIONS) as ActionKey[]).sort((a, b) => ACTIONS[a].label.localeCompare(ACTIONS[b].label)).map((key) => {
         const a = ACTIONS[key];
         return (
           <div key={key} style={{ display: "flex", alignItems: "flex-start", gap: "9px" }}>

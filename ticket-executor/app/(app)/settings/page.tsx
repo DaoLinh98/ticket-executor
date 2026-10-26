@@ -18,6 +18,7 @@ import PageHeading from "../PageHeading";
 import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import PushNotifications from "./PushNotifications";
+import FlowRunnerSettings from "./FlowRunnerSettings";
 import { SETTINGS_KEY, connectionsKey, fetchSettings, useConnections, type ConnectionsPayload } from "../../queries";
 
 const DEFAULTS: SettingsView = {
@@ -42,6 +43,7 @@ const DEFAULTS: SettingsView = {
 const TABS = [
   { id: "connection", label: "Connection" },
   { id: "execution", label: "Execution" },
+  { id: "flowrunner", label: "Flow Runner" },
   { id: "dashboard", label: "Dashboard" },
   { id: "notifications", label: "Notifications" },
   { id: "appearance", label: "Appearance" },
@@ -526,6 +528,7 @@ export default function SettingsPage() {
   const panes: Record<SettingsTabId, ReactNode> = {
     connection: connectionPane,
     execution: executionPane,
+    flowrunner: <FlowRunnerSettings />,
     dashboard: dashboardPane,
     notifications: notificationsPane,
     appearance: appearancePane,
@@ -564,9 +567,9 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
+            {tab !== "flowrunner" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
               <button onClick={save} style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 7 }), padding: "0 20px" }}>Save changes</button>
-            </div>
+            </div>}
           </div>
         )}
       </main>

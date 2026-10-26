@@ -16,6 +16,7 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  useStore,
   type Edge,
   type EdgeProps,
   type Node,
@@ -270,11 +271,23 @@ function Canvas(p: Props) {
 
   const focus = p.layout.nodes.find((n) => n.id === p.focusId);
   const zoom = p.live ? (p.vertical ? 0.8 : 0.78) : p.vertical ? 0.72 : 0.6;
+  // A finished run frames the path it actually walked — unless that path is so long the cards would be
+  // unreadable, where centring the last node at the usual zoom shows more.
+  const pane = useStore((s) => (p.vertical ? s.height : s.width));
+  const ran = p.live ? [] : p.layout.nodes.filter((n) => p.nodeViews.find((v) => v.id === n.id)?.status !== "pending");
+  const span = (lo: (n: (typeof ran)[number]) => number, hi: (n: (typeof ran)[number]) => number) => Math.max(...ran.map(hi)) - Math.min(...ran.map(lo));
+  const ranLen = ran.length ? (p.vertical ? span((n) => n.y, (n) => n.y + n.h) : span((n) => n.x, (n) => n.x + n.w)) : 0;
+  const ranKey = ran.length && pane / (ranLen * 1.24) >= 0.5 ? ran.map((n) => n.id).join(",") : "";
   useEffect(() => {
-    if (!initialized || !p.follow || !focus) return;
+    if (!initialized || !p.follow) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (ranKey) {
+      void rf.fitView({ nodes: ranKey.split(",").map((id) => ({ id })), padding: 0.12, maxZoom: 1, duration: reduce ? 0 : 220 });
+      return;
+    }
+    if (!focus) return;
     void rf.setCenter(focus.x + focus.w / 2, focus.y + focus.h / 2, { zoom, duration: reduce ? 0 : 220 });
-  }, [initialized, p.follow, p.layoutKey, p.focusId, focus?.x, focus?.y, zoom, rf]);
+  }, [initialized, p.follow, p.layoutKey, p.focusId, focus?.x, focus?.y, zoom, ranKey, rf]);
 
   const pop = p.edgePop ? p.edgeViews.find((e) => e.key === p.edgePop) : undefined;
 
@@ -296,8 +309,7 @@ function Canvas(p: Props) {
         edgeTypes={edgeTypes}
         nodesDraggable={false}
         nodesConnectable={false}
-        panOnScroll={!p.vertical}
-        zoomOnScroll={false}
+        zoomOnScroll
         minZoom={0.2}
         maxZoom={1.6}
         proOptions={{ hideAttribution: true }}

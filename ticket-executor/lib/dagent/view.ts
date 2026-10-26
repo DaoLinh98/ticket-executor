@@ -289,6 +289,12 @@ function lifecycleOf(row: RunRow, steps: Step[], flow: string): LifecycleStage[]
   if (pub?.output?.node === "publish") {
     m.pr = { status: row.state === "waiting" ? "blocked" : "done", at: at(pub), detail: `${pub.output.prs.length} draft PR(s)` };
   }
+  // An implement run that ended at readiness because the work is already on the base built nothing and
+  // opened nothing — say so instead of leaving those stages "to do".
+  if (flow === "implement" && row.state === "succeeded" && !pub && ready?.output?.node === "readiness" && ready.output.delivery?.status === "done") {
+    m.implement = { ...m.implement, status: "skipped", detail: "Nothing to implement" };
+    m.pr = { status: "skipped", at: "", detail: "No PR needed" };
+  }
   return STAGES.map(([id, label]) => ({ id, label, status: "todo", at: "", detail: "", runs: [], ...(m[id] ?? {}) }));
 }
 

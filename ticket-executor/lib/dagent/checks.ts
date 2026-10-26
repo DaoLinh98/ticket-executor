@@ -108,11 +108,64 @@ export function removeWorktrees(c: Ctx) {
 
 const rootName = (c: Ctx) => path.basename(c.rootRepo);
 
-async function setupOnPrBranch(c: Ctx, L: ReturnType<typeof logger>): Promise<NodeResult> {
-  const branch = await loadPullRequestBranch(normalizeProvider(c.provider), c.ticketId, c.prUrl).catch(() => "");
+const repoKey = (s: string) => {
+  let v = s;
+  try {
+    v = decodeURIComponent(s);
+  } catch {}
+  return v.toLowerCase().replace(/[^a-z0-9]/g, "");
+};
+
+// Whether a local clone is the provider repository `repo` — by folder name or by origin's last URL segment,
+// ignoring case, spaces and punctuation ("Reporting Service" is cloned as ReportingService).
+function hostsRepo(repoPath: string, name: string, repo: string): boolean {
+  const want = repoKey(repo);
+  if (repoKey(name) === want) return true;
+  const url = git(repoPath, ["remote", "get-url", "origin"]).out.replace(/\/+$/, "").replace(/\.git$/, "");
+  const last = url.split(/[/:]/).pop() ?? "";
+  return !!last && repoKey(last) === want;
+}
+
+// The pull request lives in a related repo: check its branch out there, and give the Root repo a plain worktree so
+// the run still has a working directory that is not the developer's own checkout.
+function setupOnCompanionPrBranch(c: Ctx, L: ReturnType<typeof logger>, env: CheckEnv, owner: { name: string; path: string; note: string }, branch: string): NodeResult {
+  excludeRunFiles(owner.path);
+  applyIdentity(owner.path, env);
+  const fetched = git(owner.path, ["fetch", "origin", branch], 90000);
+  if (!fetched.ok) return failure(`Could not fetch origin/${branch} in ${owner.name}: ${fetched.err}`, L.log);
+  const start = startPoint(c.rootRepo, rootName(c), L);
+  if (!start) return failure(`${c.rootRepo} has no commit to start from.`, L.log);
+  const rootWt = worktreeOf(c.rootRepo, c.runId);
+  const rootAdded = addWorktree(c.rootRepo, rootWt, "", start);
+  if (!rootAdded.ok) return failure(`Could not create the worktree ${rootWt}: ${rootAdded.err}`, L.log);
+  c.cwd = rootWt;
+  c.baseSha = start;
+  const cwd = worktreeOf(owner.path, c.runId);
+  const added = git(owner.path, ["worktree", "add", "-B", branch, cwd, `origin/${branch}`]);
+  if (!added.ok) return failure(`Could not check out ${branch} in the worktree ${cwd}: ${added.err}`, L.log);
+  const head = git(cwd, ["rev-parse", "HEAD"]).out;
+  c.companions = [{ name: owner.name, path: owner.path, cwd, baseSha: head, note: owner.note }];
+  L.info(`worktree ${cwd} on ${branch} @ ${head.slice(0, 7)} — the pull request's head, in related repo ${owner.name}`);
+  return result(
+    {
+      mode: "worktree",
+      branch,
+      baseSha: c.baseSha,
+      prRepo: owner.name,
+      scope: [owner.name],
+      repos: [{ name: rootName(c), path: rootWt }, { name: owner.name, path: cwd }],
+    },
+    L.log,
+  );
+}
+
+async function setupOnPrBranch(c: Ctx, L: ReturnType<typeof logger>, env: CheckEnv): Promise<NodeResult> {
+  const { branch, repo } = await loadPullRequestBranch(normalizeProvider(c.provider), c.ticketId, c.prUrl).catch(() => ({ branch: "", repo: "" }));
   if (!branch) return failure(`Could not read the source branch of ${c.prUrl || "the pull request"} from ${c.provider}.`, L.log);
+  const owner = repo && !hostsRepo(c.rootRepo, rootName(c), repo) ? discoverCompanionRepos(c.rootRepo).repos.find((m) => hostsRepo(m.path, m.name, repo)) : undefined;
+  if (owner) return setupOnCompanionPrBranch(c, L, env, owner, branch);
   const fetched = git(c.rootRepo, ["fetch", "origin", branch], 90000);
-  if (!fetched.ok) return failure(`Could not fetch origin/${branch}: ${fetched.err}`, L.log);
+  if (!fetched.ok) return failure(`Could not fetch origin/${branch}${repo ? ` (the pull request is in repository "${repo}")` : ""}: ${fetched.err}`, L.log);
   const wt = worktreeOf(c.rootRepo, c.runId);
   const added = git(c.rootRepo, ["worktree", "add", "-B", branch, wt, `origin/${branch}`]);
   if (!added.ok) return failure(`Could not check out ${branch} in the worktree ${wt}: ${added.err}`, L.log);
@@ -127,7 +180,7 @@ export async function setup(c: Ctx, env: CheckEnv): Promise<NodeResult> {
   const retry = env.retry;
   excludeRunFiles(c.rootRepo);
   applyIdentity(c.rootRepo, env);
-  if (c.flow === "review") return setupOnPrBranch(c, L);
+  if (c.flow === "review") return setupOnPrBranch(c, L, env);
   const start = retry?.baseSha || startPoint(c.rootRepo, rootName(c), L);
   if (!start) return failure(`${c.rootRepo} has no commit to start from.`, L.log);
   c.baseSha = start;

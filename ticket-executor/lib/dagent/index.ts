@@ -4,7 +4,7 @@ import { flowOf } from "./graph";
 import type { Flow } from "./types";
 import { buildView, listItem, type RunListItem, type RunView } from "./view";
 
-export { cancelRun, resumeRun, startRun, type ResumeAction, type StartInput } from "./engine";
+export { cancelRun, onRunEnded, resumeRun, startRun, type ResumeAction, type StartInput } from "./engine";
 export type { RunListItem, RunView } from "./view";
 
 export async function listRuns(): Promise<{ runs: RunListItem[] }> {

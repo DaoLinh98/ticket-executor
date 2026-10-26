@@ -127,9 +127,25 @@ export const EVALUATE_OUTPUT = {
         additionalProperties: false,
       },
     },
+    checked: {
+      type: "array",
+      description: "One entry per acceptance criterion and per bug-axis check you actually performed. A pass with none is not a review.",
+      items: {
+        type: "object",
+        properties: {
+          subject: { type: "string", description: "The acceptance criterion, or the check (e.g. 'axis bound vs data scale')." },
+          how: { type: "string", description: "What you read or ran to verify it." },
+          evidence: { type: "string", description: "What proves the result: file:line plus the quoted code or the command run and its outcome. Never empty." },
+          result: { type: "string", enum: ["ok", "issue", "unverified"] },
+        },
+        required: ["subject", "how", "evidence", "result"],
+        additionalProperties: false,
+      },
+    },
+    assumptions: { ...STRINGS, description: "What you could not verify and what would settle it. Empty when nothing was left open." },
     blocked: BLOCKED,
   },
-  required: ["verdict", "blockers", "blocked"],
+  required: ["verdict", "blockers", "checked", "assumptions", "blocked"],
   additionalProperties: false,
 } as const;
 

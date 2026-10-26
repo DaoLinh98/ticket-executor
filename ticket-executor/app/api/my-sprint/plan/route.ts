@@ -272,7 +272,8 @@ export async function PUT(req: Request) {
   }
   if (body.moveInQueue && typeof body.moveInQueue === "object" && typeof body.moveInQueue.id === "string") {
     const { id, move } = body.moveInQueue;
-    if (!["up", "down", "top"].includes(move)) return NextResponse.json({ error: "Unknown move." }, { status: 400 });
+    const valid = ["up", "down", "top"].includes(move) || (typeof move === "object" && move !== null && typeof move.to === "string");
+    if (!valid) return NextResponse.json({ error: "Unknown move." }, { status: 400 });
     const outcome = await moveInQueue(id, move);
     const item = await prisma.plannedTicket.findUnique({ where: { id } });
     return NextResponse.json({ outcome, plan: item ? await planById(item.planId) : null }, outcome.ok ? undefined : { status: 400 });
