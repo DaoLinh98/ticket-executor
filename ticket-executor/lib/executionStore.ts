@@ -42,7 +42,10 @@ export {
   RELEASE_STATUS,
   type ReleaseOutcome,
 } from "./execution/release";
-export { startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";
+export { retryPlannedNow, startReviewRun, startScheduler, tickNow, type TickReport } from "./execution/scheduler";
 export { moveToQa, QA_STATUS } from "./execution/lifecycle";
 export { analyzeCase, approveFix, dismissCase, lastClosedCases, listCases, postCaseReply } from "./execution/qaFollowUp";
 export { translateToVietnamese, TRANSLATE_MODEL, type TranslateResult } from "./execution/translate";
+export { acknowledgeReview, reviewsWaiting, type RunNeedingReview } from "./execution/runReview";
+export { clarificationsWaiting, postClarification, type Clarification } from "./execution/clarify";
+export { planRowFor, type PlanRowResult } from "./execution/planRow";

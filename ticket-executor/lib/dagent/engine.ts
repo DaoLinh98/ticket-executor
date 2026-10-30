@@ -200,12 +200,13 @@ function capturePlan(live: Live, data: Record<string, unknown>): Promise<void> {
 
 async function drive(live: Live, from: string) {
   let target = from;
-  let why = "";
   try {
     while (true) {
       if (target === END) return await finish(live, "succeeded", "");
       if (target === NEEDS_INPUT) return await park(live, "needs-input", "The ticket is not ready — questions are drafted for the PO.");
-      if (target === NEEDS_REVIEW) return await park(live, "needs-review", why || "The pull request read-back did not match — a person must check it.");
+      // Needs-review is a verdict, not a wait: the harness decided (nothing to change, or a read-back mismatch) and the
+      // run ends on it. The NEEDS_REVIEW transition carries the reason; Flow Runner flags the row for a look.
+      if (target === NEEDS_REVIEW) return await finish(live, "succeeded", "");
       if (target === FAIL) return;
       if (++live.hops > MAX_HOPS) return await finish(live, "failed", `Graph exceeded ${MAX_HOPS} transitions — it is looping.`);
       const node = live.graph.nodes[target];
@@ -235,7 +236,6 @@ async function drive(live: Live, from: string) {
       await transition(live, node.id, next.to, next.reason);
       await saveRun(live.id, live.ctx, { hops: live.hops, ...promote(live, node, r.data) });
       if (next.to === FAIL) return await finish(live, "failed", next.reason);
-      why = next.reason;
       target = next.to;
     }
   } catch (e) {
@@ -340,9 +340,12 @@ export async function startRun(input: StartInput): Promise<StartResult> {
       const cap = setting?.concurrentRuns ?? 2;
       if (dup) throw new Refused(`${ticketId} already has a D-Agent run in flight.`, 409);
       if (running >= cap) throw new Refused(`No concurrency slot: ${running} of ${cap} D-Agent runs are running.`, 429);
+      // Flows without readiness/qaTriage never learn the title, so carry it over from the ticket's last titled run.
+      const titled = await tx.dagentRun.findFirst({ where: { ticketId, ticketTitle: { not: "" } }, orderBy: { startedAt: "desc" }, select: { ticketTitle: true } });
       return tx.dagentRun.create({
         data: {
           ticketId,
+          ticketTitle: titled?.ticketTitle ?? "",
           ticketUrl: (input.ticketUrl ?? "").trim(),
           provider,
           org,
@@ -456,6 +459,7 @@ export async function cancelRun(id: string): Promise<boolean> {
   return true;
 }
 
+// `accept` only settles a run parked on needs-review before such runs began ending on it.
 export type ResumeAction = "recheck-readiness" | "accept";
 
 export async function resumeRun(id: string, action: ResumeAction): Promise<{ ok: boolean; error?: string }> {

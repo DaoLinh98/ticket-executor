@@ -396,6 +396,14 @@ test("a mention and a comment on one ticket are separate notifications", () => {
   assert.equal(actionCount(list, {}), 1);
 });
 
+test("a run that ended on NEEDS_REVIEW reaches the badge; marking it reviewed raises nothing", () => {
+  const [n] = fromAutomation([automation({ action: "implement", outcome: "done", reason: "needs-review" })]);
+  assert.equal(n.kind, "scheduler.needs-review");
+  assert.equal(n.severity, "action");
+  assert.equal(n.tab, "workflow");
+  assert.deepEqual(fromAutomation([automation({ action: "implement", outcome: "done", reason: "review-acknowledged" })]), []);
+});
+
 // ---- the review lane ----
 //
 // The one automation whose success can still be the developer problem: the

@@ -29,6 +29,9 @@ model Setting {
   concurrentRuns Int      @default(2) // cap on D-Agent runs in flight at once
   // Converts point-sized tickets to hours when the provider has no hour estimate.
   hoursPerStoryPoint Float @default(6)
+  // Soft per-ticket spend warning in USD: a ticket whose D-Agent runs cost this much or more is flagged on
+  // Insights (and My Sprint). Never stops a run. 0 = off.
+  ticketBudgetUsd Float @default(0)
   // true (default) → the app hands the Claude CLI a generated MCP config for the
   // selected provider, built from this provider's stored org + PAT, so a fresh
   // install needs no manual `claude mcp add`. It yields to a server the user

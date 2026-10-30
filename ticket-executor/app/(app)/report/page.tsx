@@ -243,7 +243,7 @@ export default function ReportPage() {
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
-        <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "14px" }}>
+        <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", gap: "14px" }}>
           {error && (
             <div style={tintedCard("danger")}>
               <div style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</div>

@@ -86,7 +86,7 @@ export const LANE_TITLE: Record<string, string> = {
 // `left` is the line a park shows once the run has moved past it.
 export const TERMS: Record<string, { sub: string; tone: Tone; icon: string; left?: string }> = {
   END: { sub: "Success", tone: "success", icon: IC.flag },
-  NEEDS_REVIEW: { sub: "Parked · human check", tone: "warning", icon: IC.pause, left: "Accepted · human check" },
+  NEEDS_REVIEW: { sub: "Ended · needs review", tone: "warning", icon: IC.flag, left: "Accepted · human check" },
   NEEDS_INPUT: { sub: "Parked · PO answers", tone: "warning", icon: IC.pause, left: "Rechecked · PO answered" },
   FAIL: { sub: "Failed", tone: "danger", icon: IC.x },
 };

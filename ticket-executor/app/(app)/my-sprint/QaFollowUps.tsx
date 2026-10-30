@@ -19,17 +19,29 @@ const KIND: Record<FindingKind, { text: string; color: string }> = {
   "new-scope": { text: "New scope", color: COLORS.indigo },
   question: { text: "Question", color: COLORS.info },
   "not-defect": { text: "Not a defect", color: COLORS.success },
+  acknowledgement: { text: "Confirmation", color: COLORS.success },
 };
 
 const RECOMMENDATION: Record<string, { text: string; color: string }> = {
   fix: { text: "Fix needed", color: COLORS.danger },
   decide: { text: "Needs your call", color: COLORS.warning },
   reply: { text: "Reply is enough", color: COLORS.success },
+  none: { text: "No reply needed", color: COLORS.success },
 };
 
 /** The findings a case starts with ticked: every real defect. */
 export function defaultPicks(c: QaCase): number[] {
   return (c.findings ?? []).flatMap((f, i) => (f.kind === "defect" ? [i] : []));
+}
+
+/** Scroll to a ticket's QC follow-up card and flash it, so the click shows something even when it is already in view. */
+export function focusQaCase(plannedTicketId: string) {
+  const el = document.getElementById("qa-case-" + plannedTicketId) ?? document.getElementById("qa-follow-ups");
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  el.classList.remove("te-flash");
+  void el.offsetWidth;
+  el.classList.add("te-flash");
 }
 
 export default function QaFollowUps({
@@ -73,7 +85,7 @@ export default function QaFollowUps({
         const st = STATUS[c.status];
         const rec = RECOMMENDATION[c.recommendation];
         return (
-          <div key={c.id} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div key={c.id} id={"qa-case-" + c.plannedTicketId} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 700 }}>#{c.ticketId}</span>
               {(c.status === "running" || c.status === "fixing") && <LoadingRing size={14} />}
@@ -139,7 +151,7 @@ export default function QaFollowUps({
                 <ActionButton label={`Approve fix (${picked.length})`} variant="primary" onClick={() => onApprove(c)} busy={busy.has("qafix-" + c.id)} />
               )}
               {(deciding || c.status === "fixed") && (
-                <ActionButton label="Post reply" variant={deciding && picked.length > 0 ? "outline" : "primary"} onClick={() => onPost(c)} busy={busy.has("post-" + c.id)} disabled={!body.trim()} />
+                <ActionButton label="Post reply" variant={deciding && (picked.length > 0 || c.recommendation === "none") ? "outline" : "primary"} onClick={() => onPost(c)} busy={busy.has("post-" + c.id)} disabled={!body.trim()} />
               )}
               {(c.status === "pending" || c.status === "failed" || deciding) && (
                 <ActionButton label={c.status === "pending" ? "Analyse now" : "Analyse again"} variant="outline" onClick={() => onAnalyze(c)} busy={busy.has("analyze-" + c.plannedTicketId)} />
@@ -148,7 +160,7 @@ export default function QaFollowUps({
                 <ActionButton label="Watch" variant="outline" onClick={() => onWatch(c.ticketId)} />
               )}
               {c.status !== "running" && c.status !== "fixing" && (
-                <ActionButton label="Dismiss" variant="ghost" onClick={() => onDismiss(c)} busy={busy.has("dismiss-" + c.id)} />
+                <ActionButton label={deciding && c.recommendation === "none" ? "Close — no reply needed" : "Dismiss"} variant={deciding && c.recommendation === "none" ? "primary" : "ghost"} onClick={() => onDismiss(c)} busy={busy.has("dismiss-" + c.id)} />
               )}
             </div>
           </div>

@@ -27,7 +27,7 @@ import type { Layout } from "@/lib/workflow/layout";
 import { IC, STATUS, TONE } from "@/lib/workflow/meta";
 import type { EdgeView, LaneView, NodeView } from "@/lib/workflow/present";
 import type { Tone } from "@/lib/workflow/types";
-import { Badge, Ico, IconTile, MONO, StatusBadge } from "./parts";
+import { Badge, Ico, IconTile, MONO, StatusBadge, StatusIcon } from "./parts";
 
 type CardData = { view: NodeView; selected: boolean; vertical: boolean };
 type LaneData = { lane: LaneView };
@@ -130,7 +130,7 @@ const LaneNode = memo(function LaneNode({ data }: NodeProps<Node<LaneData>>) {
       <span style={{ position: "absolute", left: 12, right: 12, top: 10, display: "flex", alignItems: "center", gap: 8, fontSize: FONT.sm }}>
         <b style={{ whiteSpace: "nowrap", color: COLORS.textSoft }}>{lane.title}</b>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: tone.c, fontSize: FONT.xs, whiteSpace: "nowrap" }}>
-          <Ico d={st.icon} size={12} sw={2.4} />
+          <StatusIcon icon={st.icon} size={12} sw={2.4} />
           {st.text}
         </span>
         <span style={{ marginLeft: "auto", fontSize: FONT.xs, color: COLORS.textMuted, whiteSpace: "nowrap", fontFamily: MONO }}>{lane.meta}</span>

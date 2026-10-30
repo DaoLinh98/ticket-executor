@@ -1,3 +1,4 @@
+import { classifyFailure, retryNodeFor, type FailureClass } from "../dagent/retryPolicy";
 import type { Layout, LayoutKind, LayoutNode } from "./layout";
 import {
   IC,
@@ -376,6 +377,8 @@ export function nodeStatus(run: Run | null, gates: GateResult[], n: NodeLike): N
   if (n.kind === "terminal") {
     if (!run?.transitions.some((t) => t.toNode === n.id)) return "pending";
     if (n.id === "END") return "reached";
+    // A run that ended on NEEDS_REVIEW stops there — it is where the run finished, not a park.
+    if (n.id === "NEEDS_REVIEW" && run.state === "succeeded" && run.transitions[run.transitions.length - 1]?.toNode === n.id) return "reached";
     if (n.id === "FAIL") return "failed";
     // A park the run has since left (accepted, or rechecked) is behind it, not where it stands.
     return run.state === "waiting" && run.transitions[run.transitions.length - 1]?.toNode === n.id ? "parked" : "passed";
@@ -627,7 +630,7 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
   if (run.state === "waiting" && run.waitReason === "needs-input") {
     const rd = [...run.steps].reverse().find((s) => s.output?.node === "readiness");
     const n = rd?.output?.node === "readiness" ? rd.output.questions.length : 0;
-    return b("warning", IC.pause, "Waiting for the PO.", `The ticket is not ready: ${plural(n, "question")} drafted. The run resumes at readiness once the ticket is updated.`, { action: { label: "Copy questions", kind: "copy-questions" } });
+    return b("warning", IC.pause, "Waiting for the PO.", `The ticket is not ready: ${plural(n, "question")} drafted. Post them from Flow Runner (Ask the PO) — the run rechecks readiness by itself when someone replies.`, { action: { label: "Copy questions", kind: "copy-questions" } });
   }
   if (run.state === "waiting" && run.waitReason === "rate-limited" && run.resumeAt)
     return b("info", IC.clock, "Account quota reached.", `Implement is paused mid-turn and resumes automatically at ${hhmm(run.resumeAt)}.`, { countdown: mmss((run.resumeAt - now) / 1000) });
@@ -636,8 +639,13 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
   if (run.state === "waiting" && run.waitReason === "needs-review")
     return b("warning", IC.alert, "Publish needs a human.", "The PR read-back did not match — check the branch and the tracker before anything else runs.", { action: { label: "Open read-back", kind: "open-node", nodeId: "verifyPublish" } });
   if (run.state === "failed")
-    return b("danger", IC.x, "Failed.", `${run.failure ? run.failure.reason.split(". ")[0] : "Reached FAIL"}.${run.failure?.lesson ? " Lesson recorded to KNOWLEDGE.md." : ""}`, { action: { label: "Retry from…", kind: "open-run" } });
+    return b("danger", IC.x, "Failed.", `${run.failure ? run.failure.reason.split(". ")[0] : "Reached FAIL"}.${run.failure?.lesson ? " Lesson recorded to KNOWLEDGE.md." : ""}`,);
   if (run.state === "succeeded") {
+    const review = run.transitions[run.transitions.length - 1]?.toNode === "NEEDS_REVIEW" ? run.transitions[run.transitions.length - 1].reason : "";
+    if (review && run.currentNodeId === "implement")
+      return b("warning", IC.alert, "No change needed · review it.", `Implement changed nothing — the base already does what the ticket asks. The run ended for your review; nothing was committed or published · ${usd(run.costUsd)} total.`, { action: { label: "Open implement", kind: "open-node", nodeId: "implement" } });
+    if (review)
+      return b("warning", IC.alert, "Published · needs review.", `The PR read-back did not match (${review.replace(/^read-back mismatch: /, "")}) — check the branch and the tracker · ${usd(run.costUsd)} total.`, { action: { label: "Open read-back", kind: "open-node", nodeId: "verifyPublish" } });
     // An END reached before publish means nothing was pushed — say why instead of claiming PRs.
     if (run.currentNodeId === "readiness")
       return b("success", IC.check, "Already delivered.", `Every acceptance criterion is already on the base — nothing was implemented or published · ${usd(run.costUsd)} total.`);
@@ -865,11 +873,13 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
           ...run.knowledge.removed.map((text): ListItem => ({ mark: "−", tone: "danger", text, textTone: "danger", mono: true })),
         ],
       });
+    const advice = retryAdviceOf(run)!;
     const options = run.defs
       .filter((d) => d.kind !== "gate")
       .slice(0, 15)
       .map((d) => ({ id: d.id, label: d.label, external: d.effects === "external", enabled: d.effects !== "external" && f.retryableFrom.includes(d.id) }));
-    S.push({ kind: "retry", title: "Retry from…", icon: IC.running, options, defaultId: f.retryableFrom[0] });
+    if (canStartFresh(run)) options.unshift({ id: FRESH_START, label: "Fresh start", external: false, enabled: true });
+    S.push({ kind: "retry", title: "Retry", icon: IC.running, options, defaultId: advice.defaultId, suggestedId: advice.suggestedId, advice: { title: advice.title, text: advice.text, tone: advice.tone } });
   }
   if (run.bundle && run.state === "running") {
     S.push({ kind: "md", title: run.bundle.title, icon: IC.alert, tone: "warning", text: run.bundle.sub });
@@ -886,4 +896,91 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
 
 export function statusTone(status: NodeStatus): Tone {
   return STATUS[status].tone;
+}
+
+/** The retry option that starts a new run from the top instead of restarting this one from a node. */
+export const FRESH_START = "fresh";
+
+// Only an implement run can be started over from here: a review or QA fix needs its pull request or QC case.
+const canStartFresh = (run: Run) => run.flow === "implement";
+
+const ADVICE: Record<FailureClass, { title: string; text: string; tone: Tone }> = {
+  transient: { title: "Transient failure", text: "Likely passes on retry.", tone: "info" },
+  env: { title: "Setup failure", text: "Fix the setup first (repo, credential or tool) — retrying will fail again.", tone: "danger" },
+  agent: { title: "The agent stopped", text: "Read the blockers and the lesson before retrying; consider retrying from plan.", tone: "warning" },
+};
+
+export type RetryAdvice = { cls: FailureClass; suggestedId: string | null; defaultId: string; title: string; text: string; tone: Tone };
+
+/** How a failed run is best retried: `retryNodeFor()` preselected (null = start fresh), and what its failure class means. */
+export function retryAdviceOf(run: Run | null): RetryAdvice | null {
+  const f = run?.failure;
+  if (!run || !f) return null;
+  const cls = classifyFailure(f.reason);
+  const suggestedId = retryNodeFor(run.currentNodeId, f.retryableFrom);
+  const fresh = canStartFresh(run);
+  const a = ADVICE[cls];
+  const text = suggestedId ? a.text : `${a.text} It failed before anything worth keeping — a fresh start is suggested${fresh ? "." : "; start it again from Flow Runner."}`;
+  return { cls, suggestedId, defaultId: suggestedId ?? (fresh ? FRESH_START : (f.retryableFrom[0] ?? "")), title: a.title, text, tone: a.tone };
+}
+
+export type RunEnd = { state: string; tone: Tone; reason: string; cost: string };
+
+export type RunDiff = {
+  prev: RunEnd;
+  cur: RunEnd;
+  /** same | changed | new (the previous run had none) | none (this run has no plan yet). */
+  plan: "same" | "changed" | "new" | "none";
+  /** Review blockers by text; null when neither run reached a review. `pending`: this run has not been reviewed yet. */
+  blockers: { resolved: string[]; standing: string[]; added: string[]; pending: boolean } | null;
+  delta: string;
+};
+
+type DiffSide = { run: Run; planMd: string };
+
+const STATE_TONE: Record<string, Tone> = { failed: "danger", succeeded: "success", waiting: "warning", cancelled: "muted", running: "accent", preparing: "info" };
+
+function endOf(run: Run): RunEnd {
+  const node = run.defs.find((d) => d.id === run.currentNodeId)?.label ?? run.currentNodeId;
+  const lastT = run.transitions[run.transitions.length - 1];
+  const reason =
+    run.state === "failed"
+      ? (run.failure?.reason ?? "Reached FAIL")
+      : run.state === "waiting"
+        ? `Parked · ${run.waitReason ?? ""}`
+        : run.state === "succeeded" || run.state === "cancelled"
+          ? (lastT?.reason ?? "")
+          : "In progress";
+  return { state: `${run.state} · ${node}`, tone: STATE_TONE[run.state] ?? "muted", reason, cost: usd(run.costUsd) };
+}
+
+const blockerKey = (r: Refusal) => r.issue.trim().toLowerCase().replace(/\s+/g, " ");
+const blockerText = (r: Refusal) => (r.file ? `${r.file}: ${r.issue}` : r.issue);
+
+function lastBlockers(run: Run): Refusal[] | null {
+  const out = [...run.steps].reverse().find((s) => s.output?.node === "evaluate")?.output;
+  return out?.node === "evaluate" ? out.blockers : null;
+}
+
+/** What changed between a retry and the run it retried: end state, plan, review blockers by text, and cost. */
+export function compareRuns(prev: DiffSide, cur: DiffSide): RunDiff {
+  const p = prev.planMd.trim();
+  const c = cur.planMd.trim();
+  const plan = !c ? "none" : !p ? "new" : p === c ? "same" : "changed";
+  const pb = lastBlockers(prev.run);
+  const cb = lastBlockers(cur.run);
+  let blockers: RunDiff["blockers"] = null;
+  if (pb && !cb) blockers = { resolved: [], standing: [], added: [], pending: true };
+  else if (cb) {
+    const before = new Set((pb ?? []).map(blockerKey));
+    const now = new Set(cb.map(blockerKey));
+    blockers = {
+      resolved: (pb ?? []).filter((r) => !now.has(blockerKey(r))).map(blockerText),
+      standing: cb.filter((r) => before.has(blockerKey(r))).map(blockerText),
+      added: cb.filter((r) => !before.has(blockerKey(r))).map(blockerText),
+      pending: false,
+    };
+  }
+  const d = cur.run.costUsd - prev.run.costUsd;
+  return { prev: endOf(prev.run), cur: endOf(cur.run), plan, blockers, delta: `${d < 0 ? "−" : "+"}${usd(Math.abs(d))}` };
 }

@@ -25,6 +25,9 @@ const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
   // validated per run by the D-Agent admission (lib/dagent startRun) before the CLI starts.
 ];
 
+// Groups stacked per column; on a narrow screen the columns fall into one, in this order.
+const GROUP_COLUMNS: CheckGroup[][] = [["environment", "connection", "agent-access"], ["skills"], ["agents"]];
+
 // Which Guide section explains how to clear this group's failures.
 // Keys match SECTIONS ids in app/guide/content.tsx.
 const GUIDE_ANCHOR: Partial<Record<CheckGroup, string>> = {
@@ -110,7 +113,7 @@ function SystemCheckPageInner() {
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
-          <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto" }}>
+          <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0 }}>
           <div className="te-sprint-split" style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "24px" }}>
           <div className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             {error && (
@@ -174,8 +177,10 @@ function SystemCheckPageInner() {
             </div>
           </div>
           <div className="te-scroll te-sprint-pane" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: "20px", alignContent: "start", alignItems: "start", paddingRight: "4px" }}>
-            {/* Groups */}
-            {GROUPS.map((g) => {
+            {/* Groups — each column stacks its own groups, so one never waits for a taller neighbour's row */}
+            {GROUP_COLUMNS.map((col) => (
+            <div key={col.join()} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {GROUPS.filter((g) => col.includes(g.id)).map((g) => {
               const rows = result?.checks.filter((c) => c.group === g.id) ?? [];
               if (!rows.length) return null;
               const failed = rows.filter((c) => c.status !== "pass").length;
@@ -196,14 +201,16 @@ function SystemCheckPageInner() {
                   <span style={{ fontSize: FONT.sm, color: COLORS.faint, lineHeight: 1.5, marginTop: "-4px" }}>{g.blurb}</span>
                   <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
                     {rows.map((c) => <CheckRow key={c.id} c={c} />)}
-                    {/* The skills ship in this repo, so this group is the one
+                    {/* The skills and agents ship in this repo, so this group is the one
                         thing on this page the user can fix without leaving it. */}
                     {g.id === "skills" && <SkillInstaller onChanged={() => load()} />}
-                    {g.id === "agents" && <SkillInstaller pack="agents" onChanged={() => load()} />}
+                    {g.id === "skills" && <SkillInstaller pack="agents" onChanged={() => load()} />}
                   </div>
                 </div>
               );
             })}
+            </div>
+            ))}
 
           </div>
           </div>

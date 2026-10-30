@@ -13,11 +13,10 @@ queue + release calendar), a server-side scheduler acts on both with the browser
 real repos, so guards fail *before* a spawn, never after.
 
 ## One engine — D-Agent
-Every run is a D-Agent run (`lib/dagent/`, tables `DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact`).
-The Ticket Execution ("classic") engine — `Run`/`Step` tables, skill-driven graphs, `/api/executions` — is retired.
-Flow Runner's scheduler starts implement / review fix / QA fix as D-Agent flows (`startRun({ flow })`) and
-reconciles via `runOutcomes()`; a row's Watch/Result opens `/workflow?ticket=<id>`. The Ticket Execution page keeps
-its run buttons, not yet wired to D-Agent (`RUNS_MOVED` in `app/TicketExecutor.tsx`).
+Every run is a D-Agent run (`lib/dagent/`, tables `DagentRun`, `DagentStep`, `DagentTransition`, `DagentArtifact`);
+there is no other engine. Flow Runner's scheduler starts implement / review fix / QA fix as D-Agent flows (`startRun({ flow })`) and
+reconciles via `runOutcomes()`; a row's Watch/Result opens `/workflow?ticket=<id>`. Ticket Execution's Implement / Run selected /
+Fix review buttons start D-Agent runs via `POST /api/dagent/runs` (`flow: "review"` + `prUrl` for a review fix).
 
 ## Commands
 `npm run dev` (:3000, Turbopack) · `npm run build && npm start` · `npm run test` (`node --test` over
@@ -75,7 +74,8 @@ Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
 one reply per thread, **never resolve**). No `syncBase` — a published PR branch is never rebased.
 **`dagent-fix-qa-v3`** — `setup` → `qaTriage` (`qa-triager`; seeded `followUp` without a `decision` → END: analysis only;
 `no-fix-needed` → END with `qaReply`) → `implement` …
-`verifyPublish`. `/workflow` has no picker or start form: it shows the run in flight (else latest) for `?ticket=`.
+`verifyPublish`. `/workflow` has no start form: it shows the run in flight (else latest) for `?ticket=`, or exactly
+`?run=<id>` (Run History, `/runs`: `listRunHistory()` + `history.ts`, numbered pages of 25/50/100 with a total; `RunView.newest` gates Retry/Cancel).
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`), only to the node's `next` (or a
    `retryEntries` node from `setup`). `MAX_HOPS` (60) fails a looping run.
@@ -85,9 +85,12 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
 4. **Admission is `startRun()`**: preflight + `checkAgents()` (installed, named right, allows `StructuredOutput`,
    has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run for
    the ticket, and a free slot (`concurrentRuns`).
-5. **Park, don't fail, for humans**: `NEEDS_INPUT` → `recheck-readiness`; `NEEDS_REVIEW` (read-back mismatch, or
-   implement changed nothing) → `accept`; `runOutcomes().output.noChange` settles the plan row `no-fix-needed`. Failed or
-   cancelled → new run from `plan` / `implement` / `syncBase`, seeded with old base, branches, plan.
+5. **Park only for the PO; decide the rest**: `NEEDS_INPUT` parks → `recheck-readiness` (by hand, or Flow Runner once
+   the PO replies to the posted questions). `NEEDS_REVIEW` (read-back mismatch, or implement changed nothing) **ends the
+   run `succeeded`** — the transition carries the reason, `runOutcomes().output.needsReview` exposes it, Flow Runner
+   flags the row until "Mark reviewed" (`accept` only settles legacy parked runs); `output.noChange` settles the row
+   `no-fix-needed`. Failed or cancelled → new run from `retryNodeFor()` (`retryPolicy.ts`: `plan` / `implement` /
+   `syncBase`), seeded with old base, branches, plan.
 6. **Worktrees are per run, removed in `finish()`**; a `running` row not held by this process is failed by `reconcileOrphans()`.
 7. **`KNOWLEDGE.md` is audited**: start content on the run, diff saved as artifact `knowledge`.
 8. **Agents ship in `agents/<name>.md`**; `lib/agentPack.ts` (`BUNDLED_AGENTS` = `allAgents()`, tested) installs
@@ -134,6 +137,13 @@ stay in `RETIRED_SKILLS` so D-Agent turns keep them denied.
    an unproven `not-defect` becomes `needs-info`. The developer approves a fix (`approveFix()` → `qa` run seeded with
    the binding `decision`), posts the reply, or dismisses; only `postCaseReply()` writes to the work item. Comments
    after a case's window open the next case (`followUpAfter()`); the bell re-raises a waiting case every `SLA_MS`.
+9. **Failures are classified, not just counted** (`lib/dagent/retryPolicy.ts`, pure): `transient` → the tick retries it
+   (`retryTransientFailure()`, before new work, ≤ `MAX_AUTO_RETRIES` in a row, from `retryNodeFor()`); `env` → plan's
+   `autoImplement` switched off until the setup is fixed; `agent` → waits for the developer.
+10. **Asking the PO is approved, answering is watched** (`lib/execution/clarify.ts`, pure rule in `lib/clarification.ts`):
+   a needs-input run's questions are posted only by the developer (`postClarification()`); `recheckAnswered()` resumes
+   it at readiness on the first reply by someone else. Needs-review / questions / acks are `AutomationEvent`s keyed by
+   run id (`runReview.ts`) — no columns.
 
 ## The notification bell
 `lib/notifications.ts` merges; `lib/notificationSources.ts` holds the server-side sources. **No notification carries
@@ -182,4 +192,6 @@ then `npx tsc --noEmit` and look at the screen.
 - **Host and container must not run at once** — `reconcileOrphans()` fails any `running` D-Agent row it doesn't hold.
 - **`lib/terminal.ts` / `lib/ask.ts` spawn `claude` but are deliberately not runs** — no graph, worktree, `DagentRun`
   row or admission; one Ask session per Root repo; needing a schema or gate makes it an engine run.
-- **No spend ceiling by design** (Cancel stops a run).
+- **No hard spend ceiling by design** (Cancel stops a run). `Setting.ticketBudgetUsd` is a soft limit
+  (`lib/execution/budget.ts`): over it, the scheduler stops auto-retry and auto review fix for that ticket and My Sprint
+  flags it; nothing is cancelled and manual actions still run.

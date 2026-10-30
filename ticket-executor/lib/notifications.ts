@@ -27,6 +27,7 @@ export type NotificationKind =
   | "scheduler.released"
   | "scheduler.review-fixed"
   | "scheduler.failed"
+  | "scheduler.needs-review"
   | "plan.drift"
   | "plan.needs-root-repo"
   | "ticket.ready-for-qa"
@@ -378,6 +379,12 @@ export function fromAutomation(rows: AutomationSource[]): AppNotification[] {
       });
       continue;
     }
+    // The harness decided and ended the run on NEEDS_REVIEW — nothing waits on the developer to resume it,
+    // but its verdict (nothing to change, or a read-back mismatch) is theirs to check.
+    if (e.action === "implement" && e.outcome === "done" && e.reason === "needs-review") {
+      out.push({ ...base, kind: "scheduler.needs-review", severity: "action", summary: "Run ended for your review — check its result on Flow Runner", tab: "workflow" });
+      continue;
+    }
     if (e.action === "release" && e.outcome === "done") {
       out.push({ ...base, kind: "scheduler.released", severity: "info", summary: "Released — pull request published and status advanced", tab: "resolve-review" });
       continue;
@@ -467,7 +474,7 @@ export type LifecycleSource = {
   pendingAction: string;
   pendingSince: string;
   /** `qa-reply-ready` only: what the QA follow-up case waits on the developer for (`lib/qaFollowUp.ts`). */
-  waiting?: "pending" | "failed" | "fixed" | "fix" | "decide" | "reply";
+  waiting?: "pending" | "failed" | "fixed" | "fix" | "decide" | "reply" | "none";
   /** `qa-reply-ready` only: whole SLA periods it has waited — each one makes the notification unread again. */
   overdue?: number;
 };
@@ -481,6 +488,7 @@ const QA_CASE_SUMMARY: Record<NonNullable<LifecycleSource["waiting"]>, (id: stri
   fix: (id) => `QC found a real defect on #${id} — approve the fix on Flow Runner`,
   decide: (id) => `QC's feedback on #${id} needs your decision on Flow Runner`,
   reply: (id) => `A reply to QC on #${id} is drafted — review it and post it on Flow Runner`,
+  none: (id) => `QC only confirmed #${id} — nothing to reply, close it on Flow Runner`,
 };
 
 export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
@@ -558,6 +566,7 @@ const HISTORY_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
   "scheduler.released",
   "scheduler.review-fixed",
   "scheduler.failed",
+  "scheduler.needs-review",
   "plan.drift",
 ]);
 

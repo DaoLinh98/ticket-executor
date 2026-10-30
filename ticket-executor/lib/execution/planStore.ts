@@ -377,12 +377,9 @@ export async function recentAutomation(planId: string, take = 50, ticketId = "")
 /**
  * Put one stopped ticket back in the implement queue.
  *
- * The manual half of the queue, and the counterpart to `releasePlannedTicket()`
- * and `startReviewRun()`: it does not spawn anything. It clears the row back to
- * `pending` and lets the scheduler pick it up on its own terms, so a retried
- * ticket goes through exactly the same admission, claim and concurrency checks
- * as one that was never tried — a second starter here would be the second
- * admission path invariant 3 forbids.
+ * Only resets the row to `pending`; it spawns nothing. `retryPlannedNow()` (scheduler) calls it and then
+ * starts the run through `startRun()`, which keeps admission in one place. Left pending (admission refused),
+ * the scheduler picks the row up as usual.
  *
  * `runId` is cleared with it. Left pointing at the failed run, `reconcileImplement()`
  * would read that run's finished state on the next tick and mark the row failed
@@ -415,7 +412,7 @@ export async function retryPlannedTicket(
     action: "implement",
     outcome: "skipped",
     reason: "retry-by-user",
-    detail: `Requeued by hand after "${item.implementState}". The scheduler picks it up on its next pass.`,
+    detail: `Requeued by hand after "${item.implementState}".`,
   });
   return { ok: true };
 }

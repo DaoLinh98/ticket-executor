@@ -27,14 +27,18 @@ import { deliverablesOnly, isoDay } from "../sprintPlan";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { cycleSince, loadMyOpenTickets, loadMySprintTickets, loadPrReviews, normalizeProvider } from "../tickets";
-import { logAutomation, rememberSprint } from "./planStore";
+import { logAutomation, rememberSprint, retryPlannedTicket } from "./planStore";
 import { rolloverPlans, syncNewTickets, watchLifecycle } from "./lifecycle";
 import { reconcileQaCases, startDueAnalyses } from "./qaFollowUp";
+import { recheckAnswered } from "./clarify";
+import { overBudgetTickets } from "./budget";
 import { dueForRelease, releasePlannedTicket } from "./release";
 import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
 import { cancelRun, onRunEnded, runOutcomes, startRun } from "../dagent";
+import { GRAPHS } from "../dagent/graph";
+import { classifyFailure, MAX_AUTO_RETRIES, retryNodeFor } from "../dagent/retryPolicy";
 
 /** How often the tick runs. Minutes, not seconds: nothing it watches changes
  *  faster than a Claude turn finishes, and a tighter loop would only add
@@ -149,6 +153,8 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
     report.aborted += await refreshClaims(plan);
     report.watched += await syncNewTickets(plan, now);
     report.watched += await watchLifecycle(plan, now);
+    // The PO answered the questions a parked run asked — readiness reads the ticket again.
+    report.watched += await recheckAnswered(plan, now);
     // QC's feedback before new work: a delivered ticket waiting on the developer is the stall this app exists to end.
     report.watched += await startDueAnalyses(plan, now);
     if (plan.autoRelease) {
@@ -169,7 +175,8 @@ async function runTick(now: Date, report: TickReport): Promise<void> {
       if (await resolveNextReview(plan)) report.reviewStarted += 1;
     }
     if (plan.autoImplement) {
-      const started = await startNextTicket(plan, today);
+      // A ticket that failed on a hiccup goes before new work: it is already half done.
+      const started = (await retryTransientFailure(plan)) || (await startNextTicket(plan, today));
       if (started) report.implementStarted += 1;
       else report.skipped += 1;
     }
@@ -448,6 +455,113 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   return true;
 }
 
+const AUTO_RETRY = "auto-retry";
+const AUTO_RETRY_SPENT = "auto-retry-exhausted";
+
+/**
+ * Retry one implement run that failed on a transient cause (network, quota, a server restart).
+ *
+ * Only `classifyFailure()` "transient" qualifies: an env failure would fail again until the setup is fixed, and
+ * an agent failure (blocked, blockers left after every fix) needs a person to read why. The retry resumes from
+ * `retryNodeFor()` the failed node — seeded with the old base, branches and plan — or starts fresh before `plan`.
+ * A ticket gets `MAX_AUTO_RETRIES` in a row; the count resets with any start that was not an auto-retry.
+ * Goes through `startRun()` like every run; a refusal leaves the row failed for the next tick.
+ */
+async function retryTransientFailure(plan: ActivePlan): Promise<boolean> {
+  const failed = await prisma.plannedTicket.findMany({
+    where: { planId: plan.id, untracked: false, claim: "mine", implementState: "failed", prUrl: "", runId: { not: "" } },
+    orderBy: { implementOrder: "asc" },
+  });
+  if (!failed.length) return false;
+  const outcomes = new Map((await runOutcomes(failed.map((r) => r.runId))).map((o) => [o.id, o] as const));
+  const spent = await overBudgetTickets(failed.map((r) => r.ticketId));
+
+  for (const item of failed) {
+    const run = outcomes.get(item.runId);
+    if (!run || run.state !== "failed" || run.flow !== "implement" || classifyFailure(run.endReason) !== "transient") continue;
+    if (spent.has(item.ticketId)) continue;
+
+    const lastStart = await prisma.automationEvent.findFirst({
+      where: { planId: plan.id, ticketId: item.ticketId, action: "implement", outcome: "started", reason: { not: AUTO_RETRY } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    const used = await prisma.automationEvent.count({
+      where: { planId: plan.id, ticketId: item.ticketId, reason: AUTO_RETRY, ...(lastStart ? { createdAt: { gt: lastStart.createdAt } } : {}) },
+    });
+    if (used >= MAX_AUTO_RETRIES) {
+      const told = await prisma.automationEvent.findFirst({ where: { planId: plan.id, reason: AUTO_RETRY_SPENT, detail: { startsWith: run.id } }, select: { id: true } });
+      if (!told) {
+        await logAutomation({
+          planId: plan.id, ticketId: item.ticketId, action: "implement", outcome: "failed", reason: AUTO_RETRY_SPENT,
+          detail: `${run.id} — ${used} automatic retr${used === 1 ? "y" : "ies"} did not get past "${run.endReason}". It waits for you.`,
+        });
+      }
+      continue;
+    }
+
+    const rootRepo = await rootRepoFor(plan, item.project);
+    if (!rootRepo) continue;
+    const from = retryNodeFor(run.failedAt, GRAPHS.implement.retryEntries);
+    const result = await startRun({
+      flow: "implement",
+      ticketId: item.ticketId,
+      provider: plan.provider,
+      project: item.project || plan.project,
+      rootRepo,
+      model: item.model,
+      effort: item.effort,
+      ...(from ? { retryOf: run.id, from } : {}),
+    });
+    if (!result.ok) {
+      await logAutomation({ planId: plan.id, ticketId: item.ticketId, action: "implement", outcome: "skipped", reason: "admission-refused", detail: result.error });
+      return false;
+    }
+    await prisma.plannedTicket.update({ where: { id: item.id }, data: { implementState: "running", runId: result.runId } });
+    await logAutomation({
+      planId: plan.id, ticketId: item.ticketId, action: "implement", outcome: "started", reason: AUTO_RETRY,
+      detail: `Attempt ${used + 1} of ${MAX_AUTO_RETRIES}: the last run failed on a transient cause at ${run.failedAt || "start"} ("${run.endReason}"). ` +
+        (from ? `Retrying from ${from}, keeping what came before it.` : "Starting over."),
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Retry a stopped ticket and start it now, ahead of the queue. A retry is the developer saying this one comes
+ * first, so it does not wait for the next tick. `startRun()` still decides admission (duplicate, free slot);
+ * a refusal leaves the row `pending` in the queue and reports why.
+ */
+export async function retryPlannedNow(plannedId: string): Promise<{ ok: boolean; error?: string }> {
+  const requeued = await retryPlannedTicket(plannedId);
+  if (!requeued.ok) return requeued;
+  const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true } });
+  if (!item) return { ok: false, error: "No such planned ticket." };
+  const rootRepo = await rootRepoFor(item.plan, item.project);
+  if (!rootRepo) return { ok: false, error: await noteMissingRootRepo(item.plan, item, "implement", isoDay(new Date())) };
+
+  const result = await startRun({
+    flow: "implement",
+    ticketId: item.ticketId,
+    provider: item.plan.provider,
+    project: item.project || item.plan.project,
+    rootRepo,
+    model: item.model,
+    effort: item.effort,
+  });
+  if (!result.ok) {
+    await logAutomation({ planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "skipped", reason: "admission-refused", detail: result.error });
+    return { ok: false, error: `${result.error} It stays in the queue.` };
+  }
+  await prisma.plannedTicket.update({ where: { id: item.id }, data: { implementState: "running", runId: result.runId } });
+  await logAutomation({
+    planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "started",
+    reason: "retry-by-user", detail: `Retried by hand and started at once, ahead of the queue (${isoDay(new Date())}).`,
+  });
+  return { ok: true };
+}
+
 /**
  * Answer one reviewer, if a reviewer has said something new.
  *
@@ -501,8 +615,10 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
   if (!candidates.length) return false;
   lastReviewScan.set(plan.id, now);
 
+  // Over its budget, a ticket's review comments wait for the developer instead of another paid round.
+  const spent = await overBudgetTickets(candidates.map((r) => r.ticketId));
   const ready = candidates.filter(
-    (r) => r.reviewRounds < reviewRoundLimit(r, MAX_REVIEW_ROUNDS) && (!r.reviewedAt || now - r.reviewedAt.getTime() >= REVIEW_COOLDOWN_MS)
+    (r) => !spent.has(r.ticketId) && r.reviewRounds < reviewRoundLimit(r, MAX_REVIEW_ROUNDS) && (!r.reviewedAt || now - r.reviewedAt.getTime() >= REVIEW_COOLDOWN_MS)
   );
   if (!ready.length) return false;
 
@@ -749,15 +865,19 @@ async function reconcileImplement(): Promise<void> {
       await settleNoFixNeeded(item);
       continue;
     }
+    const review = typeof out.needsReview === "string" ? out.needsReview : "";
     if (run.state === "succeeded" && out.noChange === true) {
       await prisma.plannedTicket.update({ where: { id: item.id }, data: { implementState: "no-fix-needed" } });
       await logAutomation({
-        planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done", reason: "no-change",
-        detail: "No code change needed — the base already does what the ticket asks. Nothing was published.",
+        planId: item.planId, ticketId: item.ticketId, action: "implement", outcome: "done", reason: review ? "needs-review" : "no-change",
+        detail: "No code change needed — the base already does what the ticket asks. Nothing was published." + (review ? " Flagged for your review." : ""),
       });
       continue;
     }
     const implemented = run.state === "succeeded" && !!run.prUrl;
+    const cause = run.state === "failed" ? classifyFailure(run.endReason) : null;
+    // A setup problem fails every ticket the same way — stop spending on the queue until a person fixes it.
+    const paused = cause === "env" && (await prisma.sprintPlan.updateMany({ where: { id: item.planId, autoImplement: true }, data: { autoImplement: false } })).count > 0;
     await prisma.plannedTicket.update({
       where: { id: item.id },
       data: {
@@ -770,10 +890,13 @@ async function reconcileImplement(): Promise<void> {
     await logAutomation({
       planId: item.planId, ticketId: item.ticketId, action: "implement",
       outcome: implemented ? "done" : "failed",
-      reason: implemented ? "" : run.endReason || run.state,
+      reason: implemented ? (review ? "needs-review" : "") : run.endReason || run.state,
       detail: implemented
-        ? `Draft pull request ready, waiting for release day ${item.releaseDay || "(unscheduled)"}.`
-        : "The run did not produce a pull request.",
+        ? `Draft pull request ready, waiting for release day ${item.releaseDay || "(unscheduled)"}.` + (review ? ` Flagged for review: ${review}.` : "")
+        : "The run did not produce a pull request." +
+          (cause === "transient" ? " The cause looks transient — automation retries it." : "") +
+          (cause === "env" ? " The cause is the setup (repo, credential or tool), not the ticket." : "") +
+          (paused ? " Auto-implement is now off: fix the setup, then switch it back on." : ""),
     });
   }
 }

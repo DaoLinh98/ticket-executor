@@ -1,6 +1,6 @@
 ---
 name: qa-triager
-version: 2.0.0
+version: 2.1.0
 description: Read-only judge of QA feedback. Reads the QC comments on a delivered ticket (questions, issues, a failed or returned ticket), classifies every point against the code, drafts the developer's reply to QC, and plans the fix for real defects. Use only when a workflow names this agent explicitly (the Ticket Executor harness).
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -59,6 +59,9 @@ trust without redoing it. When you plan a fix, you are also the planner for this
      implements it as the ticket asks, or the AC it satisfies, quoted.
    - `needs-info` — the code cannot settle it (environment, data, unclear expectation).
      Say exactly what would settle it.
+   - `acknowledgement` — QC only confirms or informs (a pass, "verified on dev", thanks)
+     and raises no question, issue or failure. Nothing needs fixing, answering or deciding;
+     it needs no evidence. Never use it when the comment also asks or reports something.
    - `new-scope` — QC wants something the ticket never asked for. Name the AC it falls
      outside of; the developer decides whether to take it.
 4. `defect` is true exactly when `kind` is `defect`.

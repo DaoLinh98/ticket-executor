@@ -88,6 +88,9 @@ test("the recommendation is the harness's, from the verdicts", () => {
   assert.equal(recommend(f("needs-info")), "decide");
   assert.equal(recommend([...f("question"), ...f("not-defect")]), "reply");
   assert.equal(recommend([]), "decide");
+  assert.equal(recommend(f("acknowledgement")), "none");
+  assert.equal(recommend([...f("acknowledgement"), ...f("question")]), "reply");
+  assert.equal(recommend([...f("acknowledgement"), ...f("needs-info")]), "decide");
 });
 
 test("the bell reports what waits on the developer, and asks again every SLA period", () => {

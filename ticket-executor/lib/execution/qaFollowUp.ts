@@ -361,7 +361,9 @@ export async function reconcileQaCases(): Promise<void> {
             ? `${findings.filter((f) => f.defect).length} real defect(s) found — approve the fix to start it.`
             : recommendation === "decide"
               ? "Some feedback needs your decision (missing information or a new requirement)."
-              : "No defect — a reply to QC is drafted for you to review and post.",
+              : recommendation === "none"
+                ? "QC only confirmed — nothing to fix or answer. Close the case; the next comment opens a new one."
+                : "No defect — a reply to QC is drafted for you to review and post.",
       });
       continue;
     }

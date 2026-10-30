@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import { motion } from "motion/react";
 import { useBoltsContext } from "./BoltsContext";
@@ -58,9 +58,9 @@ const NOTIFY_MIN_GAP_MS = 20_000;
 // `NotificationTab` names, validated here because it arrives as a URL string.
 const ROUTE_TABS: TabId[] = ["overview", "resolve-review"];
 
-// The run buttons stay: starting a run from this screen moves to the D-Agent
-// engine. Until that is wired they say so rather than start anything.
-const RUNS_MOVED = "Starting a run from this screen moves to the D-Agent engine and is not wired yet — Flow Runner runs it for now.";
+// Implement starts a D-Agent run (`POST /api/dagent/runs`). A review fix needs the
+// `review` flow and its PR, which that route does not take yet — so Fix review
+// still says so rather than start anything.
 
 // The two answers the plan filter offers. Full sentences rather than "Planned" /
 // "Unplanned" because the filter row shows the chosen value on its own, and
@@ -88,6 +88,7 @@ function iterationPathFor(options: IterationOption[], name: string): string {
 
 export default function TicketExecutor() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const readJson = useCallback(
     (key: readonly unknown[], url: string, staleTime = 0) =>
       queryClient.fetchQuery({ queryKey: key, queryFn: () => fetch(url).then((r) => r.json()), staleTime }),
@@ -143,6 +144,8 @@ export default function TicketExecutor() {
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>("");
+  // True while an implement run is being admitted, so a second press cannot start a second request.
+  const [starting, setStarting] = useState(false);
   // Which of the two panes the phone is showing. Below the breakpoint the rail
   // and the detail cannot both be on screen (globals.css hides one on this
   // attribute), so picking a ticket has to also mean "go to it", and the
@@ -1168,18 +1171,80 @@ export default function TicketExecutor() {
     };
   }, [reloadTickets]);
 
-  // The run buttons — see `RUNS_MOVED`.
-  const startImplement = useCallback((e?: MouseEvent) => {
-    fireBoltFromEvent(e, { big: true });
-    showToast(RUNS_MOVED, 9000);
-  }, [fireBoltFromEvent, showToast]);
+  // Start one ticket's D-Agent implement run. Admission (preflight, one run per
+  // ticket, a free slot) answers on the server; a refusal comes back as the error.
+  const startDagentRun = async (tk: Ticket, review?: { prUrl: string }): Promise<string> => {
+    const r = await fetch("/api/dagent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticketId: tk.id, ticketUrl: tk.url, project: getArea(tk), rootRepo: getRootRepo(tk), provider: settings.provider, model: getModel(tk), effort: getEffort(tk), ...(review ? { flow: "review", prUrl: review.prUrl } : {}) }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || typeof d?.runId !== "string") throw new Error(d?.error || `Could not start the run (${r.status}).`);
+    queryClient.invalidateQueries({ queryKey: ["dagent", "runs"], exact: true });
+    return d.runId;
+  };
 
-  // "Run selected" — the same, for a multi-select batch.
-  const runSelected = useCallback(() => {
+  // Implement: start the run, then watch it on Workflow.
+  const startImplement = async (e?: MouseEvent) => {
+    fireBoltFromEvent(e, { big: true });
+    const tk = tickets.find((x) => x.id === selectedId);
+    if (!tk || starting) return;
+    setStarting(true);
+    try {
+      await startDagentRun(tk);
+      router.push(`/workflow?ticket=${encodeURIComponent(tk.id)}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not start the run.", 9000, "error");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  // Fix review: a D-Agent review flow on the ticket's pull request, watched on Workflow.
+  const startFixReview = async (e?: MouseEvent) => {
+    fireBoltFromEvent(e, { big: true });
+    const tk = tickets.find((x) => x.id === selectedId);
+    const prUrl = tk ? reviews[tk.id]?.pr?.url : "";
+    if (!tk || starting) return;
+    if (!prUrl) {
+      showToast("This ticket has no pull request to fix review on.", 9000, "error");
+      return;
+    }
+    setStarting(true);
+    try {
+      await startDagentRun(tk, { prUrl });
+      router.push(`/workflow?ticket=${encodeURIComponent(tk.id)}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not start the review fix.", 9000, "error");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  // "Run selected" — one implement run per selected ticket, one at a time, so
+  // each meets admission on its own; whatever is refused (no free slot, no root
+  // repo, a run already in flight) is reported rather than retried.
+  const runSelected = async () => {
+    const batch = tickets.filter((x) => selectedIds.has(x.id) && actionInfoFor(getStatus(x)));
+    const skipped = selectedIds.size - batch.length;
     setSelectMode(false);
     setSelectedIds(new Set());
-    showToast(RUNS_MOVED, 9000);
-  }, [showToast]);
+    let started = 0;
+    const refused: string[] = [];
+    for (const tk of batch) {
+      try {
+        await startDagentRun(tk);
+        started++;
+      } catch (err) {
+        refused.push(`${tk.id}: ${err instanceof Error ? err.message : "refused"}`);
+      }
+    }
+    const parts = [`Started ${started} D-Agent run${started === 1 ? "" : "s"} — watch them on Workflow.`];
+    if (skipped) parts.push(`${skipped} skipped (no runnable status).`);
+    if (refused.length) parts.push(`${refused.length} refused — ${refused[0]}`);
+    showToast(parts.join(" "), 9000, started ? "success" : "error");
+  };
 
   // Translate one comment. A second press hides the block again rather than
   // spending another turn — the translation is already in hand.
@@ -1347,7 +1412,7 @@ export default function TicketExecutor() {
 
   // action button
   const action: Action = {
-    label: actionInfo?.label ?? "Implement Ticket", spinner: false, playIcon: true, onClick: startImplement,
+    label: actionInfo?.label ?? "Implement Ticket", spinner: starting, playIcon: !starting, onClick: startImplement,
     style: ctaButtonStyle("primary"),
   };
   action.style.position = "relative";
@@ -1377,7 +1442,7 @@ export default function TicketExecutor() {
   const ctaTitle = gated ? "No action for this status" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
   const ctaSub = t
     ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
-      : "Runs from this screen move to the D-Agent engine — Flow Runner runs this ticket for now."
+      : "Starts a D-Agent run in an isolated worktree and opens it on Workflow."
     : "";
 
   const kindColor: Record<string, string> = {
@@ -1575,9 +1640,9 @@ export default function TicketExecutor() {
                   <ResolveReviewTab
                     review={ticketReview}
                     loading={!!(t && reviewsLoading[t.id]) && !reviews[t.id]}
-                    fixReviewRunning={false}
+                    fixReviewRunning={starting}
                     fixReviewDisabled={fixReviewDisabled}
-                    onFixReview={(e) => startImplement(e)}
+                    onFixReview={(e) => startFixReview(e)}
                   />
                 )}
 

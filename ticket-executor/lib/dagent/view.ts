@@ -65,7 +65,19 @@ export type Live = { stepId: string; logs: LogEntry[] } | null;
 
 export type TicketView = { id: string; title: string; url: string; provider: string; project: string; rootRepo: string };
 
-export type RunView = { run: Run; gates: GateResult[]; lifecycle: LifecycleStage[]; ticket: TicketView; retryEntries: string[] };
+/** `newest`: no later run exists for the ticket — only that run may be retried or cancelled.
+ *  `retryOf`: the run this one retried ("" for a first run); `planMd`: the run's last plan artifact — a retry
+ *  seeded with its predecessor's plan has one without a plan step, so it is read here rather than off a step. */
+export type RunView = {
+  run: Run;
+  gates: GateResult[];
+  lifecycle: LifecycleStage[];
+  ticket: TicketView;
+  retryEntries: string[];
+  newest: boolean;
+  retryOf: string;
+  planMd: string;
+};
 
 export type RunListItem = { id: string; ticketId: string; title: string; state: string; startedAt: number };
 
@@ -175,7 +187,7 @@ function runState(row: RunRow): RunState {
 
 const last = <T>(list: T[]) => list[list.length - 1];
 
-export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live): RunView {
+export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live): Omit<RunView, "newest"> {
   const graph = graphById(row.graphId) ?? GRAPH;
   const flow = FLOW_LABEL[flowOf(graph.id)];
   const defs = flowDefs(graph);
@@ -259,7 +271,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
         : null,
     logs,
   };
-  return { run, gates, lifecycle: lifecycleOf(row, steps, flow), ticket: ticketOf(row), retryEntries: graph.retryEntries };
+  return { run, gates, lifecycle: lifecycleOf(row, steps, flow), ticket: ticketOf(row), retryEntries: graph.retryEntries, retryOf: row.retryOfId, planMd };
 }
 
 function ticketOf(row: RunRow): TicketView {
@@ -284,7 +296,7 @@ function lifecycleOf(row: RunRow, steps: Step[], flow: string): LifecycleStage[]
     row.state === "succeeded"
       ? { status: "done", at: day(row.startedAt.getTime()), detail: "Succeeded", runs: [chip] }
       : row.state === "failed" || row.state === "cancelled"
-        ? { status: "blocked", at: day(row.startedAt.getTime()), detail: row.state === "cancelled" ? "Cancelled" : "Failed", action: "Retry from…", runs: [chip] }
+        ? { status: "blocked", at: day(row.startedAt.getTime()), detail: row.state === "cancelled" ? "Cancelled" : "Failed", action: "Retry", runs: [chip] }
         : { status: "active", at: day(row.startedAt.getTime()), detail: row.state === "waiting" ? `Parked · ${row.waitReason}` : "Running", runs: [chip] };
   if (pub?.output?.node === "publish") {
     m.pr = { status: row.state === "waiting" ? "blocked" : "done", at: at(pub), detail: `${pub.output.prs.length} draft PR(s)` };

@@ -36,6 +36,7 @@ import ActionButton from "./ActionButton";
 import { ActionLegend, IconAction } from "./actionIcons";
 import AutomationPanel from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
+import AskPoDialog from "./AskPoDialog";
 import RunOptionsDialog from "./RunOptionsDialog";
 import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import NeedsYou, { type AttentionItem } from "./NeedsYou";
@@ -62,7 +63,9 @@ import {
   type StoredPlan,
   PLAN_KEY,
   fetchPlan,
+  usd,
 } from "./model";
+import { overBudget } from "@/lib/runMetrics";
 
 // The developer's own view of one iteration: what they are carrying, whether it
 // fits, what an agent thinks of it, and which day each finished ticket is handed
@@ -135,6 +138,9 @@ export default function MySprintPage() {
   const cases = planQuery.data?.cases ?? [];
   const closedCases = planQuery.data?.closed ?? {};
   const costs = planQuery.data?.costs ?? {};
+  const reviews = planQuery.data?.reviews ?? [];
+  const clarifications = planQuery.data?.clarifications ?? [];
+  const [askingFor, setAskingFor] = useState("");
   const initialLoading = sprintQuery.isPending || planQuery.isPending;
   const refreshing = !initialLoading && (sprintQuery.isFetching || planQuery.isFetching);
   const loadError = data?.error || (sprintQuery.error as Error | null)?.message || (planQuery.error as Error | null)?.message || "";
@@ -143,7 +149,7 @@ export default function MySprintPage() {
   const load = () => { void reloadSprint(); };
   const reloadPlan = () => queryClient.invalidateQueries({ queryKey: PLAN_KEY, exact: true });
   const setStored = (plan: StoredPlan | null) =>
-    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, costs: {}, ...old, plan }));
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, reviews: [], clarifications: [], ticketBudgetUsd: 0, costs: {}, ...old, plan }));
 
   // A triage turn outlives the request that started it, so the row is polled
   // rather than awaited.
@@ -377,7 +383,7 @@ export default function MySprintPage() {
       const d = await post("/api/my-sprint/plan", { retry: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
       if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "This ticket could not be requeued.");
-      else setMessage("Back in the queue — the scheduler starts it on its next pass.");
+      else setMessage("Retry started — watch it on the workflow page.");
     });
 
   const analyzeQaNow = (plannedId: string, ticketId: string) =>
@@ -412,6 +418,20 @@ export default function MySprintPage() {
   const dismissCaseNow = (c: QaCase) =>
     act("dismiss-" + c.id, async () => {
       await post("/api/my-sprint/plan", { dismissQaCase: c.id }, "PUT");
+      await reloadPlan();
+    });
+
+  const askPoNow = (plannedId: string, body: string) =>
+    act("askpo-" + plannedId, async () => {
+      await post("/api/my-sprint/plan", { askPo: plannedId, body }, "PUT");
+      setAskingFor("");
+      showToast("Questions posted — the run rechecks readiness when the PO replies.");
+      await reloadPlan();
+    });
+
+  const markReviewedNow = (plannedId: string) =>
+    act("ack-" + plannedId, async () => {
+      await post("/api/my-sprint/plan", { ackReview: plannedId }, "PUT");
       await reloadPlan();
     });
 
@@ -528,7 +548,7 @@ export default function MySprintPage() {
   const planned = new Set(rows.map((t) => t.ticketId));
   const addable = needle && stored ? found.filter((t) => !planned.has(t.id)) : [];
 
-  const runningRows = rows.filter((t) => t.implementState === "running");
+  const runningRows = rows.filter((t) => t.implementState === "running" && !clarifications.some((c) => c.plannedTicketId === t.id));
   const reviewingRows = rows.filter((t) => t.reviewState === "running");
 
   const releaseDayOptions = data?.window?.startDate && data.today ? releaseDays(data.window, data.today) : [];
@@ -581,6 +601,33 @@ export default function MySprintPage() {
       });
     }
   }
+  // A run the harness ended on NEEDS_REVIEW: decided already, flagged until the developer has looked.
+  for (const r of reviews) {
+    const row = rows.find((t) => t.id === r.plannedTicketId);
+    attention.push({
+      key: "nr-" + r.runId, ticketId: r.ticketId, title: row?.title ?? "", tone: "warning",
+      text: row?.implementState === "no-fix-needed"
+        ? "Needs review — the run found nothing to change and ended. Check its summary."
+        : `Needs review — ${r.reason}.`,
+      action: (
+        <span style={{ display: "inline-flex", gap: "6px" }}>
+          <IconAction action="result" onClick={() => openExecution(r.ticketId)} />
+          <IconAction action="markReviewed" onClick={() => markReviewedNow(r.plannedTicketId)} busy={busy.has("ack-" + r.plannedTicketId)} />
+        </span>
+      ),
+    });
+  }
+  // Over the soft budget: automation stops retrying and fixing review on its own; anything by hand still works.
+  const budget = planQuery.data?.ticketBudgetUsd ?? 0;
+  for (const ticketId of overBudget(costs, budget)) {
+    const row = rows.find((t) => t.ticketId === ticketId && t.claim === "mine");
+    if (!row) continue;
+    attention.push({
+      key: "ob-" + ticketId, ticketId, title: row.title, tone: "warning",
+      text: `Spent ${usd(costs[ticketId])} of its ${usd(budget)} budget — automation no longer retries or fixes review on it by itself.`,
+      action: <IconAction action="result" onClick={() => openExecution(ticketId)} />,
+    });
+  }
   // Every QA follow-up case waiting on the developer — whoever holds the ticket now.
   const toCases = <IconAction action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />;
   for (const c of cases) {
@@ -600,7 +647,9 @@ export default function MySprintPage() {
                 ? "QC found a real defect — approve the fix."
                 : c.recommendation === "decide"
                   ? "QC's feedback needs your call."
-                  : "A reply to QC is ready — review and post it.",
+                  : c.recommendation === "none"
+                    ? "QC only confirmed — nothing to reply, close it."
+                    : "A reply to QC is ready — review and post it.",
       action: toCases,
     });
   }
@@ -746,7 +795,7 @@ export default function MySprintPage() {
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "28px", background: "var(--te-page-veil)" }}>
-        <div className="te-sprint-page" style={{ maxWidth: "1820px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+        <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", gap: "20px" }}>
           {initialLoading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
           ) : data && !data.configured ? (
@@ -978,6 +1027,7 @@ export default function MySprintPage() {
                   busy={busy}
                   releaseDayOptions={releaseDayOptions}
                   costs={costs}
+                  clarifications={clarifications}
                   reorderable={reorderable}
                   selected={selected}
                   onSelect={(id, on) => setSelected((cur) => { const next = new Set(cur); if (on) next.add(id); else next.delete(id); return next; })}
@@ -995,6 +1045,7 @@ export default function MySprintPage() {
                     hold: holdNow,
                     history: setHistoryFor,
                     runOptions: (row) => setOptionsFor(row.id),
+                    askPo: (row) => setAskingFor(row.id),
                   }}
                 />
                 </div>
@@ -1021,6 +1072,18 @@ export default function MySprintPage() {
             busy={busy.has("options-" + row.id)}
             onSave={(model, effort) => saveRunOptionsNow(row.id, model, effort)}
             onCancel={() => setOptionsFor("")}
+          />
+        ) : null;
+      })()}
+      {(() => {
+        const c = clarifications.find((x) => x.plannedTicketId === askingFor);
+        return c ? (
+          <AskPoDialog
+            ticketId={c.ticketId}
+            questions={c.questions}
+            busy={busy.has("askpo-" + c.plannedTicketId)}
+            onPost={(body) => askPoNow(c.plannedTicketId, body)}
+            onCancel={() => setAskingFor("")}
           />
         ) : null;
       })()}

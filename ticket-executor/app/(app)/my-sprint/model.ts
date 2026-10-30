@@ -273,8 +273,16 @@ export type PlanResponse = {
   cases: QaCase[];
   /** Each ticket's last closed QA case, by planned-ticket id. */
   closed: Record<string, LastClosed>;
+  /** Rows whose current run ended on NEEDS_REVIEW and are not yet marked reviewed. */
+  reviews: { plannedTicketId: string; ticketId: string; runId: string; reason: string }[];
+  /** Rows whose run is parked on needs-input — readiness's questions for the PO. */
+  clarifications: Clarification[];
+  /** Soft per-ticket spend limit from Settings; 0 = off. */
+  ticketBudgetUsd: number;
   costs: Record<string, number>;
 };
+
+export type Clarification = { plannedTicketId: string; ticketId: string; runId: string; questions: string[]; postedAt: string | null };
 
 export type RebuildPreview = {
   added: string[];
@@ -325,6 +333,9 @@ export const fetchPlan = async (): Promise<PlanResponse> => {
     events: Array.isArray(d.events) ? d.events : [],
     cases: Array.isArray(d.cases) ? d.cases : [],
     closed: d.closed && typeof d.closed === "object" ? d.closed : {},
+    reviews: Array.isArray(d.reviews) ? d.reviews : [],
+    clarifications: Array.isArray(d.clarifications) ? d.clarifications : [],
+    ticketBudgetUsd: Number(d.ticketBudgetUsd) || 0,
     costs: d.costs && typeof d.costs === "object" ? d.costs : {},
   };
 };

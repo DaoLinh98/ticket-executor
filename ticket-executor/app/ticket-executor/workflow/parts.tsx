@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { FONT, chipShape } from "@/lib/ui";
-import { TONE } from "@/lib/workflow/meta";
+import { IC, TONE } from "@/lib/workflow/meta";
+import LoadingRing from "../LoadingRing";
 import type { Tone } from "@/lib/workflow/types";
 
 export const MONO = "var(--font-mono), monospace";
@@ -21,6 +22,11 @@ export function IconTile({ d, tone, size = 24, iconSize = 14 }: { d: string; ton
   );
 }
 
+/** A status glyph; a running one is the app's loading ring, like every other page. */
+export function StatusIcon({ icon, size, sw = 2.6 }: { icon: string; size: number; sw?: number }) {
+  return icon === IC.running ? <LoadingRing size={size + 1} /> : <Ico d={icon} size={size} sw={sw} />;
+}
+
 export function Badge({ tone, icon, children, size = "sm", mono }: { tone: Tone; icon?: string; children: ReactNode; size?: "xs" | "sm"; mono?: boolean }) {
   return (
     <span
@@ -39,7 +45,11 @@ export function Badge({ tone, icon, children, size = "sm", mono }: { tone: Tone;
         color: TONE[tone].c,
       }}
     >
-      {icon ? <Ico d={icon} size={size === "xs" ? 10 : 12} sw={2.6} /> : null}
+      {icon ? (
+        <span style={{ display: "inline-flex" }}>
+          <StatusIcon icon={icon} size={size === "xs" ? 10 : 12} />
+        </span>
+      ) : null}
       {children}
     </span>
   );

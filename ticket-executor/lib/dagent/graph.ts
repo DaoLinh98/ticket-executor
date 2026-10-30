@@ -91,8 +91,8 @@ const delivered: Edge = (_c, r) => {
 };
 
 // Implement may rightly change nothing: the base already does what the ticket asks. Only a clean worktree with no
-// commit, no changed file and no blocker counts — a person confirms it instead of the run failing a job it did.
-const NO_CHANGE = "no code change needed — a person confirms";
+// commit, no changed file and no blocker counts — the run ends on NEEDS_REVIEW instead of failing a job it did.
+const NO_CHANGE = "no code change needed — ended for review";
 
 const implemented: Edge = (c, r) => {
   const e = delivered(c, r);
@@ -309,6 +309,11 @@ const LEGACY: Record<Flow, Graph[]> = {
 
 export function graphById(id: string): Graph | null {
   return [...Object.values(GRAPHS), ...Object.values(LEGACY).flat()].find((g) => g.id === id) ?? null;
+}
+
+/** Every graph id a run of `flow` may carry — the current shape and the legacy ones. */
+export function graphIdsOf(flow: Flow): string[] {
+  return [GRAPHS[flow].id, ...LEGACY[flow].map((g) => g.id)];
 }
 
 export function flowOf(graphId: string): Flow {

@@ -1,10 +1,11 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
 import { COLORS, FONT, chipShape, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
 import { STATUS, TONE, clock } from "@/lib/workflow/meta";
 import type { Inspector } from "@/lib/workflow/present";
 import type { LogLevel, LogLine, Section } from "@/lib/workflow/types";
-import { Badge, IconTile, MONO, StatusBadge } from "./parts";
+import { Badge, Ico, IconTile, MONO, StatusBadge } from "./parts";
 import Sections from "./Sections";
 
 export type InspectorTab = "node" | "run";
@@ -16,6 +17,8 @@ type Props = {
   onTab: (t: InspectorTab) => void;
   inspector: Inspector;
   runSections: Section[];
+  /** Cards shown above the run sections: the Flow Runner row and the comparison with the previous run. */
+  runTop?: ReactNode;
   sheet: SheetState;
   onToggleSheet: () => void;
   following: boolean;
@@ -31,7 +34,6 @@ type Props = {
   onCopy: (questions: string[]) => void;
   retryFrom: string | null;
   onRetryPick: (id: string) => void;
-  onRetry: (label: string) => void;
 };
 
 const FILTERS: [LogFilter, string][] = [
@@ -46,6 +48,7 @@ const LEVEL_COLOR: Record<LogLevel, string> = { INFO: "var(--te-text-dim)", WARN
 const heading = { ...sectionCaption(), margin: "18px 0 6px", fontSize: FONT.xs } as const;
 
 export default function NodeInspector(p: Props) {
+  const [wide, setWide] = useState(false);
   const ins = p.inspector;
   const isNode = p.tab === "node";
   const secs = isNode ? ins.sections : p.runSections;
@@ -54,7 +57,7 @@ export default function NodeInspector(p: Props) {
       aria-label="Inspector"
       className="te-wf-inspector"
       data-sheet={p.sheet}
-      style={{ width: 392, flex: "0 0 auto", display: "flex", flexDirection: "column", minHeight: 0, background: COLORS.panelBg, borderLeft: `1px solid ${COLORS.border}` }}
+      style={{ width: wide ? "50%" : 392, flex: "0 0 auto", display: "flex", flexDirection: "column", minHeight: 0, background: COLORS.panelBg, borderLeft: `1px solid ${COLORS.border}` }}
     >
       <div className="te-wf-mob">
         <button
@@ -81,6 +84,17 @@ export default function NodeInspector(p: Props) {
             Following live
           </span>
         ) : null}
+        <button
+          type="button"
+          className="te-mobile-hide"
+          aria-pressed={wide}
+          aria-label={wide ? "Shrink inspector" : "Expand inspector to half width"}
+          title={wide ? "Shrink inspector" : "Expand to half width"}
+          onClick={() => setWide((w) => !w)}
+          style={{ ...chipShape(6), width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${COLORS.border}`, background: wide ? "var(--te-accent-soft)" : "transparent", color: wide ? COLORS.accent : COLORS.textDim, cursor: "pointer" }}
+        >
+          <Ico d={wide ? "M20 10h-6V4 M4 14h6v6 M14 10l6-6 M10 14l-6 6" : "M15 4h5v5 M9 20H4v-5 M20 4l-6 6 M4 20l6-6"} size={14} />
+        </button>
       </div>
 
       <div className="te-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "12px 16px calc(24px + env(safe-area-inset-bottom))" }}>
@@ -155,8 +169,10 @@ export default function NodeInspector(p: Props) {
           </>
         ) : null}
 
+        {!isNode ? p.runTop : null}
+
         {!p.json || !isNode ? (
-          <Sections sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} onRetry={p.onRetry} />
+          <Sections sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} />
         ) : null}
 
         {isNode ? (

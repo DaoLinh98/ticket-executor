@@ -4,7 +4,7 @@ import { COLORS, FONT, chipShape } from "@/lib/ui";
 import { STATUS, TONE, clock } from "@/lib/workflow/meta";
 import type { Timeline } from "@/lib/workflow/present";
 import type { LogLevel, LogLine } from "@/lib/workflow/types";
-import { Ico, MONO } from "./parts";
+import { MONO, StatusIcon } from "./parts";
 
 const LEVEL_COLOR: Record<LogLevel, string> = { INFO: "var(--te-text-dim)", WARN: "var(--te-warning)", ERROR: "var(--te-danger)" };
 
@@ -32,7 +32,7 @@ export function TimelineView({ timeline, selectedId, onPick }: { timeline: Timel
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: FONT.sm }}>
               <span style={{ color: TONE[st.tone].c, display: "inline-flex" }}>
-                <Ico d={st.icon} size={12} sw={2.6} />
+                <StatusIcon icon={st.icon} size={12} />
               </span>
               <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</span>
               <span style={{ color: COLORS.textMuted, fontFamily: MONO }}>#{r.attempt}</span>

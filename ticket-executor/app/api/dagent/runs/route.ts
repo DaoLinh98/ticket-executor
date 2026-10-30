@@ -15,7 +15,11 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const s = (k: string) => (typeof body[k] === "string" ? (body[k] as string) : "");
+  const flow = s("flow");
+  if (flow && flow !== "implement" && flow !== "review") return NextResponse.json({ error: `Flow "${flow}" cannot be started here.` }, { status: 400 });
+  if (flow === "review" && !s("prUrl")) return NextResponse.json({ error: "A review fix needs the pull request URL." }, { status: 400 });
   const result = await startRun({
+    ...(flow === "review" ? { flow, prUrl: s("prUrl") } : {}),
     ticketId: s("ticketId"),
     ticketUrl: s("ticketUrl"),
     project: s("project"),

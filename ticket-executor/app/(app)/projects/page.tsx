@@ -48,7 +48,7 @@ export default function ProjectsPage() {
             <div style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>{notice || "No projects found. Connect a provider in Settings."}</div>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "18px", maxWidth: "1200px", margin: "0 auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "18px" }}>
             {projects.map((p, i) => (
               <motion.button
                 key={p.id}

@@ -2,6 +2,7 @@
 
 import { COLORS, FONT, chipShape, ctaButtonStyle, pill } from "@/lib/ui";
 import { IC, TONE } from "@/lib/workflow/meta";
+import { FRESH_START } from "@/lib/workflow/present";
 import type { Cell, Section, Tone } from "@/lib/workflow/types";
 import { Ico, MONO } from "./parts";
 
@@ -11,7 +12,6 @@ type Props = {
   onCopy: (questions: string[]) => void;
   retryFrom: string | null;
   onRetryPick: (id: string) => void;
-  onRetry: (label: string) => void;
 };
 
 const toneColor = (t?: Tone) => (t ? TONE[t].c : COLORS.text);
@@ -28,7 +28,7 @@ function Title({ title, icon, tone }: { title?: string; icon?: string; tone?: To
 
 const cellOf = (c: Cell) => (typeof c === "string" ? { t: c, tone: undefined, mono: false } : { t: c.t, tone: c.tone, mono: !!c.mono });
 
-export default function Sections({ sections, copied, onCopy, retryFrom, onRetryPick, onRetry }: Props) {
+export default function Sections({ sections, copied, onCopy, retryFrom, onRetryPick }: Props) {
   return (
     <>
       {sections.map((sec, i) => (
@@ -70,7 +70,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
           {sec.kind === "table" ? (
             <>
               <Title title={sec.title} />
-              <div className="te-scroll" style={{ overflowX: "auto" }}>
+              <div className="te-scroll te-table-scroll" style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: FONT.sm }}>
                   <thead>
                     <tr>
@@ -162,7 +162,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
           ) : null}
 
           {sec.kind === "retry" ? (
-            <RetrySection sec={sec} picked={retryFrom ?? sec.defaultId} onPick={onRetryPick} onRetry={onRetry} />
+            <RetrySection sec={sec} picked={retryFrom ?? sec.defaultId} onPick={onRetryPick} />
           ) : null}
         </section>
       ))}
@@ -170,14 +170,17 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
   );
 }
 
-function RetrySection({ sec, picked, onPick, onRetry }: { sec: Extract<Section, { kind: "retry" }>; picked: string; onPick: (id: string) => void; onRetry: (label: string) => void }) {
-  const label = sec.options.find((o) => o.id === picked)?.label ?? "";
+function RetrySection({ sec, picked, onPick }: { sec: Extract<Section, { kind: "retry" }>; picked: string; onPick: (id: string) => void }) {
+  const a = TONE[sec.advice.tone];
   return (
     <>
-      <Title title={sec.title} icon={sec.icon} tone="accent" />
+      <p style={{ ...chipShape(6), margin: "0 0 8px", padding: "8px 10px", fontSize: FONT.sm, lineHeight: 1.45, background: a.bg, color: COLORS.textSoft }}>
+        <b style={{ color: a.c }}>{sec.advice.title}.</b> {sec.advice.text}
+      </p>
       <div role="radiogroup" aria-label="Retry from" style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
         {sec.options.map((o) => {
           const on = o.id === picked;
+          const suggested = o.id === (sec.suggestedId ?? FRESH_START);
           return (
             <button
               key={o.id}
@@ -204,14 +207,12 @@ function RetrySection({ sec, picked, onPick, onRetry }: { sec: Extract<Section, 
             >
               {o.external ? <Ico d={IC.lock} size={11} sw={2.4} /> : null}
               {o.label}
+              {suggested ? <span style={pill({ color: COLORS.accent, background: "var(--te-accent-soft)", size: "xs" })}>Suggested</span> : null}
             </button>
           );
         })}
       </div>
       <span style={{ display: "block", marginTop: 6, fontSize: FONT.xs, color: COLORS.textMuted }}>Push &amp; open draft PR is external — it already left the machine and is never re-run from here.</span>
-      <button type="button" className="te-action-btn" onClick={() => onRetry(label)} style={{ ...ctaButtonStyle("primary"), marginTop: 8 }}>
-        Retry from {label}
-      </button>
     </>
   );
 }

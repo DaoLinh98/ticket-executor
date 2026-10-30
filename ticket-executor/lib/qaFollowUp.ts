@@ -103,9 +103,9 @@ export function dueForAnalysis(c: { status: string; signalAt: Date | null }, aut
 
 // ---- the analysis ----
 
-export type FindingKind = "question" | "defect" | "not-defect" | "needs-info" | "new-scope";
+export type FindingKind = "question" | "defect" | "not-defect" | "needs-info" | "new-scope" | "acknowledgement";
 
-export const FINDING_KINDS: readonly FindingKind[] = ["question", "defect", "not-defect", "needs-info", "new-scope"];
+export const FINDING_KINDS: readonly FindingKind[] = ["question", "defect", "not-defect", "needs-info", "new-scope", "acknowledgement"];
 
 export type Finding = {
   finding: string;
@@ -154,12 +154,14 @@ export function normalizeFindings(raw: unknown): Finding[] {
  * - `fix`    — at least one real defect: the code changes.
  * - `decide` — something only the developer can settle (missing information, a new requirement).
  * - `reply`  — questions and proven non-defects: an answer is enough.
+ * - `none`   — QC only confirmed or informed (a pass, a thanks): nothing to fix and nothing to answer.
  */
-export type Recommendation = "fix" | "decide" | "reply";
+export type Recommendation = "fix" | "decide" | "reply" | "none";
 
 export function recommend(findings: Finding[]): Recommendation {
   if (findings.some((f) => f.kind === "defect")) return "fix";
   if (!findings.length || findings.some((f) => f.kind === "needs-info" || f.kind === "new-scope")) return "decide";
+  if (findings.every((f) => f.kind === "acknowledgement")) return "none";
   return "reply";
 }
 

@@ -7,6 +7,7 @@ import ActionButton from "../my-sprint/ActionButton";
 import RebuildPreviewDialog from "../my-sprint/RebuildPreviewDialog";
 import { PLAN_KEY, fetchPlan, type PlanResponse, type RebuildPreview } from "../my-sprint/model";
 import { useToast } from "../ToastProvider";
+import { INSIGHTS_PREFIX, SETTINGS_KEY, fetchSettings, type SettingsPayload } from "../../queries";
 
 const FIELDS = [
   ["pointsPerDay", "POINTS / DAY", "decimal"],
@@ -25,7 +26,8 @@ const send = async (body: unknown, method: string) => {
 
 // The Flow Runner's pacing and reviewers. They belong to the stored plan, not to
 // the app settings, so this pane saves on its own (Apply & rebuild / Save
-// reviewers) rather than through the page's Save changes.
+// reviewers) rather than through the page's Save changes. The per-ticket budget
+// is an app setting, saved the same way (PATCH /api/settings).
 export default function FlowRunnerSettings() {
   const queryClient = useQueryClient();
   const showToast = useToast();
@@ -47,6 +49,13 @@ export default function FlowRunnerSettings() {
   useEffect(() => setDraft(JSON.parse(savedKey)), [savedKey]);
   useEffect(() => setReviewers(savedReviewers), [savedReviewers]);
 
+  // The per-ticket budget is an app setting, not a plan field — it holds with or without a plan.
+  const settingsQuery = useQuery({ queryKey: SETTINGS_KEY, queryFn: fetchSettings });
+  const savedBudget = String(settingsQuery.data?.settings?.ticketBudgetUsd ?? 0);
+  const [budget, setBudget] = useState(savedBudget);
+  useEffect(() => setBudget(savedBudget), [savedBudget]);
+  const budgetValid = budget.trim() !== "" && Number.isFinite(Number(budget)) && Number(budget) >= 0;
+
   const parsedReviewers = reviewers.split(/[,;\n]/).map((r) => r.trim()).filter(Boolean);
   const valid = Number(draft.pointsPerDay) > 0 && Number(draft.hoursPerDay) > 0 && Number(draft.maxTicketsPerDay) >= 0;
   const changed = !!stored && FIELDS.some(([f]) => Number(draft[f]) !== Number(saved[f]));
@@ -57,7 +66,7 @@ export default function FlowRunnerSettings() {
   });
 
   const setPlan = (plan: PlanResponse["plan"]) =>
-    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, costs: {}, ...old, plan }));
+    queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, reviews: [], clarifications: [], ticketBudgetUsd: 0, costs: {}, ...old, plan }));
 
   const run = useMutation({
     mutationFn: async ({ fn }: { key: string; fn: () => Promise<void> }) => fn(),
@@ -91,6 +100,16 @@ export default function FlowRunnerSettings() {
       const d = await send({ id: stored?.id, reviewers: parsedReviewers }, "PATCH");
       setPlan(d.plan);
       showToast("Reviewers saved.");
+    });
+
+  const saveBudget = () =>
+    act("budget", async () => {
+      const r = await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticketBudgetUsd: Number(budget) }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.settings) throw new Error(d.error || "Could not save the budget.");
+      queryClient.setQueryData<SettingsPayload>(SETTINGS_KEY, { settings: d.settings });
+      void queryClient.invalidateQueries({ queryKey: INSIGHTS_PREFIX });
+      showToast(Number(budget) > 0 ? "Ticket budget saved." : "Ticket budget turned off.");
     });
 
   if (planQuery.isPending) return null;
@@ -132,6 +151,21 @@ export default function FlowRunnerSettings() {
           />
         </label>
         <ActionButton tall label="Save reviewers" variant="outline" onClick={saveReviewers} busy={busy.has("reviewers")} disabled={!stored || parsedReviewers.join(", ") === savedReviewers} />
+      </div>
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 260px", minWidth: 0 }}>
+          <span style={{ ...fieldLabel(), fontSize: FONT.sm }}>TICKET BUDGET (USD, 0 = OFF)</span>
+          <input
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+            inputMode="decimal"
+            autoComplete="off"
+            disabled={!settingsQuery.data}
+            style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
+          />
+        </label>
+        <ActionButton tall label="Save budget" variant="outline" onClick={saveBudget} busy={busy.has("budget")} disabled={!budgetValid || Number(budget) === Number(savedBudget)} />
+        <span style={{ flex: "1 1 100%", fontSize: FONT.sm, color: COLORS.textDim }}>A ticket whose runs cost this much is flagged on Insights. A warning only — no run is stopped.</span>
       </div>
       {preview && (
         <RebuildPreviewDialog

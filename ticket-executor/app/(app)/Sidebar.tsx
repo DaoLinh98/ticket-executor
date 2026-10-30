@@ -45,6 +45,16 @@ const NAV: NavItem[] = [
     icon: <path d="M5 6a2 2 0 1 0 0 .01M19 6a2 2 0 1 0 0 .01M12 19a2 2 0 1 0 0 .01M7 6h10M6.5 7.5l4.5 10M17.5 7.5L13 17.5" />,
   },
   {
+    href: "/runs",
+    label: "Run History",
+    icon: <path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2" />,
+  },
+  {
+    href: "/insights",
+    label: "Insights",
+    icon: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  },
+  {
     href: "/report",
     label: "Report",
     icon: <path d="M8 3h8l4 4v14H4V3zM8 12h8M8 16h5" />,

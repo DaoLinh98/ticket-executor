@@ -79,8 +79,8 @@ approve the fix, post the reply, or dismiss it. Nothing is posted or changed bef
 **Auto-analyse QC feedback** runs the analysis on its own, 10 minutes after QC's last
 comment; the bell asks again every 4 hours a case waits on you.
 
-The skills of the retired Ticket Execution engine (`implement-ticket-v4`,
-`fix-code-review-v4`, `review-changes-v4`, `fix-qa-v4`) and the old `reply-qa-v4` are no longer bundled;
+Older ticket skills (`implement-ticket-v4`, `fix-code-review-v4`,
+`review-changes-v4`, `fix-qa-v4`, `reply-qa-v4`) are no longer bundled;
 a copy left in `~/.claude/skills` is harmless and stays denied to D-Agent turns.
 
 Runs read the project's `KNOWLEDGE.md` (repo root of the **Root repo**) and add
@@ -381,3 +381,63 @@ is a local tool: nothing pushes while the laptop is asleep.
 - This project pins `next@16.2.10` / `react@19.2.4` — read
   `node_modules/next/dist/docs/` before writing Next.js code; the APIs differ
   from older versions (e.g. middleware is now `proxy.ts`).
+
+## 13. Insights & budget
+
+**Insights** (sidebar, `/insights`) answers three questions about the D-Agent
+runs of the connected organization: *where do runs fail, what do they cost, and
+is the plan's pace right?* Pick the window on the toolbar: **Last 14 days**, or
+**Current sprint** (the dates of your newest non-archived Flow Runner plan;
+without one it falls back to 14 days and says so). A run counts in the window it
+**started** in. The page refreshes itself when a run changes.
+
+**Headline tiles**
+
+| Number | What it is | How to read it |
+|---|---|---|
+| Runs | Every run started in the window, of any flow; "finished" = succeeded, ended for review, or failed | Volume, nothing more |
+| Success rate | (succeeded + ended for review) ÷ (those + failed). Cancelled, waiting and running runs are left out | Under 60% it turns red — start at *Where runs fail* |
+| Total cost | Sum of every step's cost in the window | Spend for the period |
+| Cost / point | Cost of the tickets that have story points ÷ their points (unsized tickets are left out) | The unit price of delivery. Watch the trend sprint over sprint and set the ticket budget from it (a 3-point ticket at $2/point ≈ $6) |
+
+**Pace.** *Actual points/day* = points of planned tickets that reached a PR (a
+succeeded run left one) or were released inside the window ÷ the working days
+(Mon–Fri) in the window, rounded to 0.5. *Planned* is the active plan's
+points/day. With fewer than 3 delivered tickets the suggestion is shown but
+marked too small to trust — change nothing yet. Otherwise:
+
+- **Faster** (more than 15% above plan) — rebuild the plan at the suggested
+  points/day (*Settings → Flow Runner → Points / day → Apply & rebuild*) to pull
+  work forward.
+- **Slower** (more than 15% below) — rebuild at the suggested value so release
+  days stop slipping, or first fix what makes runs fail.
+- **On pace** — leave it.
+
+**By flow** — per flow (implement / fix review / fix QA): how its runs ended —
+*succeeded*, *for review* (ended on NEEDS_REVIEW: finished, but a person should
+look), *failed*, *cancelled*, *waiting PO* (parked on NEEDS_INPUT — the ticket
+needs an answer from its owner), *running* — plus average cost per run, average
+duration of the runs that ended and, for implement, average **fix rounds**
+(`fix` steps per run). Rising fix rounds mean the evaluator keeps refusing the
+first attempt — look at ticket quality or the implementer's brief.
+
+**Where runs fail** — one row per graph node: *Visits* (steps run), *Failed*
+(steps that errored; `+n↺` are verdicts that sent the run back), *Runs ended*
+(failed runs that stopped on that node), *Success* (succeeded ÷ finished steps),
+total and average cost. Sorted by runs ended. A node at the top with many
+failures is where to act: read its agent (`agents/<name>.md`) and its brief in
+`lib/dagent/prompts.ts`, and the KNOWLEDGE.md lessons it keeps hitting. An
+expensive node with a high success rate is a candidate for a cheaper model.
+
+**Failure reasons** — failed runs grouped by class: *Transient* (network, rate
+limit, restart — a retry usually passes; Flow Runner retries these itself),
+*Environment* (repo, credential, missing tool — fix the setup on System Check
+before retrying; a retry only burns money), *Agent* (the work itself stopped —
+open the run and read why). Beside it, the most frequent reasons, with ids,
+numbers, URLs and paths masked so the same failure groups together.
+
+**Over budget** — set **Settings → Flow Runner → Ticket budget (USD)**; 0 turns
+it off. A ticket whose runs in the window cost that much or more is listed here
+(tap it to open it on Workflow). It is a **warning only**: no run is stopped and
+there is still no spend ceiling. If many tickets cross it, either raise it in
+line with *Cost / point* or look at why those tickets loop (fix rounds, failures).

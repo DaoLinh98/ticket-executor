@@ -31,6 +31,7 @@ function publicSettings(s: SettingRow, cred: ConnectionView | null) {
     manageMcp: s.manageMcp,
     concurrentRuns: s.concurrentRuns,
     hoursPerStoryPoint: s.hoursPerStoryPoint,
+    ticketBudgetUsd: s.ticketBudgetUsd,
     sprintAnchorProject: s.sprintAnchorProject,
     gitUserName: s.gitUserName,
     gitUserEmail: s.gitUserEmail,
@@ -102,4 +103,21 @@ export async function POST(req: Request) {
   if (typeof body.provider === "string" || typeof body.manageMcp === "boolean") clearMcpProbe();
 
   return jsonNoStore({ settings: publicSettings(s, await activeConnection(provider)) });
+}
+
+// PATCH /api/settings { ticketBudgetUsd } — the per-ticket budget, saved on its own from Settings → Flow Runner.
+// Not taken by POST on purpose: the Settings page posts its whole snapshot, which would write a stale budget
+// back over one saved from the Flow Runner pane in the meantime.
+export async function PATCH(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  // A soft warning, not a cap: 0 turns it off.
+  if (typeof body.ticketBudgetUsd !== "number" || !Number.isFinite(body.ticketBudgetUsd) || body.ticketBudgetUsd < 0)
+    return jsonNoStore({ error: "ticketBudgetUsd must be a number of USD, 0 or more." }, { status: 400 });
+  const s = await prisma.setting.upsert({
+    where: { id: "default" },
+    create: { id: "default", ticketBudgetUsd: body.ticketBudgetUsd },
+    update: { ticketBudgetUsd: body.ticketBudgetUsd },
+  });
+  await invalidateSetting();
+  return jsonNoStore({ settings: publicSettings(s, await activeConnection(normalizeProvider(s.provider))) });
 }

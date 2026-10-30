@@ -50,6 +50,7 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "scheduler.released": "RELEASED",
   "scheduler.review-fixed": "REVIEW FIXED",
   "scheduler.failed": "AUTO FAILED",
+  "scheduler.needs-review": "NEEDS REVIEW",
   "plan.drift": "DRIFT",
   "plan.needs-root-repo": "ROOT REPO",
   "ticket.ready-for-qa": "READY FOR QA",

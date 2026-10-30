@@ -251,11 +251,11 @@ export const QA_TRIAGE_OUTPUT = {
           finding: { type: "string", description: "What QC asked or reported, in one sentence." },
           kind: {
             type: "string",
-            enum: ["question", "defect", "not-defect", "needs-info", "new-scope"],
+            enum: ["question", "defect", "not-defect", "needs-info", "new-scope", "acknowledgement"],
             description:
               "question: QC asks, and the answer shows the code is right. defect: the code is wrong against the ticket — also when a question's answer reveals that. " +
               "not-defect: the behaviour is right, proven by file:line or the acceptance criterion. needs-info: the code cannot settle it. " +
-              "new-scope: QC asks for something the ticket never did.",
+              "new-scope: QC asks for something the ticket never did. acknowledgement: QC only confirms or informs (a pass, \"verified\", thanks) — it raises nothing to fix, answer or decide.",
           },
           defect: { type: "boolean", description: "True exactly when kind is defect." },
           reason: { type: "string", description: "Evidence for the verdict: file:line with the code, or the acceptance criterion it is checked against. For needs-info, what would settle it." },

@@ -27,6 +27,12 @@ be earned with evidence, not granted for lack of objections.
   `unverified` — never present a guess as a fact.
 - **Rules in scope.** A repo's `CLAUDE.md`, `CLAUDE.local.md` and `KNOWLEDGE.md` govern
   the files under the folder that holds them. Quote a rule verbatim when you cite it.
+- **Review rules library.** `C:\Users\linh.dao\.claude\code-review-rules\` holds rule
+  `.md` files (`tech-architect-reviewer.md`, `backend-aspnet.md`, `frontend-angular.md`,
+  `devops-terraform.md`). Before the Standards axis, list the folder and read the files
+  that match the diff's stack (always `tech-architect-reviewer.md`). Apply them as
+  standards, quote the rule verbatim when you cite it, and never let one override a
+  repo's own `CLAUDE.md`.
 - **High signal only.** Not findings: pre-existing problems, what a linter or formatter
   catches, pedantic taste, things deliberately silenced in code, speculation you could
   not verify. False positives cost as much as misses.

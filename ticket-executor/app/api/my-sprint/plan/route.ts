@@ -15,14 +15,18 @@ import {
   postCaseReply,
   moveToQa,
   planById,
+  acknowledgeReview,
+  reviewsWaiting,
+  clarificationsWaiting,
+  postClarification,
   rebuildPlan,
   recentAutomation,
   releasePlannedTicket,
   removeTicketFromPlan,
-  retryPlannedTicket,
   setPlanAutomation,
   setPlanStatus,
   setTicketUnblocked,
+  retryPlannedNow,
   startReviewRun,
   tickNow,
 } from "@/lib/executionStore";
@@ -68,6 +72,9 @@ export async function GET(req: Request) {
     events: plan ? await recentAutomation(plan.id) : [],
     cases: plan ? await listCases(plan.id) : [],
     closed: plan ? await lastClosedCases(plan.id) : {},
+    reviews: plan ? await reviewsWaiting(plan.id) : [],
+    ticketBudgetUsd: setting.ticketBudgetUsd,
+    clarifications: plan ? await clarificationsWaiting(plan.id) : [],
     costs,
   });
 }
@@ -176,9 +183,11 @@ export async function PATCH(req: Request) {
 //   { release: "<plannedTicketId>" }  hand one finished ticket over now
 //   { retry:   "<plannedTicketId>" }  put a stopped ticket back in the queue
 //   { tick: true }                    run one scheduler pass immediately
+//   { ackReview: "<plannedTicketId>" } mark a run that ended on NEEDS_REVIEW as reviewed
+//   { askPo: "<plannedTicketId>", body } post a parked run's questions for the PO on the work item
 //   { addToRelease: { ticketId, ..., status } }  add or re-track a ticket; queued only before review
 //   { removeFromRelease: "<plannedTicketId>" }  stop tracking a ticket (the row stays as a record)
-//   { analyzeQa: "<plannedTicketId>" } / { approveQaFix: { id, fix, note } } / { postQaReply, body } / { dismissQaCase }
+//   { analyzeQa: "<plannedTicketId>" } / { analyzeQaRun: "<runId>" } / { approveQaFix: { id, fix, note } } / { postQaReply, body } / { dismissQaCase }
 //                                     the QA follow-up case (`lib/execution/qaFollowUp.ts`)
 //
 // The button and the timer call exactly the same code on purpose: an automation
@@ -203,11 +212,10 @@ export async function PUT(req: Request) {
       outcome.ok ? undefined : { status: 400 }
     );
   }
-  // Back into the implement queue. Deliberately not a "run it now" button: it
-  // resets the row and the scheduler starts it on its next pass, so a retried
-  // ticket meets the same admission rules as any other.
+  // A retry jumps the queue: the row is reset and started at once. `startRun()` still applies admission;
+  // a refusal leaves the row pending for the scheduler.
   if (typeof body.retry === "string" && body.retry) {
-    const outcome = await retryPlannedTicket(body.retry);
+    const outcome = await retryPlannedNow(body.retry);
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.retry } });
     return NextResponse.json(
       { outcome, plan: item ? await planById(item.planId) : null },
@@ -217,6 +225,13 @@ export async function PUT(req: Request) {
   // The QA follow-up case: analyse QC's feedback, approve the fix, post the reply, or dismiss it.
   if (typeof body.analyzeQa === "string" && body.analyzeQa) {
     const outcome = await analyzeCase(body.analyzeQa, true);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  // Retry of a failed QA analysis run from the workflow page: the run knows its case, the page does not know the plan row.
+  if (typeof body.analyzeQaRun === "string" && body.analyzeQaRun) {
+    const qaCase = await prisma.qaCase.findFirst({ where: { runId: body.analyzeQaRun } });
+    if (!qaCase) return NextResponse.json({ outcome: { ok: false, error: "This run is not tied to a QC follow-up case." } }, { status: 400 });
+    const outcome = await analyzeCase(qaCase.plannedTicketId, true);
     return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
   }
   if (body.approveQaFix && typeof body.approveQaFix === "object" && typeof body.approveQaFix.id === "string") {
@@ -230,6 +245,16 @@ export async function PUT(req: Request) {
   }
   if (typeof body.dismissQaCase === "string" && body.dismissQaCase) {
     const outcome = await dismissCase(body.dismissQaCase);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  // A run that ended on NEEDS_REVIEW, looked at by the developer.
+  if (typeof body.ackReview === "string" && body.ackReview) {
+    const outcome = await acknowledgeReview(body.ackReview);
+    return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
+  }
+  // Readiness's questions, edited and approved by the developer, posted on the work item.
+  if (typeof body.askPo === "string" && body.askPo) {
+    const outcome = await postClarification(body.askPo, typeof body.body === "string" ? body.body : "");
     return NextResponse.json({ outcome }, outcome.ok ? undefined : { status: 400 });
   }
   if (typeof body.moveToQa === "string" && body.moveToQa) {

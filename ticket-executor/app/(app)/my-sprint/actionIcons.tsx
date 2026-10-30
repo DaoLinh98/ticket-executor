@@ -17,6 +17,8 @@ export const ACTIONS = {
   analyzeQa: { label: "Analyse QC feedback", hint: "Check QC's comments against the code: a reply, or a fix you approve", variant: "outline", d: "M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z M8 12h.01 M12 12h.01 M16 12h.01" },
   readDraft: { label: "QC follow-up", hint: "Jump to this ticket's QC follow-up case", variant: "outline", d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z M7 8h10 M7 12h6" },
   moveToQa: { label: "Move to In QA", hint: "PR merged — hand the ticket to QA", variant: "primary", d: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M8 12l3 3 5-6" },
+  askPo: { label: "Ask the PO", hint: "Readiness has questions — edit and post them on the ticket", variant: "warning", d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z M9.5 8.5a2.5 2.5 0 1 1 3 2.5c-.5.2-.5.6-.5 1 M12 14h.01" },
+  markReviewed: { label: "Mark reviewed", hint: "You have looked at a run that ended for review", variant: "success", d: "M20 6L9 17l-5-5" },
   doNext: { label: "Do next", hint: "Move to the top of the queue", variant: "ghost", d: "M5 4h14 M12 20V8 M6 14l6-6 6 6" },
   hold: { label: "Hold", hint: "Keep it out of the queue for now", variant: "ghost", d: "M8 5v14 M16 5v14" },
   remove: { label: "Remove", hint: "Stop tracking it — add it back by hand any time", variant: "ghost", d: "M3 6h18 M8 6V4h8v2 M6 6l1 15h10l1-15 M10 11v6 M14 11v6" },

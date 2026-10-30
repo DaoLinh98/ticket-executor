@@ -180,7 +180,16 @@ export type Section =
   | { kind: "prs"; title?: string; prs: { repo: string; num: number; url: string; meta: string; draft: boolean }[] }
   | { kind: "copy"; questions: string[] }
   | { kind: "bar"; title?: string; bars: { k: string; v: string; w: number; phase: PhaseKey }[] }
-  | { kind: "retry"; title?: string; icon?: string; options: { id: string; label: string; external: boolean; enabled: boolean }[]; defaultId: string };
+  | {
+      kind: "retry";
+      title?: string;
+      icon?: string;
+      options: { id: string; label: string; external: boolean; enabled: boolean }[];
+      defaultId: string;
+      /** The node `retryNodeFor()` picked, marked "Suggested"; null = a fresh start is suggested. */
+      suggestedId: string | null;
+      advice: { title: string; text: string; tone: Tone };
+    };
 
 export type LogLevel = "INFO" | "WARN" | "ERROR";
 

@@ -173,6 +173,8 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
 @keyframes fadeIn{from{opacity:0;animation-timing-function:var(--te-ease-out);}to{opacity:1;}}
 @keyframes popIn{from{opacity:0;transform:translateY(-6px) scale(.97);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0) scale(1);}}
 @keyframes slideIn{from{opacity:0;transform:translateY(24px) scale(.97);animation-timing-function:var(--te-ease-expo);}to{opacity:1;transform:translateY(0) scale(1);}}
+@keyframes teFlash{0%,100%{box-shadow:0 0 0 0 transparent;}25%{box-shadow:0 0 0 3px var(--te-glow-accent);}}
+.te-flash{animation:teFlash 1.4s ease-out;}
 @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.82);}}
 @keyframes gridScroll{to{background-position:44px 44px;}}
 @keyframes meshFloat{0%,100%{transform:translate(0,0);}50%{transform:translate(-28px,26px);}}
@@ -248,6 +250,15 @@ button:not(:disabled),a[href]{transition:transform .32s var(--te-ease-expo),filt
 button:not(:disabled):hover,a[href]:hover{transform:translateY(-2px) scale(1.03);filter:brightness(1.08);}
 button:not(:disabled):active,a[href]:active{transform:scale(.97);transition:transform .08s var(--te-ease-out),filter .08s ease;filter:brightness(.95);}
 button:disabled{cursor:not-allowed;}
+/* A table row that opens something (Run History): an accent wash and a left rail on hover, keyboard focus and press. */
+.te-run-row{transition:background-color .2s ease,box-shadow .25s var(--te-ease-expo);}
+.te-run-row:hover,.te-run-row:focus-visible{background:color-mix(in srgb,var(--te-accent) 7%,transparent);box-shadow:inset 3px 0 0 var(--te-accent);outline:none;}
+.te-run-row:active{background:color-mix(in srgb,var(--te-accent) 12%,transparent);}
+.te-run-row .te-run-title{transition:color .2s ease;}
+.te-run-row:hover .te-run-title{color:var(--te-accent);}
+/* An outward link chip inside such a row (the PR): fills with the accent on hover, on top of the global lift. */
+.te-run-pr{border:1px solid color-mix(in srgb,var(--te-accent) 35%,transparent);background:color-mix(in srgb,var(--te-accent) 8%,transparent);}
+.te-run-pr:hover,.te-run-pr:focus-visible{border-color:var(--te-accent);background:color-mix(in srgb,var(--te-accent) 20%,transparent);box-shadow:0 6px 16px -8px var(--te-accent);outline:none;}
 .te-action-btn[data-state="off"]{opacity:.4;filter:grayscale(.8);box-shadow:none;}
 /* Tooltip layer (app/Tooltip.tsx): fades in after a short delay instead of the
    browser's abrupt native title popup. */

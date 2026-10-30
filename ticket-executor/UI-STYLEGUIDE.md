@@ -119,7 +119,8 @@ media query, so the phone layout lives in **one CSS block at the foot of
 | `te-main` | Scroll-region padding drops to 14px + bottom safe area. |
 | `te-grid-2` / `te-grid-3` | Fixed-column grids collapse to one column. |
 | `te-table-scroll` + `te-table-body` | A real table scrolls sideways at full width rather than reflowing. |
-| `te-plan-table` / `te-plan-head` / `te-plan-row` / `te-plan-ticket` / `te-plan-cell[data-label]` / `te-plan-actions` | The Flow Runner plan table reflows into a card per ticket: the header row is dropped, the ticket takes a full row, each cell becomes a labelled chip (the label is its `data-label`), and the actions wrap on their own row. |
+| `te-plan-table` / `te-plan-head` / `te-plan-row` / `te-plan-ticket` / `te-plan-cell[data-label]` / `te-plan-actions` | The Flow Runner plan table and the Run History table reflow into a card per row: the header row is dropped, the ticket takes a full row, each cell becomes a labelled chip (the label is its `data-label`), and the actions wrap on their own row. |
+| `te-run-row` / `te-run-title` / `te-run-pr` | All widths: a row that opens something gets an accent wash + left rail on hover, focus and press (its `te-run-title` turns accent); a link chip inside it (`te-run-pr`) fills with the accent on hover. Hover-varying fill/border live in the class, never inline. |
 | `te-legend-rail` | Flow Runner's collapsed action legend lays its caption flat instead of as a vertical rail. |
 | `te-action-btn` / `te-icon-btn` | Buttons and icon buttons reach the 40px tap target. |
 | `te-split[data-pane]` / `te-pane-list` / `te-pane-detail` / `te-back-btn` | A two-pane screen shows one pane at a time with a Back control (Ticket Execution, the commit popup). |

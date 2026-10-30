@@ -10,6 +10,7 @@ import type { TriagedTicket } from "@/lib/execution/triage";
 import { CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelLabel, resolveModelId } from "@/lib/claudeOptions";
 import { useClaudeModels } from "../../queries";
 import { IconAction } from "./actionIcons";
+import { focusQaCase } from "./QaFollowUps";
 import {
   CLAIM,
   READINESS,
@@ -20,6 +21,7 @@ import {
   type MySprint,
   type PlannedRow,
   type QaCase,
+  type Clarification,
 } from "./model";
 
 const GRID = "84px 1fr 60px 132px 132px 104px 176px";
@@ -40,6 +42,7 @@ export type PlanHandlers = {
   hold: (plannedId: string) => void;
   history: (ticketId: string) => void;
   runOptions: (row: PlannedRow) => void;
+  askPo: (row: PlannedRow) => void;
 };
 
 const isMovable = (t: PlannedRow) =>
@@ -72,6 +75,7 @@ export default function PlanTable({
   busy,
   releaseDayOptions,
   costs,
+  clarifications,
   reorderable,
   selected,
   onSelect,
@@ -85,6 +89,7 @@ export default function PlanTable({
   busy: ReadonlySet<string>;
   releaseDayOptions: string[];
   costs: Record<string, number>;
+  clarifications: Clarification[];
   reorderable: boolean;
   selected: ReadonlySet<string>;
   onSelect: (plannedId: string, on: boolean) => void;
@@ -122,7 +127,11 @@ export default function PlanTable({
             const assigneeNow = t.assigneeNow || claimed?.assigneeNow || "";
             const tri = triaged.get(t.ticketId);
             const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
-            const state = stateOf(t, ticket?.status ?? "");
+            const asking = clarifications.find((c) => c.plannedTicketId === t.id);
+            // A run parked on needs-input is not "Running" — it waits on the PO, asked or not yet.
+            const state = asking
+              ? { color: COLORS.warning, label: asking.postedAt ? "Asked PO" : "Needs PO" }
+              : stateOf(t, ticket?.status ?? "");
             const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
             const canOverride = t.blocked && claim === "mine" && t.implementState === "pending";
             const qaCase = cases.find((c) => c.plannedTicketId === t.id);
@@ -319,6 +328,9 @@ export default function PlanTable({
                     ) : (
                       <IconAction action="forceReady" onClick={() => h.setUnblocked(t.id, true)} busy={busy.has("unblock-" + t.id)} />
                     ))}
+                  {asking && !asking.postedAt && claim === "mine" && (
+                    <IconAction action="askPo" onClick={() => h.askPo(t)} busy={busy.has("askpo-" + t.id)} />
+                  )}
                   {t.implementState === "running" || t.reviewState === "running" ? (
                     <IconAction action="watch" onClick={() => h.openExecution(t.ticketId)} />
                   ) : t.runId || t.reviewRunId ? (
@@ -336,7 +348,7 @@ export default function PlanTable({
                     )}
                   {due && t.id && <IconAction action="release" onClick={() => h.release(t)} busy={busy.has("release-" + t.id)} />}
                   {t.id && qaCase && (
-                    <IconAction action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />
+                    <IconAction action="readDraft" onClick={() => focusQaCase(t.id)} />
                   )}
                   {t.id && !qaCase && awaitsAnalysis({ stage, pendingAction: t.pendingAction, pendingSince: t.pendingSince ?? null, qaCommentAt: t.qaCommentAt ?? "", lastClosed: closed[t.id] ?? null }) && (
                     <IconAction action="analyzeQa" onClick={() => h.analyzeQa(t.id, t.ticketId)} busy={busy.has("analyze-" + t.id)} />

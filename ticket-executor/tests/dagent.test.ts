@@ -200,7 +200,7 @@ test("implement and fix must commit before anything is verified", () => {
 
 test("an implement that rightly changes nothing parks for a person instead of failing", () => {
   const clean = ok({ ...clear, committed: false, filesChanged: 0, uncommitted: 0 });
-  assert.deepEqual(GRAPH.edges.implement(ctx(), clean), { to: NEEDS_REVIEW, reason: "no code change needed — a person confirms" });
+  assert.deepEqual(GRAPH.edges.implement(ctx(), clean), { to: NEEDS_REVIEW, reason: "no code change needed — ended for review" });
   assert.equal(QA_GRAPH.edges.implement(ctx(), clean).to, NEEDS_REVIEW);
   assert.equal(REVIEW_GRAPH.edges.implement(ctx(), clean).to, FAIL);
   for (const id of ["dagent-implement-v2", "dagent-fix-qa-v1"]) {

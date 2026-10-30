@@ -6,6 +6,8 @@ import type { Banner, BannerAction, Hud } from "@/lib/workflow/present";
 import type { GateResult } from "@/lib/workflow/types";
 import { Badge, Ico, MONO } from "./parts";
 
+const RETRY_ICON = "M21 12a9 9 0 1 1-3-6.7L21 8 M21 3v5h-5";
+
 export type WorkflowMode = "flow" | "timeline" | "log";
 
 const MODES: [WorkflowMode, string][] = [
@@ -94,8 +96,9 @@ export function WorkflowHud(p: HudProps) {
             </button>
           ) : null}
           {p.canRetry ? (
-            <button type="button" onClick={p.onRetry} style={ctaButtonStyle("primary")}>
-              Retry from…
+            <button type="button" onClick={p.onRetry} style={{ ...ctaButtonStyle("primary"), display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Ico d={RETRY_ICON} size={14} sw={2.4} />
+              Retry
             </button>
           ) : null}
         </span>
@@ -128,8 +131,9 @@ export function WorkflowHud(p: HudProps) {
               </button>
             ) : null}
             {p.canRetry ? (
-              <button type="button" className="te-action-btn" onClick={p.onRetry} style={ctaButtonStyle("primary", { height: "40px" })}>
-                Retry from…
+              <button type="button" className="te-action-btn" onClick={p.onRetry} style={{ ...ctaButtonStyle("primary", { height: "40px" }), display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Ico d={RETRY_ICON} size={14} sw={2.4} />
+                Retry
               </button>
             ) : null}
           </div>

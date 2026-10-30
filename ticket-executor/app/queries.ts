@@ -1,9 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ProviderId } from "@/lib/providers";
 import type { PreflightResult } from "@/lib/preflight";
 import type { ClaudeModel } from "@/lib/claudeOptions";
+import type { HistoryFilter, HistoryPage } from "@/lib/dagent/historyShape";
+import type { InsightsPayload, InsightsPeriod } from "@/lib/dagent/insights";
 
 export type ConnectionRow = {
   id: string; label: string; org: string; isActive: boolean;
@@ -74,3 +76,50 @@ export const useClaudeModels = () =>
     },
     staleTime: 600_000,
   });
+
+// Run History: every D-Agent run, newest first, one numbered page per fetch. The prefix is swept by the run-list stream.
+export const RUN_HISTORY_PREFIX = ["dagent", "history"] as const;
+export const runHistoryKey = (f: HistoryFilter) => [...RUN_HISTORY_PREFIX, f.state, f.flow, f.q, f.page, f.size] as const;
+
+export const fetchRunHistory = async (f: HistoryFilter): Promise<HistoryPage> => {
+  const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, String(v)]));
+  const r = await fetch(`/api/dagent/runs/history?${qs}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(d?.rows)) throw new Error(d?.error || "Could not read the run history.");
+  return d as HistoryPage;
+};
+
+// The page on screen stays while the next one loads, so paging never blanks the table.
+export const useRunHistory = (f: HistoryFilter) =>
+  useQuery({ queryKey: runHistoryKey(f), queryFn: () => fetchRunHistory(f), staleTime: 0, placeholderData: keepPreviousData });
+
+// Insights: run cost, failure and pace metrics for one window. Refetched on focus; the page sweeps the prefix on
+// the run-list stream, so a run that ends updates the numbers without a reload.
+export const INSIGHTS_PREFIX = ["dagent", "insights"] as const;
+export const insightsKey = (period: InsightsPeriod) => [...INSIGHTS_PREFIX, period] as const;
+
+export const fetchInsights = async (period: InsightsPeriod): Promise<InsightsPayload> => {
+  const r = await fetch(`/api/dagent/insights?period=${period}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d?.totals) throw new Error(d?.error || "Could not read the insights.");
+  return d as InsightsPayload;
+};
+
+export const useInsights = (period: InsightsPeriod) =>
+  useQuery({ queryKey: insightsKey(period), queryFn: () => fetchInsights(period), staleTime: 0, placeholderData: keepPreviousData });
+
+// A ticket's row in the active Flow Runner plan, for the Workflow page's link back. Invalidated by the run's and the plan's streams.
+export type PlanRowPayload = { planId: string; sprint: string; queuePosition: number | null; queueLength: number; row: import("./(app)/my-sprint/model").PlannedRow | null };
+
+export const planRowKey = (ticketId: string, provider: string) => ["my-sprint", "plan-row", provider, ticketId] as const;
+
+export const fetchPlanRow = async (ticketId: string, provider: string): Promise<PlanRowPayload> => {
+  const qs = new URLSearchParams({ ticket: ticketId, provider });
+  const r = await fetch(`/api/my-sprint/plan/row?${qs}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !("row" in d)) throw new Error(d?.error || "Could not read the Flow Runner plan row.");
+  return d as PlanRowPayload;
+};
+
+export const usePlanRow = (ticketId: string, provider: string) =>
+  useQuery({ queryKey: planRowKey(ticketId, provider), queryFn: () => fetchPlanRow(ticketId, provider), enabled: !!ticketId, staleTime: 0 });

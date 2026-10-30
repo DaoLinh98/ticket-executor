@@ -130,7 +130,7 @@ function GuidePageInner() {
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "80px" }}><LoadingRing size={120} /></div>
         ) : (
-          <div className="te-sprint-page" style={{ maxWidth: "1600px", width: "100%", flex: "1 1 0", minHeight: 0, margin: "0 auto" }}>
+          <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0 }}>
           <div className="te-sprint-split" style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(280px, 340px) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "24px" }}>
           <div className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
             {banner && (
