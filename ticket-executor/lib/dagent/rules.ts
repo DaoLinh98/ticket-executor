@@ -60,7 +60,7 @@ export function violationWarnings(v: Violation[]): Refusal[] {
   return v.map((x) => ({ source: "diffGuard", file: x.file, issue: `${why[x.rule] ?? x.rule} (rule: ${x.rule})` }));
 }
 
-export type PlanData = { branch?: unknown; acMap?: unknown; repos?: unknown };
+export type PlanData = { branch?: unknown; acMap?: unknown; repos?: unknown; decisions?: unknown };
 
 export function planIssues(acceptanceCriteria: string[], plan: PlanData, repoNames: string[], planFileExists: boolean): string[] {
   const issues: string[] = [];
@@ -74,6 +74,10 @@ export function planIssues(acceptanceCriteria: string[], plan: PlanData, repoNam
   acMap.forEach((a, i) => {
     if (!a.files?.length) issues.push(`Acceptance criterion ${i + 1} ("${a.ac ?? ""}") names no file.`);
     if (!String(a.test ?? "").trim()) issues.push(`Acceptance criterion ${i + 1} ("${a.ac ?? ""}") names no test.`);
+  });
+  const decisions = Array.isArray(plan.decisions) ? (plan.decisions as { point?: string; decision?: string }[]) : [];
+  decisions.forEach((d, i) => {
+    if (!String(d.point ?? "").trim() || !String(d.decision ?? "").trim()) issues.push(`Decision ${i + 1} does not state both the open point and the reading chosen.`);
   });
   const known = new Set(repoNames.map(norm));
   const repos = Array.isArray(plan.repos) ? (plan.repos as string[]) : [];

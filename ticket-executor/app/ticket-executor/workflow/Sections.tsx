@@ -1,10 +1,11 @@
 "use client";
 
-import { COLORS, FONT, chipShape, ctaButtonStyle, pill } from "@/lib/ui";
+import { COLORS, FONT, card, chipShape, ctaButtonStyle, pill } from "@/lib/ui";
 import { IC, TONE } from "@/lib/workflow/meta";
 import { FRESH_START } from "@/lib/workflow/present";
 import type { Cell, Section, Tone } from "@/lib/workflow/types";
-import { Ico, MONO } from "./parts";
+import OutputMarkdown from "./OutputMarkdown";
+import { Badge, IconTile, Ico, MONO } from "./parts";
 
 type Props = {
   sections: Section[];
@@ -16,15 +17,19 @@ type Props = {
 
 const toneColor = (t?: Tone) => (t ? TONE[t].c : COLORS.text);
 
-function Title({ title, icon, tone }: { title?: string; icon?: string; tone?: Tone }) {
+// Every titled section is a card: an icon tile in the section's tone, the title, and how many rows it holds.
+function Title({ title, icon, tone, count }: { title?: string; icon?: string; tone?: Tone; count?: number }) {
   if (!title) return null;
   return (
-    <h3 style={{ margin: "0 0 6px", display: "flex", alignItems: "center", gap: "6px", fontSize: FONT.sm, fontWeight: 600, color: tone ? TONE[tone].c : COLORS.textMuted }}>
-      {icon ? <Ico d={icon} size={13} /> : null}
-      {title}
+    <h3 style={{ margin: "0 0 10px", display: "flex", alignItems: "center", gap: "8px", fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
+      <IconTile d={icon ?? IC.list} tone={tone ?? "muted"} size={24} iconSize={14} />
+      <span style={{ flex: 1, minWidth: 0 }}>{title}</span>
+      {count ? <span style={pill({ color: COLORS.textDim, background: "var(--te-border-subtle)", size: "xs" })}>{count}</span> : null}
     </h3>
   );
 }
+
+const boxed = (sec: Section) => sec.kind !== "copy" && sec.kind !== "retry";
 
 const cellOf = (c: Cell) => (typeof c === "string" ? { t: c, tone: undefined, mono: false } : { t: c.t, tone: c.tone, mono: !!c.mono });
 
@@ -32,15 +37,23 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
   return (
     <>
       {sections.map((sec, i) => (
-        <section key={i} style={{ marginTop: "12px" }}>
+        <section key={i} style={{ marginTop: "12px", ...(boxed(sec) ? card({ padding: "12px", background: COLORS.panelBgDark, border: COLORS.borderSubtle }) : null) }}>
           {sec.kind === "kv" ? (
             <>
-              <Title title={sec.title} />
-              <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: FONT.sm }}>
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
+              <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", alignItems: "center", fontSize: FONT.sm }}>
                 {sec.rows.map((r) => (
                   <div key={r.k} style={{ display: "contents" }}>
                     <dt style={{ color: COLORS.textMuted }}>{r.k}</dt>
-                    <dd style={{ margin: 0, color: toneColor(r.tone), wordBreak: "break-word", fontFamily: r.mono ? MONO : undefined }}>{r.v}</dd>
+                    <dd style={{ margin: 0, minWidth: 0, color: COLORS.textSoft, wordBreak: "break-word", fontFamily: r.mono ? MONO : undefined }}>
+                      {r.tone ? (
+                        <Badge tone={r.tone} icon={r.tone === "success" ? IC.check : r.tone === "danger" ? IC.x : r.tone === "warning" ? IC.alert : undefined} size="xs">
+                          {r.v}
+                        </Badge>
+                      ) : (
+                        r.v
+                      )}
+                    </dd>
                   </div>
                 ))}
               </dl>
@@ -49,8 +62,8 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
 
           {sec.kind === "list" ? (
             <>
-              <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
-              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "6px" }}>
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} count={sec.items.length} />
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {sec.items.map((it, j) => (
                   <li key={j} style={{ display: "flex", gap: "8px", fontSize: FONT.sm, lineHeight: 1.4 }}>
                     <span style={{ flex: "0 0 16px", color: toneColor(it.tone), fontFamily: MONO }}>
@@ -59,7 +72,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ color: toneColor(it.textTone), fontFamily: it.mono ? MONO : undefined }}>{it.text}</span>
-                      {it.sub ? <span style={{ display: "block", fontSize: FONT.xs, color: COLORS.textMuted, wordBreak: "break-all", fontFamily: MONO }}>{it.sub}</span> : null}
+                      {it.sub ? <span style={{ display: "block", fontSize: FONT.xs, color: COLORS.textMuted, wordBreak: it.subPlain ? "break-word" : "break-all", fontFamily: it.subPlain ? undefined : MONO }}>{it.sub}</span> : null}
                     </span>
                   </li>
                 ))}
@@ -69,47 +82,40 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
 
           {sec.kind === "table" ? (
             <>
-              <Title title={sec.title} />
-              <div className="te-scroll te-table-scroll" style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: FONT.sm }}>
-                  <thead>
-                    <tr>
-                      {sec.cols.map((h) => (
-                        <th key={h} scope="col" style={{ textAlign: "left", fontWeight: 600, color: COLORS.textMuted, padding: "4px 6px", borderBottom: `1px solid ${COLORS.border}` }}>
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sec.rows.map((row, r) => (
-                      <tr key={r}>
-                        {row.map((raw, c) => {
-                          const cell = cellOf(raw);
-                          return (
-                            <td key={c} style={{ verticalAlign: "top", padding: "5px 6px", borderBottom: `1px solid ${COLORS.borderSubtle}`, color: toneColor(cell.tone), wordBreak: "break-word", fontFamily: cell.mono ? MONO : undefined }}>
-                              {cell.t}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} count={sec.rows.length} />
+              <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {sec.rows.map((row, r) => {
+                  const [head, ...rest] = row.map(cellOf);
+                  return (
+                    <li key={r} style={{ ...chipShape(6), padding: "8px 10px", background: COLORS.panelBg, borderLeft: `2px solid ${head.tone ? TONE[head.tone].c : sec.tone ? TONE[sec.tone].c : COLORS.border}`, fontSize: FONT.sm, lineHeight: 1.45 }}>
+                      <span style={{ display: "block", color: head.tone ? TONE[head.tone].c : COLORS.text, fontWeight: 600, wordBreak: "break-word", fontFamily: head.mono ? MONO : undefined }}>{head.t}</span>
+                      {rest.length ? (
+                        <dl style={{ margin: "6px 0 0", display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px", alignItems: "baseline" }}>
+                          {rest.map((cell, c) => (
+                            <div key={c} style={{ display: "contents" }}>
+                              <dt style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{sec.cols[c + 1]}</dt>
+                              <dd style={{ margin: 0, minWidth: 0, color: cell.tone ? TONE[cell.tone].c : COLORS.textSoft, wordBreak: "break-word", fontFamily: cell.mono ? MONO : undefined, fontSize: cell.mono ? FONT.xs : undefined }}>{cell.t}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
             </>
           ) : null}
 
           {sec.kind === "md" ? (
             <>
               <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
-              <div style={{ ...chipShape(6), padding: "10px 12px", background: "var(--te-panel-bg-dark)", fontSize: FONT.sm, lineHeight: 1.55, whiteSpace: "pre-line", color: COLORS.textSoft }}>{sec.text}</div>
+              <OutputMarkdown text={sec.text} />
             </>
           ) : null}
 
           {sec.kind === "prs" ? (
             <>
-              <Title title={sec.title} />
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} count={sec.prs.length} />
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 {sec.prs.map((p) => {
                   const tone: Tone = p.draft ? "success" : "warning";
@@ -119,7 +125,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
                       href={p.url}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ ...chipShape(8), display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", minHeight: "44px", background: "var(--te-panel-bg-dark)", border: `1px solid ${COLORS.border}`, textDecoration: "none", color: COLORS.text }}
+                      style={{ ...chipShape(8), display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", minHeight: "44px", background: COLORS.panelBg, border: `1px solid ${COLORS.border}`, textDecoration: "none", color: COLORS.text }}
                     >
                       <span style={{ color: TONE[tone].c, display: "inline-flex" }}>
                         <Ico d={IC.pr} size={18} sw={1.8} />
@@ -146,7 +152,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
 
           {sec.kind === "bar" ? (
             <>
-              <Title title={sec.title} />
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
               <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
                 {sec.bars.map((b) => (
                   <div key={b.k} style={{ display: "grid", gridTemplateColumns: "96px 1fr 56px", gap: "8px", alignItems: "center", fontSize: FONT.sm }}>

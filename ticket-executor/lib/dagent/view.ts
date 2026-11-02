@@ -16,7 +16,7 @@ import type {
 } from "../workflow/types";
 import { flowOf, GRAPH, graphById, MAX_FIX_ATTEMPTS, outline } from "./graph";
 import { deliveryOf, prNumber } from "./rules";
-import type { Graph, LogEntry } from "./types";
+import { BRIEF_PREFIX, type Graph, type LogEntry } from "./types";
 
 export type RunRow = {
   id: string;
@@ -127,7 +127,7 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
         delivery: d.delivery ? deliveryOf({ channels: { readiness: d } }) : undefined,
       };
     case "plan":
-      return { node: "plan", acMap: arr(d.acMap), repos: arr(d.repos), risks: arr(d.risks), planMd };
+      return { node: "plan", acMap: arr(d.acMap), repos: arr(d.repos), risks: arr(d.risks), decisions: arr(d.decisions), planMd };
     case "planCheck":
     case "prePublish":
       return { node: nodeId, passed: !!d.passed, issues: arr(d.issues) };
@@ -193,6 +193,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
   const defs = flowDefs(graph);
   const plans = artifacts.filter((a) => a.kind === "plan");
   const planMd = last(plans)?.body ?? "";
+  const briefs = new Map(artifacts.filter((a) => a.kind.startsWith(BRIEF_PREFIX)).map((a) => [a.kind.slice(BRIEF_PREFIX.length), a.body]));
   const logs: LogLine[] = [];
   const steps: Step[] = stepRows.map((s, i) => {
     const entries = live && live.stepId === s.id && s.status === "running" ? live.logs : arr<LogEntry>(s.logLines);
@@ -215,6 +216,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
       logFrom: from,
       logTo: Math.max(from, logs.length - 1),
       input: s.input ? refusals(s.input) : null,
+      brief: briefs.get(s.id) ?? "",
     };
   });
 

@@ -125,6 +125,8 @@ export type Inspector = {
   metrics: { k: string; v: string }[];
   error: string;
   sections: Section[];
+  /** What the agent was told when the selected attempt started; "" when none was kept. */
+  brief: string;
   json: string;
   transitions: { seq: number; incoming: boolean; other: string; reason: string }[];
 };
@@ -157,7 +159,7 @@ export function oneLine(out: NodeOutput | null): string {
     case "plan": {
       const files = new Set<string>();
       out.acMap.forEach((a) => a.files.forEach((f) => files.add(f)));
-      return `${out.acMap.length} AC → ${files.size} files`;
+      return `${out.acMap.length} AC → ${files.size} files${out.decisions.length ? ` · ${plural(out.decisions.length, "decision")}` : ""}`;
     }
     case "planCheck":
     case "prePublish":
@@ -211,11 +213,15 @@ export function refusalSections(list: Refusal[], prefix = ""): Section[] {
   });
 }
 
-const kv = (title: string | undefined, rows: [string, string | number, Tone?, boolean?][]): Section => ({
+const kv = (title: string | undefined, rows: [string, string | number, Tone?, boolean?][], icon?: string, tone?: Tone): Section => ({
   kind: "kv",
   title,
-  rows: rows.map(([k, v, tone, mono]) => ({ k, v: String(v), tone, mono })),
+  icon,
+  tone,
+  rows: rows.map(([k, v, t, mono]) => ({ k, v: String(v), tone: t, mono })),
 });
+
+const verdictTone = (ok: boolean): Tone => (ok ? "success" : "danger");
 
 const items = (list: string[], icon: string, tone: Tone): ListItem[] => list.map((text) => ({ icon, tone, text }));
 
@@ -224,13 +230,13 @@ export function outSections(out: NodeOutput | null): Section[] {
   switch (out.node) {
     case "setup":
       return [
-        kv("Workspace", [["Mode", out.mode], ["Branch", out.branch, undefined, true], ["Base", out.baseSha, undefined, true]]),
-        { kind: "list", title: "Repos", items: out.repos.map((r) => ({ icon: IC.git, tone: "muted" as Tone, text: r.name, sub: r.path })) },
+        kv("Workspace", [["Mode", out.mode], ["Branch", out.branch, undefined, true], ["Base", out.baseSha, undefined, true]], IC.gear, "warning"),
+        { kind: "list", title: "Repos", icon: IC.git, tone: "muted", items: out.repos.map((r) => ({ icon: IC.git, tone: "muted" as Tone, text: r.name, sub: r.path })) },
       ];
     case "readiness": {
-      const S: Section[] = [kv("Verdict", [["Ready", out.ready ? "Yes" : "No — run parked", out.ready ? "success" : "warning"]])];
-      if (out.missing.length) S.push({ kind: "list", title: "Missing", items: items(out.missing, IC.alert, "warning") });
-      if (out.ambiguities.length) S.push({ kind: "list", title: "Ambiguities", items: items(out.ambiguities, IC.alert, "warning") });
+      const S: Section[] = [kv("Verdict", [["Ready", out.ready ? "Yes" : "No — run parked", out.ready ? "success" : "warning"]], IC.flag, out.ready ? "success" : "warning")];
+      if (out.missing.length) S.push({ kind: "list", title: "Missing", icon: IC.search, tone: "warning", items: items(out.missing, IC.alert, "warning") });
+      if (out.ambiguities.length) S.push({ kind: "list", title: "Ambiguities", icon: IC.alert, tone: "warning", items: items(out.ambiguities, IC.alert, "warning") });
       if (out.questions.length) {
         S.push({
           kind: "list",
@@ -245,6 +251,8 @@ export function outSections(out: NodeOutput | null): Section[] {
         S.push({
           kind: "table",
           title: out.delivery.status === "done" ? "Already delivered — nothing to implement" : "Already delivered",
+          icon: IC.check,
+          tone: "success",
           cols: ["Acceptance criterion", "Repo", "Proof"],
           rows: out.delivery.evidence.map((e): Cell[] => [{ t: e.ac }, { t: e.repo, mono: true }, { t: e.proof, mono: true }]),
         });
@@ -256,16 +264,29 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "table",
           title: "AC → files → test",
+          icon: IC.target,
+          tone: "accent",
           cols: ["Acceptance criterion", "Files", "Test"],
-          rows: out.acMap.map((a): Cell[] => [a.ac, { t: a.files.map((f) => f.split("/").pop()).join(", "), mono: true }, { t: a.test, mono: true, tone: "info" }]),
+          rows: out.acMap.map((a): Cell[] => [a.ac, { t: a.files.map((f) => f.split("/").pop()).join(", "), mono: true }, { t: a.test, tone: "info" }]),
         },
-        { kind: "list", title: "Risks", items: items(out.risks, IC.alert, "warning") },
-        { kind: "md", title: "Plan", text: out.planMd },
+        ...(out.decisions.length
+          ? [
+              {
+                kind: "list",
+                title: "Decisions",
+                icon: IC.flag,
+                tone: "accent",
+                items: out.decisions.map((d): ListItem => ({ icon: IC.check, tone: "accent", text: `${d.point} → ${d.decision}`, sub: d.why, subPlain: true })),
+              } satisfies Section,
+            ]
+          : []),
+        { kind: "list", title: "Risks", icon: IC.alert, tone: "warning", items: items(out.risks, IC.alert, "warning") },
+        { kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd },
       ];
     case "planCheck":
     case "prePublish": {
-      const S: Section[] = [kv("Verdict", [["Passed", out.passed ? "Yes" : "No", out.passed ? "success" : "danger"]])];
-      if (out.issues.length) S.push({ kind: "list", title: "Issues", items: items(out.issues, IC.x, "danger") });
+      const S: Section[] = [kv("Verdict", [["Passed", out.passed ? "Yes" : "No", verdictTone(out.passed)]], IC.shield, verdictTone(out.passed))];
+      if (out.issues.length) S.push({ kind: "list", title: "Issues", icon: IC.x, tone: "danger", items: items(out.issues, IC.x, "danger") });
       return S;
     }
     case "implement":
@@ -279,8 +300,8 @@ export function outSections(out: NodeOutput | null): Section[] {
           ["Build", v.build, v.build === "passed" ? "success" : "warning"],
           ["Acceptance", v.acceptanceCriteria, v.acceptanceCriteria === "met" ? "success" : "warning"],
           ["Test exemption", out.testExemption || "none"],
-        ]),
-        { kind: "md", title: "Summary", text: out.summary },
+        ], IC.commit, "success"),
+        { kind: "md", title: "Summary", icon: IC.book, tone: "indigo", text: out.summary },
       ];
       if (out.addressed?.length) S.push(...refusalSections(out.addressed, "Asked to fix · "));
       return S;
@@ -291,9 +312,9 @@ export function outSections(out: NodeOutput | null): Section[] {
           ["Rebased", out.rebased ? "yes" : "no"],
           ["Behind base by", `${out.behindBy} commits`],
           ["Conflicts", out.conflicts.length || "none", out.conflicts.length ? "danger" : "success"],
-        ]),
+        ], IC.git, out.conflicts.length ? "danger" : "info"),
       ];
-      if (out.conflicts.length) S.push({ kind: "list", title: "Conflicts", items: items(out.conflicts, IC.x, "danger") });
+      if (out.conflicts.length) S.push({ kind: "list", title: "Conflicts", icon: IC.x, tone: "danger", items: items(out.conflicts, IC.x, "danger") });
       return S;
     }
     case "testGate":
@@ -301,6 +322,8 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "table",
           title: "Committed diff vs base",
+          icon: IC.beaker,
+          tone: "info",
           cols: ["Repo", "Files", "Test files", "Result"],
           rows: out.results.map((r): Cell[] => [
             { t: r.repo, mono: true },
@@ -312,16 +335,18 @@ export function outSections(out: NodeOutput | null): Section[] {
       ];
     case "diffGuard":
       return out.violations.length
-        ? [{ kind: "table", title: "Warnings · for the reviewer", cols: ["Rule", "File"], rows: out.violations.map((v): Cell[] => [{ t: v.rule, tone: "warning", mono: true }, { t: v.file, mono: true }]) }]
-        : [kv("Verdict", [["Violations", "none", "success"]])];
-    case "evaluate":
+        ? [{ kind: "table", title: "Warnings · for the reviewer", icon: IC.diff, tone: "warning", cols: ["Rule", "File"], rows: out.violations.map((v): Cell[] => [{ t: v.rule, tone: "warning", mono: true }, { t: v.file, mono: true }]) }]
+        : [kv("Verdict", [["Violations", "none", "success"]], IC.shield, "success")];
+    case "evaluate": {
+      const ok = out.verdict === "pass";
       return [
-        kv("Verdict", [["Verdict", out.verdict, out.verdict === "pass" ? "success" : "danger"], ["Reviewed", out.reviewedDelta ? "delta since last review" : "full diff"]]),
+        kv("Verdict", [["Verdict", out.verdict, verdictTone(ok)], ["Reviewed", out.reviewedDelta ? "delta since last review" : "full diff"]], IC.sparkle, verdictTone(ok)),
         ...refusalSections(out.blockers, "Blockers · "),
       ];
+    }
     case "reflect": {
-      const S: Section[] = [kv("Lesson", [["Recorded", out.recorded ? "yes · KNOWLEDGE.md" : "no"]])];
-      if (out.lesson) S.push({ kind: "md", title: "Lesson", text: out.lesson });
+      const S: Section[] = [kv("Lesson", [["Recorded", out.recorded ? "yes · KNOWLEDGE.md" : "no"]], IC.bulb, "warning")];
+      if (out.lesson) S.push({ kind: "md", title: "Lesson", icon: IC.bulb, tone: "warning", text: out.lesson });
       return S;
     }
     case "publish":
@@ -329,6 +354,8 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "prs",
           title: "Pull requests",
+          icon: IC.pr,
+          tone: "success",
           prs: out.prs.map((p) => ({ repo: p.repo, num: p.number, url: p.url, meta: p.reusedExisting ? "Reused existing PR" : "Opened by this run", draft: p.draft })),
         },
       ];
@@ -337,6 +364,8 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "list",
           title: "Read-back checks",
+          icon: IC.shield,
+          tone: verdictTone(out.passed),
           items: out.checks.map((c) => ({ icon: c.ok ? IC.check : IC.x, tone: (c.ok ? "success" : "danger") as Tone, text: c.name, textTone: c.ok ? undefined : ("danger" as Tone) })),
         },
       ];
@@ -345,26 +374,30 @@ export function outSections(out: NodeOutput | null): Section[] {
         {
           kind: "table",
           title: "Thread decisions",
+          icon: IC.chat,
+          tone: "indigo",
           cols: ["Thread", "Decision", "Why"],
           rows: out.threads.map((t): Cell[] => [{ t: t.file || t.comment, mono: !!t.file }, { t: t.decision, tone: t.decision === "fix" ? "warning" : "muted" }, t.reason]),
         },
-        { kind: "md", title: "Plan", text: out.planMd },
+        { kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd },
       ];
     case "qaTriage": {
       const S: Section[] = [
         {
           kind: "table",
           title: "QA findings",
+          icon: IC.search,
+          tone: "info",
           cols: ["Finding", "Verdict", "Why"],
-          rows: out.findings.map((f): Cell[] => [f.finding, { t: f.kind || (f.defect ? "defect" : "not-defect"), tone: f.defect ? "danger" : "success" }, { t: f.reason, mono: true }]),
+          rows: out.findings.map((f): Cell[] => [f.finding, { t: f.kind || (f.defect ? "defect" : "not-defect"), tone: f.defect ? "danger" : "success" }, f.reason]),
         },
       ];
-      if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", text: out.qaReply });
-      if (out.planMd) S.push({ kind: "md", title: "Plan", text: out.planMd });
+      if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", icon: IC.chat, tone: "indigo", text: out.qaReply });
+      if (out.planMd) S.push({ kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd });
       return S;
     }
     case "respond":
-      return [kv("Result", [["Pushed", out.pushed ? "yes" : "no"], ["Threads answered", out.threadsReplied, out.threadsReplied ? "success" : "danger"], ["Resolved", "never — the reviewer decides"]])];
+      return [kv("Result", [["Pushed", out.pushed ? "yes" : "no"], ["Threads answered", out.threadsReplied, out.threadsReplied ? "success" : "danger"], ["Resolved", "never — the reviewer decides"]], IC.chat, "indigo")];
   }
 }
 
@@ -817,7 +850,8 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
         .map((t) => ({ seq: t.seq, incoming: t.toNode === n.id, other: t.toNode === n.id ? t.fromNode : t.toNode, reason: t.reason }))
     : [];
 
-  const obj = isGate ? gates.find((x) => x.gate === n.id) : (step ?? { nodeId: n.id, status: "pending" });
+  // The brief has its own panel; leaving it out keeps the JSON view to the step's result.
+  const obj = isGate ? gates.find((x) => x.gate === n.id) : step ? { ...step, brief: undefined } : { nodeId: n.id, status: "pending" };
 
   return {
     label: isTerm ? n.id : d.label,
@@ -832,6 +866,7 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
     metrics,
     error: step?.errorMessage ?? "",
     sections,
+    brief: step?.brief ?? "",
     json: JSON.stringify(obj, null, 2),
     transitions,
   };
@@ -841,8 +876,8 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
   if (!run) {
     const g = gates.find((x) => x.status === "refused");
     return [
-      kv("No run", [["State", "refused", "danger"], ["Gate", "admission"], ["Reason", g?.reason ?? ""], ["Spent", "$0.00 · 0 tokens"]]),
-      { kind: "md", title: "What happens next", text: g?.howTo ?? "" },
+      kv("No run", [["State", "refused", "danger"], ["Gate", "admission"], ["Reason", g?.reason ?? ""], ["Spent", "$0.00 · 0 tokens"]], IC.ban, "danger"),
+      { kind: "md", title: "What happens next", icon: IC.route, tone: "accent", text: g?.howTo ?? "" },
     ];
   }
   const S: Section[] = [];
@@ -857,17 +892,19 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
       ["Elapsed", dur((end - run.startedAt) / 1000)],
       ["Steps", run.steps.length],
       ["Fix rounds", `${run.fixAttempts} / ${run.maxFixAttempts}`],
-    ]),
+    ], IC.terminal, stateTone),
   );
   if (run.failure) {
     const f = run.failure;
     S.push({ kind: "md", title: "Failure", icon: IC.x, tone: "danger", text: f.reason });
     S.push(...refusalSections(f.refusals, "Standing · "));
-    S.push({ kind: "md", title: "Lesson recorded by reflect", icon: IC.book, text: f.lesson });
+    S.push({ kind: "md", title: "Lesson recorded by reflect", icon: IC.bulb, tone: "warning", text: f.lesson });
     if (run.knowledge)
       S.push({
         kind: "list",
         title: "KNOWLEDGE.md diff",
+        icon: IC.diff,
+        tone: "muted",
         items: [
           ...run.knowledge.added.map((text): ListItem => ({ mark: "+", tone: "success", text, textTone: "success", mono: true })),
           ...run.knowledge.removed.map((text): ListItem => ({ mark: "−", tone: "danger", text, textTone: "danger", mono: true })),
@@ -890,7 +927,7 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
   const rd = run.steps.find((s) => s.output?.node === "readiness" && !s.output.ready);
   if (rd) S.push(...outSections(rd.output).slice(1));
   const tot = run.costUsd || 1;
-  S.push({ kind: "bar", title: "Cost by phase", bars: PHASES.map((p) => ({ k: PHASE_LABEL[p], v: usd(run.costByPhase[p]), w: (run.costByPhase[p] / tot) * 100, phase: p })) });
+  S.push({ kind: "bar", title: "Cost by phase", icon: IC.clock, tone: "accent", bars: PHASES.map((p) => ({ k: PHASE_LABEL[p], v: usd(run.costByPhase[p]), w: (run.costByPhase[p] / tot) * 100, phase: p })) });
   return S;
 }
 

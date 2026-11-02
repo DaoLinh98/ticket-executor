@@ -56,8 +56,8 @@ A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<bra
 |---|---|---|---|---|
 | `setup` | harness | git | identity, base (`origin` default or retry seed), a **worktree** per repo, restore `.te/plan.md` | readiness / FAIL |
 | `readiness` | agent | `analyst` | ready?, AC, `delivery` (none/partial/done) on base | plan / END / NEEDS_INPUT / FAIL |
-| `plan` | agent | `planner` | `planMd`, `branch`, `acMap`, `repos`; ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
-| `planCheck` | check | `planIssues()` | plan file, branch, every AC → files + test, repos in scope | implement / plan / FAIL |
+| `plan` | agent | `planner` | `planMd`, `branch`, `acMap`, `repos`, `decisions` (judgement calls, usually none); ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
+| `planCheck` | check | `planIssues()` | plan file, branch, every AC → files + test, repos in scope, each decision states point + reading | implement / plan / FAIL |
 | `implement` | agent | `implementer` | code, build/test, **commit locally, no push**; nothing to change (clean, 0 files, not blocked) → park | syncBase / NEEDS_REVIEW / FAIL |
 | `syncBase` | harness | git | fetch + rebase onto origin default (or the skill's base); conflict → abort + warning | diffGuard |
 | `diffGuard` | check | `diffViolations()` | agent/secret/unplanned-config files, credential lines; `changed` + `heads` | evaluate |
@@ -81,7 +81,11 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
    `retryEntries` node from `setup`). `MAX_HOPS` (60) fails a looping run.
 2. **`publish` is the only `external` node and is never on a cycle.**
 3. **Every turn is `context: "fresh"`**: `Agent` tool and `Skill(<name>)` for each `DENIED_SKILLS` (`cli.ts`)
-   disallowed, plugins off, per-turn MCP config (`lib/mcp.ts`), related repos via `--add-dir`.
+   disallowed, plugins off, per-turn MCP config (`lib/mcp.ts`), related repos via `--add-dir`. The brief is the only
+   handoff: implement / fix / evaluate get the plan's `acMap` + `risks` + `decisions` + `repos` from `channels.plan`
+   (`planContract`; decisions are built to, never reopened — the reviewer blocks only code that breaks one; publisher
+   lists them in the PR description), evaluate also the last delivery's summary + deviations as claims (`deliveryClaims`). Each brief is saved as artifact
+   `brief:<stepId>` and shown as "Context received" on `/workflow`.
 4. **Admission is `startRun()`**: preflight + `checkAgents()` (installed, named right, allows `StructuredOutput`,
    has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run for
    the ticket, and a free slot (`concurrentRuns`).

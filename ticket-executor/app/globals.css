@@ -309,6 +309,17 @@ button:disabled{cursor:not-allowed;}
    author pasted — cap them to the column and drop the fixed height, or the
    image renders squashed. */
 .te-rich img{display:block;max-width:100%;height:auto;margin:10px 0;border:1px solid var(--te-border);border-radius:9px;background:var(--te-panel-bg-dark);}
+/* An agent's markdown output inside the workflow inspector (OutputMarkdown): compact, and each heading an icon row. */
+.te-wf-md{font-size:12.5px;line-height:1.6;}
+.te-wf-md p{margin:0 0 8px;}
+.te-wf-md ul,.te-wf-md ol{padding-left:20px;margin:0 0 8px;}
+.te-wf-md li{margin:3px 0;}
+.te-wf-md code{font-size:11.5px;padding:0 4px;}
+.te-wf-md table{font-size:12px;}
+.te-wf-md th,.te-wf-md td{padding:5px 8px;}
+.te-wf-md .te-wf-md-h{display:flex;align-items:center;gap:8px;font-family:inherit;font-size:13px;font-weight:700;margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--te-border-subtle);}
+.te-wf-md>.te-wf-md-h:first-child{margin-top:0;padding-top:0;border-top:0;}
+.te-wf-md .te-wf-md-h[data-level="3"]{font-size:12.5px;margin:10px 0 6px;padding-top:0;border-top:0;}
 
 /* ============================================================================
    RESPONSIVE LAYER — phones and small tablets (iPhone 13 · iPhone 17 Pro).

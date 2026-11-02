@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { COLORS, FONT, chipShape, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
-import { STATUS, TONE, clock } from "@/lib/workflow/meta";
+import { COLORS, FONT, card, chipShape, codeBlock, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
+import { IC, STATUS, TONE, clock } from "@/lib/workflow/meta";
 import type { Inspector } from "@/lib/workflow/present";
 import type { LogLevel, LogLine, Section } from "@/lib/workflow/types";
 import { Badge, Ico, IconTile, MONO, StatusBadge } from "./parts";
@@ -45,7 +45,7 @@ const FILTERS: [LogFilter, string][] = [
 
 const LEVEL_COLOR: Record<LogLevel, string> = { INFO: "var(--te-text-dim)", WARN: "var(--te-warning)", ERROR: "var(--te-danger)" };
 
-const heading = { ...sectionCaption(), margin: "18px 0 6px", fontSize: FONT.xs } as const;
+const heading = { ...sectionCaption(), margin: "18px 0 6px", fontSize: FONT.xs, display: "flex", alignItems: "center", gap: 6 } as const;
 
 export default function NodeInspector(p: Props) {
   const [wide, setWide] = useState(false);
@@ -152,7 +152,10 @@ export default function NodeInspector(p: Props) {
             ) : null}
 
             <div style={{ display: "flex", alignItems: "center", marginTop: 16 }}>
-              <b style={{ ...sectionCaption(), flex: 1, fontSize: FONT.xs }}>Output</b>
+              <b style={{ ...sectionCaption(), flex: 1, fontSize: FONT.xs, display: "flex", alignItems: "center", gap: 6 }}>
+                <Ico d={IC.out} size={13} />
+                Output
+              </b>
               <button
                 type="button"
                 aria-pressed={p.json}
@@ -175,9 +178,25 @@ export default function NodeInspector(p: Props) {
           <Sections sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} />
         ) : null}
 
+        {isNode && ins.brief ? (
+          <details style={{ ...card({ padding: "0 12px", background: COLORS.panelBgDark, border: COLORS.borderSubtle }), marginTop: 12 }}>
+            <summary className="te-wf-tap" style={{ minHeight: 40, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
+              <IconTile d={IC.file} tone="indigo" size={24} iconSize={14} />
+              <span style={{ flex: 1 }}>Context received</span>
+              <span style={{ fontSize: FONT.xs, fontWeight: 400, color: COLORS.textMuted }}>the brief this agent started from</span>
+            </summary>
+            <pre className="te-scroll" style={{ ...codeBlock({ fontSize: FONT.xs }), margin: "0 0 12px", maxHeight: 420, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
+              {ins.brief}
+            </pre>
+          </details>
+        ) : null}
+
         {isNode ? (
           <>
-            <h3 style={heading}>Transitions</h3>
+            <h3 style={heading}>
+              <Ico d={IC.route} size={13} />
+              Transitions
+            </h3>
             <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
               {ins.transitions.map((t) => (
                 <li key={t.seq} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: FONT.sm }}>
@@ -191,7 +210,10 @@ export default function NodeInspector(p: Props) {
               {!ins.transitions.length ? <li style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Not reached in this run.</li> : null}
             </ul>
 
-            <h3 style={heading}>Activity log</h3>
+            <h3 style={heading}>
+              <Ico d={IC.terminal} size={13} />
+              Activity log
+            </h3>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
               {FILTERS.map(([k, label]) => (
                 <button

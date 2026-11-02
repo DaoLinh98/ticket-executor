@@ -3,6 +3,8 @@ export type Effects = "pure" | "local" | "external";
 export type Phase = "prepare" | "understand" | "build" | "verify" | "publish";
 
 export const END = "END";
+/** Artifact kind prefix for an agent step's brief: `brief:<stepId>`. */
+export const BRIEF_PREFIX = "brief:";
 export const FAIL = "FAIL";
 export const NEEDS_INPUT = "NEEDS_INPUT";
 export const NEEDS_REVIEW = "NEEDS_REVIEW";

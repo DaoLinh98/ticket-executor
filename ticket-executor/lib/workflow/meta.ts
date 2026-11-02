@@ -28,7 +28,34 @@ export const IC = {
   chat: "M4 5h16v11H9l-5 4z",
   book: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M5 17a3 3 0 0 1 3-3h11",
   pr: "M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M6 7v10 M6 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 17V9a3 3 0 0 0-3-3h-4 M13 3.5L10.5 6 13 8.5",
+  file: "M6 3h8l4 4v14H6z M14 3v4h4",
+  beaker: "M9 3h6 M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4a1.5 1.5 0 0 0 1.3-2L14 9V3 M7.5 15h9",
+  bulb: "M9 18h6 M10 21h4 M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z",
+  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M20 20l-4-4",
+  route: "M6 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M8 6h7a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7",
+  terminal: "M4 5h16v14H4z M7 9l3 3-3 3 M12 15h5",
+  commit: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M3 12h6 M15 12h6",
 } as const;
+
+/** Icon + tone for a heading an agent wrote in its markdown (`## Goal`, `## Steps`…), matched by keyword. */
+const HEADING_META: [RegExp, string, Tone][] = [
+  [/goal|objective|summary|overview|context/i, IC.target, "accent"],
+  [/acceptance|criteria|\bac\b/i, IC.check, "success"],
+  [/finding|analysis|investigat|root cause|cause/i, IC.search, "info"],
+  [/step|approach|implementation|change/i, IC.route, "indigo"],
+  [/test|verif|validat/i, IC.beaker, "info"],
+  [/risk|caveat|warning|concern|issue|blocker/i, IC.alert, "warning"],
+  [/file|scope|repo/i, IC.file, "muted"],
+  [/question|reply|answer|comment|thread/i, IC.chat, "indigo"],
+  [/decision|verdict|outcome|result/i, IC.flag, "success"],
+  [/lesson|note|knowledge/i, IC.bulb, "warning"],
+  [/command|run|build/i, IC.terminal, "muted"],
+];
+
+export function headingMeta(text: string): { icon: string; tone: Tone } {
+  const hit = HEADING_META.find(([re]) => re.test(text));
+  return hit ? { icon: hit[1], tone: hit[2] } : { icon: IC.list, tone: "muted" };
+}
 
 export const TONE: Record<Tone, { c: string; bg: string }> = {
   accent: { c: "var(--te-accent)", bg: "var(--te-accent-soft)" },

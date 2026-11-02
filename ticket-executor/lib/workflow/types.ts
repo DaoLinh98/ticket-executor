@@ -50,7 +50,14 @@ export type NodeOutput =
       questions: string[];
       delivery?: { status: "none" | "partial" | "done"; evidence: { ac: string; repo: string; proof: string }[] };
     }
-  | { node: "plan"; acMap: { ac: string; files: string[]; test: string }[]; repos: string[]; risks: string[]; planMd: string }
+  | {
+      node: "plan";
+      acMap: { ac: string; files: string[]; test: string }[];
+      repos: string[];
+      risks: string[];
+      decisions: { point: string; decision: string; why: string }[];
+      planMd: string;
+    }
   | { node: "planCheck" | "prePublish"; passed: boolean; issues: string[] }
   | {
       node: "implement" | "fix";
@@ -97,6 +104,8 @@ export type Step = {
   logFrom: number;
   logTo: number;
   input: Refusal[] | null;
+  /** The brief an agent step was started with — the only context a fresh turn has. "" for a check/harness step. */
+  brief?: string;
 };
 
 export type Transition = { seq: number; fromNode: string; toNode: string; reason: string; at: number };
@@ -169,17 +178,19 @@ export type ListItem = {
   text: string;
   textTone?: Tone;
   sub?: string;
+  /** The sub line is prose, not a path: no mono, no mid-word breaks. */
+  subPlain?: boolean;
   mono?: boolean;
 };
 
 export type Section =
-  | { kind: "kv"; title?: string; rows: { k: string; v: string; tone?: Tone; mono?: boolean }[] }
+  | { kind: "kv"; title?: string; icon?: string; tone?: Tone; rows: { k: string; v: string; tone?: Tone; mono?: boolean }[] }
   | { kind: "list"; title?: string; icon?: string; tone?: Tone; items: ListItem[] }
-  | { kind: "table"; title?: string; cols: string[]; rows: Cell[][] }
+  | { kind: "table"; title?: string; icon?: string; tone?: Tone; cols: string[]; rows: Cell[][] }
   | { kind: "md"; title?: string; icon?: string; tone?: Tone; text: string }
-  | { kind: "prs"; title?: string; prs: { repo: string; num: number; url: string; meta: string; draft: boolean }[] }
+  | { kind: "prs"; title?: string; icon?: string; tone?: Tone; prs: { repo: string; num: number; url: string; meta: string; draft: boolean }[] }
   | { kind: "copy"; questions: string[] }
-  | { kind: "bar"; title?: string; bars: { k: string; v: string; w: number; phase: PhaseKey }[] }
+  | { kind: "bar"; title?: string; icon?: string; tone?: Tone; bars: { k: string; v: string; w: number; phase: PhaseKey }[] }
   | {
       kind: "retry";
       title?: string;

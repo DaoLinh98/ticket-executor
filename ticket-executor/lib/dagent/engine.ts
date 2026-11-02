@@ -14,7 +14,7 @@ import { PLAN_FILE } from "./prompts";
 import { deliveryOf, knowledgeDiff } from "./rules";
 import { skillCatalog } from "./skills";
 import { closeStep, nextSeq, openStep, saveArtifact, saveRun, saveTransition } from "./store";
-import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo } from "./types";
+import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo } from "./types";
 
 type Live = {
   id: string;
@@ -85,11 +85,14 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   }
   const addDirs = companionDirs(live.ctx);
   live.logs.push({ t: Date.now(), lvl: "INFO", text: `▶ agent ${node.agent} · context fresh${addDirs.length ? ` · +${addDirs.length} related repo(s)` : ""}` });
+  const prompt = node.prompt(live.ctx);
+  // The brief is the only context a fresh turn gets — kept per step so /workflow shows what each agent was told.
+  await saveArtifact(live.id, `${BRIEF_PREFIX}${live.stepId}`, prompt).catch(() => null);
   const turn = await runAgentTurn({
     cwd: live.ctx.cwd,
     addDirs,
     agent: node.agent,
-    prompt: node.prompt(live.ctx),
+    prompt,
     schema: node.output,
     mcpConfigPath,
     model: live.model,

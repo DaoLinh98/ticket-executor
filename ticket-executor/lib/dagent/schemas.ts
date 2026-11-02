@@ -91,10 +91,26 @@ export const PLAN_OUTPUT = {
     },
     repos: { ...STRINGS, description: "Every repository the change touches, by the names the brief uses." },
     risks: STRINGS,
+    decisions: {
+      type: "array",
+      description:
+        "Judgement calls you made where the ticket leaves room and the readings would build different things — the reading you chose, stated with confidence. " +
+        "Most plans need none, a few need one or two. Never list details the code or the ticket already settles, never list alternatives, never ask.",
+      items: {
+        type: "object",
+        properties: {
+          point: { type: "string", description: "What the ticket leaves open, in a few words." },
+          decision: { type: "string", description: "The reading this plan builds, one sentence." },
+          why: { type: "string", description: "The evidence that makes it the right reading: the ticket, the code (path:line) or the product." },
+        },
+        required: ["point", "decision", "why"],
+        additionalProperties: false,
+      },
+    },
     planMd: { type: "string", description: "The full plan in Markdown, under 80 lines. The harness writes it to .te/plan.md." },
     blocked: BLOCKED,
   },
-  required: ["branch", "acMap", "repos", "risks", "planMd", "blocked"],
+  required: ["branch", "acMap", "repos", "risks", "decisions", "planMd", "blocked"],
   additionalProperties: false,
 } as const;
 

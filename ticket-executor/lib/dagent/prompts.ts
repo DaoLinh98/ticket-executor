@@ -83,6 +83,47 @@ export function branchOf(c: Ctx): string {
   return String(lastDelivery(c).branch ?? c.channels.plan?.branch ?? c.channels.qaTriage?.branch ?? c.channels.setup?.branch ?? "").trim();
 }
 
+// The approved plan as data (channels.plan, already checked by planIssues), so a role never depends on the planner
+// having copied it into planMd.
+function planContract(c: Ctx): string {
+  const p = c.channels.plan;
+  if (!p) return "";
+  const acMap = Array.isArray(p.acMap) ? (p.acMap as { ac?: string; files?: string[]; test?: string }[]) : [];
+  const risks = strings(p.risks);
+  const repos = strings(p.repos);
+  const lines: string[] = [];
+  if (acMap.length) {
+    lines.push(
+      "The approved plan maps each acceptance criterion to these files and this test:",
+      ...acMap.map((a, i) => `${i + 1}. ${a.ac ?? ""}\n   files: ${(a.files ?? []).join(", ")}\n   test: ${a.test ?? ""}`),
+    );
+  }
+  if (risks.length) lines.push("Risks the planner flagged — guard against each:", ...risks.map((r) => `- ${r}`));
+  const decided = decisionsOf(c);
+  if (decided.length) lines.push("Decisions the plan made where the ticket leaves room — build to these, do not reopen them:", ...decided);
+  if (repos.length) lines.push(`Repositories in scope: ${repos.join(", ")}`);
+  return lines.length ? `\n\n${lines.join("\n")}` : "";
+}
+
+function decisionsOf(c: Ctx): string[] {
+  const list = Array.isArray(c.channels.plan?.decisions) ? (c.channels.plan.decisions as { point?: string; decision?: string; why?: string }[]) : [];
+  return list.map((d, i) => `${i + 1}. ${d.point ?? ""} → ${d.decision ?? ""}${d.why ? ` (${d.why})` : ""}`);
+}
+
+// What the implementer (or the last fixer) says it did. The reviewer gets it as claims to check, never as evidence.
+function deliveryClaims(c: Ctx): string {
+  const d = lastDelivery(c);
+  const summary = String(d.summary ?? "").trim();
+  const deviations = Array.isArray(d.deviations) ? (d.deviations as { what?: string; why?: string }[]) : [];
+  if (!summary && !deviations.length) return "";
+  return (
+    `\n\nThe implementer's own account — claims to check against the diff, not facts. ` +
+    `A claim the diff does not bear out is a blocker only when it hides a real defect:` +
+    (summary ? `\nSummary: ${summary}` : "") +
+    (deviations.length ? `\nDeviations from the plan:\n${deviations.map((x, i) => `${i + 1}. ${x.what ?? ""} — ${x.why ?? ""}`).join("\n")}` : "")
+  );
+}
+
 const numbered = (list: Refusal[]) =>
   list.map((r, i) => `${i + 1}. [${r.source}]${r.file ? ` ${r.file} —` : ""} ${r.issue}`).join("\n");
 
@@ -114,7 +155,7 @@ export function planPrompt(c: Ctx): string {
 export function implementPrompt(c: Ctx): string {
   const branch = String(c.channels.plan?.branch ?? "").trim();
   return (
-    `${header(c)}\n\n${acceptance(c)}\n\n` +
+    `${header(c)}\n\n${acceptance(c)}${planContract(c)}\n\n` +
     `Implement \`${PLAN_FILE}\` on branch \`${branch}\` in every repository you change — create it where it does not exist yet, ` +
     `and when the working tree is already on it, build on the commits it carries. Commit locally. Do not push.`
   );
@@ -126,13 +167,17 @@ export function evaluatePrompt(c: Ctx): string {
   const note = again
     ? `\n\nThis is a re-review after a fix round.${prev.length ? ` The fix was asked to resolve:\n${numbered(prev)}` : ""}`
     : "";
+  const owned = decisionsOf(c).length
+    ? `\nThe plan's decisions are judgement calls it owns: raise a blocker only when the code does not follow one or one contradicts an ` +
+      `acceptance criterion — never for preferring another reasonable reading.`
+    : "";
   const warnings = warningsOf(c);
   const warned = warnings.length
     ? `\n\nThe harness raised these warnings. They are not blockers by themselves — raise one only when it is a real defect of this change:\n${numbered(warnings)}`
     : "";
   return (
-    `${header(c)}\n\n${acceptance(c)}\n\nBranch: ${branchOf(c)}. The plan is \`${PLAN_FILE}\`.\n` +
-    `Review the committed change: \`git diff <base commit>..HEAD\` in each repository listed above.${warned}${note}`
+    `${header(c)}\n\n${acceptance(c)}${planContract(c)}\n\nBranch: ${branchOf(c)}. The plan is \`${PLAN_FILE}\`.\n` +
+    `Review the committed change: \`git diff <base commit>..HEAD\` in each repository listed above.${owned}${warned}${deliveryClaims(c)}${note}`
   );
 }
 
@@ -147,7 +192,7 @@ export function fixInput(c: Ctx): Refusal[] {
 
 export function fixPrompt(c: Ctx): string {
   return (
-    `${header(c)}\n\n${acceptance(c)}\n\nBranch: ${branchOf(c)}. The plan is \`${PLAN_FILE}\`.\n\n` +
+    `${header(c)}\n\n${acceptance(c)}${planContract(c)}\n\nBranch: ${branchOf(c)}. The plan is \`${PLAN_FILE}\`.\n\n` +
     `Review blockers — fix exactly these, then commit locally on the same branch. Do not push.\n${numbered(fixInput(c))}`
   );
 }
@@ -239,5 +284,9 @@ export function publishPrompt(c: Ctx): string {
   const list = publishTargets(c)
     .map((t) => `- ${t.repo}: working tree \`${t.cwd}\`, branch \`${t.branch}\` → pull request into ${t.base ? `\`${t.base}\` (required by a skill)` : "the default branch"}`)
     .join("\n");
-  return `${header(c)}\n\nPublish these repositories (and only these):\n${list}\n\nReport one \`prs\` entry per repository above.`;
+  const decided = decisionsOf(c);
+  const decisions = decided.length
+    ? `\n\nList these under a "Decisions" heading in each pull request description, so reviewers and QA see the readings this change was built to:\n${decided.join("\n")}`
+    : "";
+  return `${header(c)}\n\nPublish these repositories (and only these):\n${list}${decisions}\n\nReport one \`prs\` entry per repository above.`;
 }

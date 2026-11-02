@@ -130,6 +130,7 @@ media query, so the phone layout lives in **one CSS block at the foot of
 | `te-diffview` | A diff's side padding drops to 12px — it wraps mid-word, so every pixel is a character. |
 | `te-modal-shell` / `te-modal-overlay` | Modals go full-screen, inset-padded. |
 | `te-flow` | Scope for the react-flow canvas: maps its `--xy-*` chrome onto the app's tokens (all widths). |
+| `te-wf-md` / `te-wf-md-h` | All widths: an agent's markdown output in the workflow inspector (`OutputMarkdown`, over `te-rich`) — compact type, each heading an icon row picked by `headingMeta()` (`lib/workflow/meta.ts`). |
 | `te-activity` | A step's activity feed takes a share of the viewport rather than a fixed 520px. |
 | `te-exec-hud` | The run summary strip tightens its gaps so its metrics wrap two per row. |
 | `te-picker-label` / `te-picker-short` | A picker's label truncates **in a header only** — the toolbar wraps instead. A picker given `shortLabel` swaps to it below the breakpoint. |

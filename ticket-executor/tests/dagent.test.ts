@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
 import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
-import { implementPrompt, publishPrompt, qaTriagePrompt, readinessPrompt } from "../lib/dagent/prompts";
+import { evaluatePrompt, fixPrompt, implementPrompt, publishPrompt, qaTriagePrompt, readinessPrompt } from "../lib/dagent/prompts";
 import { basesOf, bundleOf, deliveryOf, diffViolations, isPlanned, knowledgeDiff, planIssues, prNumber, skillFrontMatter, skillsOf, warningsOf } from "../lib/dagent/rules";
 import { companionNote } from "../lib/repoContext";
 import { readFileSync } from "fs";
@@ -11,7 +11,7 @@ import path from "path";
 import { BUNDLED_AGENTS } from "../lib/agentPack";
 import { BUNDLED_SKILLS, readVersion } from "../lib/skillPack";
 import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, TERMINALS, ZERO_USAGE, type Ctx, type NodeResult } from "../lib/dagent/types";
-import { outputOf } from "../lib/dagent/view";
+import { buildView, outputOf } from "../lib/dagent/view";
 
 const ctx = (channels: Ctx["channels"] = {}, visits: Ctx["visits"] = {}): Ctx => ({
   runId: "r1",
@@ -331,4 +331,76 @@ test("picked skills and their base branch reach every later brief and the publis
   assert.match(publishPrompt(c), /pull request into `feature\/dotnet-10-upgrade`/);
   assert.match(publishPrompt(ctx({ diffGuard: c.channels.diffGuard })), /pull request into the default branch/);
   assert.doesNotMatch(implementPrompt(ctx({ plan: { branch: "b" } })), /Skills that apply/);
+});
+
+test("implement, fix and evaluate briefs carry the plan's AC map, risks and scope as data", () => {
+  const plan = {
+    branch: "feature/x",
+    acMap: [{ ac: "Y axis spans 0%..100%", files: ["chart1.xml", "Helper.cs"], test: "HelperTests.AxisRange" }],
+    risks: ["Templates are read from Blob Storage"],
+    repos: ["ReportingService"],
+  };
+  const c = ctx({ plan, implement: { summary: "s", deviations: [] } });
+  for (const brief of [implementPrompt(c), fixPrompt(c), evaluatePrompt(c)]) {
+    assert.match(brief, /1\. Y axis spans 0%\.\.100%\n   files: chart1\.xml, Helper\.cs\n   test: HelperTests\.AxisRange/);
+    assert.match(brief, /- Templates are read from Blob Storage/);
+    assert.match(brief, /Repositories in scope: ReportingService/);
+  }
+  assert.doesNotMatch(implementPrompt(ctx({})), /approved plan maps/);
+});
+
+test("evaluate gets the last delivery's summary and deviations as claims, not facts", () => {
+  const implement = { summary: "Scaled the axis.", deviations: [{ what: "AC2 left out", why: "static layout" }] };
+  const brief = evaluatePrompt(ctx({ implement }));
+  assert.match(brief, /claims to check against the diff, not facts/);
+  assert.match(brief, /Summary: Scaled the axis\./);
+  assert.match(brief, /1\. AC2 left out — static layout/);
+  // After a fix round the fixer's account replaces the implementer's.
+  assert.match(evaluatePrompt(ctx({ implement, fix: { summary: "Fixed the label.", deviations: [] } })), /Summary: Fixed the label\./);
+  assert.doesNotMatch(evaluatePrompt(ctx({})), /claims to check/);
+});
+
+test("buildView attaches each step's brief from its brief:<stepId> artifact", () => {
+  const at = new Date(0);
+  const row = { id: "r1", ticketId: "1", ticketUrl: "", ticketTitle: "", provider: "azure-devops", project: "p", rootRepo: "/r", graphId: GRAPH.id, state: "succeeded", waitReason: "", currentNodeId: "END", errorMessage: "", gates: [], retryOfId: "", entryNode: "", prUrl: "", startedAt: at, endedAt: at };
+  const step = (id: string, nodeId: string) => ({ id, nodeId, attempt: 1, status: "succeeded", input: null, output: {}, errorMessage: "", logLines: [], costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0, startedAt: at, endedAt: at });
+  const view = buildView(row, [step("s1", "setup"), step("s2", "plan")], [], [{ kind: "brief:s2", body: "plan brief", createdAt: at }, { kind: "plan", body: "# P", createdAt: at }], null);
+  assert.deepEqual(view.run.steps.map((s) => s.brief), ["", "plan brief"]);
+});
+
+test("the plan's decisions reach implement, fix, evaluate and the PR description; the reviewer may not reopen them", () => {
+  const decisions = [{ point: "Do the 100%..30% labels move too", decision: "Yes, re-lay them out to 0%..100%", why: "they are static text boxes, word/document.xml" }];
+  const c = ctx({
+    plan: { branch: "feature/x", acMap: [{ ac: "a", files: ["f"], test: "t" }], decisions },
+    diffGuard: { changed: [{ repo: "billing-api", branch: "feature/x" }] },
+  });
+  const line = /1\. Do the 100%\.\.30% labels move too → Yes, re-lay them out to 0%\.\.100% \(they are static text boxes, word\/document\.xml\)/;
+  for (const brief of [implementPrompt(c), fixPrompt(c), evaluatePrompt(c)]) {
+    assert.match(brief, /build to these, do not reopen them/);
+    assert.match(brief, line);
+  }
+  assert.match(evaluatePrompt(c), /never for preferring another reasonable reading/);
+  assert.match(publishPrompt(c), /under a "Decisions" heading/);
+  assert.match(publishPrompt(c), line);
+  // No decisions: no extra lines anywhere.
+  const bare = ctx({ plan: { branch: "feature/x" }, diffGuard: c.channels.diffGuard });
+  assert.doesNotMatch(evaluatePrompt(bare), /judgement calls/);
+  assert.doesNotMatch(publishPrompt(bare), /Decisions/);
+});
+
+test("planIssues refuses a decision that does not state both the point and the reading", () => {
+  const plan = { branch: "b", acMap: [{ ac: "a", files: ["f"], test: "t" }], repos: [] };
+  assert.deepEqual(planIssues(["a"], { ...plan, decisions: [{ point: "unit", decision: "percent", why: "" }] }, [], true), []);
+  assert.deepEqual(planIssues(["a"], { ...plan, decisions: [{ point: "unit", decision: " " }] }, [], true), [
+    "Decision 1 does not state both the open point and the reading chosen.",
+  ]);
+  assert.deepEqual(planIssues(["a"], plan, [], true), []);
+});
+
+test("outputOf maps the plan's decisions, and an older plan without them reads as none", () => {
+  const d = { point: "p", decision: "d", why: "w" };
+  const out = outputOf("plan", { acMap: [], repos: [], risks: [], decisions: [d] }, 1, "");
+  assert.deepEqual(out && out.node === "plan" ? out.decisions : null, [d]);
+  const old = outputOf("plan", { acMap: [], repos: [], risks: [] }, 1, "");
+  assert.deepEqual(old && old.node === "plan" ? old.decisions : null, []);
 });
