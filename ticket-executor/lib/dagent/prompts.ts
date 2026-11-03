@@ -149,7 +149,11 @@ export function planPrompt(c: Ctx): string {
   const prev = c.channels.planCheck;
   const issues = prev && prev.passed === false ? strings(prev.issues) : [];
   const retry = issues.length ? `\n\nThe previous plan was refused by the plan check:\n${issues.map((x, i) => `${i + 1}. ${x}`).join("\n")}\nFix exactly these.` : "";
-  return `${header(c)}\n\n${acceptance(c)}${delivered(c)}\n\nReturn the implementation plan in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files.${retry}`;
+  const assumed = strings(c.channels.readiness?.ambiguities);
+  const assumptions = assumed.length
+    ? `\n\nReadiness settled these open readings by assumption — treat them as decided and record each in \`decisions\`:\n${assumed.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+    : "";
+  return `${header(c)}\n\n${acceptance(c)}${delivered(c)}${assumptions}\n\nReturn the implementation plan in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`. Do not write files.${retry}`;
 }
 
 export function implementPrompt(c: Ctx): string {

@@ -38,8 +38,8 @@ export const READINESS_OUTPUT = {
     ready: { type: "boolean" },
     acceptanceCriteria: { ...STRINGS, description: "The ticket's stated acceptance criteria, one per entry in its order — never items from the description. Only when it states none: criteria derived from the description, each prefixed '(derived)'." },
     missing: { ...STRINGS, description: "Information the ticket lacks. Empty when ready." },
-    ambiguities: { ...STRINGS, description: "Requirements with materially different readings. Empty when ready." },
-    questions: { ...STRINGS, description: "Questions for the Product Owner. Empty when ready." },
+    ambiguities: { ...STRINGS, description: "Requirements with materially different readings. When ready, each one you settled by assumption, as '<point> — assumed <choice>: <why>'." },
+    questions: { ...STRINGS, description: "At most 3 questions for the Product Owner, only for what blocks the work and has no safe default. Empty when ready." },
     delivery: {
       type: "object",
       description: "Whether the acceptance criteria are already on the base commits named in the brief.",
