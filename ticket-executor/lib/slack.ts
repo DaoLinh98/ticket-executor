@@ -112,7 +112,7 @@ export async function sendReportToSlack(text: string): Promise<void> {
     ];
 
     const lines = await new Promise<string[]>((resolve, reject) => {
-      const child = spawn(CLAUDE_BIN, args, { cwd: tmpdir(), env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(CLAUDE_BIN, args, { cwd: tmpdir(), env: { ...process.env, ENABLE_TOOL_SEARCH: "false" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
       const timer = setTimeout(() => {
         child.kill();
         reject(new Error("Timed out waiting for Claude to post to Slack."));

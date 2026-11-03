@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { reveal } from "../../Motion";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -14,6 +14,7 @@ import {
   card,
   codeBlock,
   ctaButtonStyle,
+  dropdownPanelStyle,
   fieldInput,
   pill,
   sectionCaption,
@@ -158,7 +159,54 @@ export default function ReportPage() {
     };
   }, [reportQuery.refetch]);
 
-  const tickets = data?.tickets ?? [];
+  const assigned = data?.tickets ?? [];
+  const manual = draft.manual ?? [];
+  const manualIds = new Set(manual.map((t) => t.id));
+  const tickets = useMemo(() => {
+    const have = new Set(assigned.map((t) => t.id));
+    const hidden = new Set(draft.hidden ?? []);
+    return [...assigned, ...manual.filter((t) => !have.has(t.id))].filter((t) => !hidden.has(t.id));
+  }, [assigned, manual, draft.hidden]);
+
+  const [query, setQuery] = useState("");
+  const [settledNeedle, setSettledNeedle] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchTerm = query.trim().replace(/^#/, "");
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledNeedle(searchTerm), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+  const searchQuery = useQuery({
+    queryKey: ["ticket-search", settledNeedle],
+    queryFn: ({ signal }): Promise<Ticket[]> =>
+      fetch("/api/tickets/search?q=" + encodeURIComponent(settledNeedle), { signal })
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d.tickets) ? d.tickets : [])),
+    enabled: !!settledNeedle,
+    placeholderData: keepPreviousData,
+    staleTime: 30000,
+  });
+  const listed = new Set(tickets.map((t) => t.id));
+  const addable = searchTerm ? (searchQuery.data ?? []).filter((t) => !listed.has(t.id)) : [];
+  const searching = !!searchTerm && (searchTerm !== settledNeedle || searchQuery.isFetching);
+
+  const addManual = (t: Ticket) => {
+    setDraft((d) => ({
+      ...d,
+      manual: [...(d.manual ?? []), t],
+      entries: { ...d.entries, [t.id]: { ...(d.entries[t.id] ?? defaultEntry(t)), today: true } },
+    }));
+    setQuery("");
+  };
+  // A manual ticket is dropped outright; an assigned one is hidden, since the
+  // server returns it again on every load.
+  const removeTicket = (id: string) =>
+    setDraft((d) => {
+      const { [id]: _, ...entries } = d.entries;
+      return manualIds.has(id)
+        ? { ...d, manual: (d.manual ?? []).filter((t) => t.id !== id), entries }
+        : { ...d, hidden: [...(d.hidden ?? []), id], entries };
+    });
   const handedOff = new Set(data?.handedOff ?? []);
   // An untouched ticket has no stored entry — its defaults are computed here
   // rather than written into the draft, so nothing is persisted until something
@@ -240,6 +288,44 @@ export default function ReportPage() {
           aria-label="Reported by"
           style={{ ...fieldInput({ height: "32px" }), width: "clamp(150px, 45vw, 210px)" }}
         />
+        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: "340px", minWidth: "150px" }}>
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+            placeholder="Search ticket by ID or title"
+            aria-label="Search tickets by ID or title"
+            autoComplete="off"
+            spellCheck={false}
+            style={{ ...fieldInput({ height: "32px" }), width: "100%", boxSizing: "border-box" }}
+          />
+          {searchOpen && searchTerm && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              {addable.length === 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 10px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                  {searching ? <><LoadingRing size={14} /> Searching all projects…</> : "No other ticket matches."}
+                </div>
+              ) : addable.map((t) => (
+                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 6px 0 10px" }}>
+                  <span title={`#${t.id} · ${t.title}`} style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    #{t.id} · {t.title}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Add #${t.id} to the report`}
+                    title="Add to report"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { fireBoltFromEvent(e); addManual(t); }}
+                    style={{ flex: "0 0 auto", width: "40px", height: "40px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.accent, cursor: "pointer" }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M12 5v14M5 12h14" /></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
@@ -295,7 +381,18 @@ export default function ReportPage() {
                     return (
                       <motion.div key={t.id} {...reveal({ index: i })} style={{ ...card({ padding: "11px 13px" }), display: "flex", flexDirection: "column", gap: "9px", opacity: isListed(e) ? 1 : 0.72 }}>
                         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "5px" }}>
-                          <span style={{ fontSize: FONT.md, fontWeight: 600, color: COLORS.text, lineHeight: 1.45, overflowWrap: "anywhere" }}>{ticketLine(t)}</span>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: FONT.md, fontWeight: 600, color: COLORS.text, lineHeight: 1.45, overflowWrap: "anywhere" }}>{ticketLine(t)}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeTicket(t.id)}
+                              title="Remove from report"
+                              aria-label={`Remove #${t.id} from the report`}
+                              style={{ flex: "0 0 auto", width: "28px", height: "28px", marginTop: "-3px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", color: COLORS.textDim, cursor: "pointer" }}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5" /></svg>
+                            </button>
+                          </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
                             <span style={typeBadge(t.type)}>{t.type}</span>
                             <span style={statusPill(t.status)}>{t.boardColumn || t.status}</span>
@@ -306,6 +403,7 @@ export default function ReportPage() {
                                 which is a team or a component, not the project. */}
                             {projectOf(t) && <span style={pill({ color: COLORS.textDim, size: "xs" })}>{projectOf(t)}</span>}
                             {handedOff.has(t.id) && <span style={pill({ color: COLORS.warning, size: "xs" })}>→ {t.assignee || "Unassigned"}</span>}
+                            {manualIds.has(t.id) && <span style={pill({ color: COLORS.textDim, size: "xs" })}>Added manually</span>}
                           </div>
                         </div>
 

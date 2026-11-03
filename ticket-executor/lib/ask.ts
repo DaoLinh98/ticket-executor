@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import { stripAnsi } from "./execution/format";
+import { CLAUDE_BIN } from "./execution/claudeCli";
+import { firstClaudeAccount } from "./claudeAccounts";
 
 /** Ad-hoc Claude sessions — "open a terminal and ask something", reachable from
  *  a phone.
@@ -155,7 +157,9 @@ export function cancelAsk(ticketId: string): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-export function startAsk(input: { ticketId: string; rootRepo: string; prompt: string; model?: string; effort?: string }): { ok: boolean; error?: string } {
+export async function startAsk(input: { ticketId: string; rootRepo: string; prompt: string; model?: string; effort?: string }): Promise<{ ok: boolean; error?: string }> {
+  // Resolved before any session state is touched, so the checks below stay one synchronous step.
+  const account = await firstClaudeAccount();
   const prompt = input.prompt.trim();
   if (!prompt) return { ok: false, error: "Type a prompt first." };
 
@@ -187,9 +191,9 @@ export function startAsk(input: { ticketId: string; rootRepo: string; prompt: st
 
   let child: ChildProcess;
   try {
-    child = spawn("claude", claudeArgs(prompt, session.sessionId, input.model ?? "", input.effort ?? ""), {
+    child = spawn(CLAUDE_BIN, claudeArgs(prompt, session.sessionId, input.model ?? "", input.effort ?? ""), {
       cwd: session.rootRepo,
-      env: { ...process.env, ...sandboxEnv() },
+      env: { ...process.env, ...sandboxEnv(), ...account.env },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -1,3 +1,4 @@
+import { trackerStages, type TrackerFacts } from "../ticketLifecycle";
 import { STAGES } from "../workflow/meta";
 import type {
   FlowNodeDef,
@@ -187,7 +188,7 @@ function runState(row: RunRow): RunState {
 
 const last = <T>(list: T[]) => list[list.length - 1];
 
-export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live): Omit<RunView, "newest"> {
+export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live, tracker: TrackerFacts | null = null): Omit<RunView, "newest"> {
   const graph = graphById(row.graphId) ?? GRAPH;
   const flow = FLOW_LABEL[flowOf(graph.id)];
   const defs = flowDefs(graph);
@@ -198,6 +199,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
   const steps: Step[] = stepRows.map((s, i) => {
     const entries = live && live.stepId === s.id && s.status === "running" ? live.logs : arr<LogEntry>(s.logLines);
     const from = logs.length;
+    const picked = entries.map((e) => /^model (\S+)(?: · effort (\S+))?$/.exec(e.text)).find(Boolean);
     entries.forEach((e) => logs.push({ ts: e.t, lvl: e.lvl, node: s.nodeId, text: e.text, attempt: s.attempt }));
     return {
       id: s.id || `st${i}`,
@@ -217,6 +219,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
       logTo: Math.max(from, logs.length - 1),
       input: s.input ? refusals(s.input) : null,
       brief: briefs.get(s.id) ?? "",
+      ...(picked ? { model: picked[1], ...(picked[2] ? { effort: picked[2] } : {}) } : {}),
     };
   });
 
@@ -273,7 +276,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
         : null,
     logs,
   };
-  return { run, gates, lifecycle: lifecycleOf(row, steps, flow), ticket: ticketOf(row), retryEntries: graph.retryEntries, retryOf: row.retryOfId, planMd };
+  return { run, gates, lifecycle: lifecycleOf(row, steps, flow, tracker), ticket: ticketOf(row), retryEntries: graph.retryEntries, retryOf: row.retryOfId, planMd };
 }
 
 function ticketOf(row: RunRow): TicketView {
@@ -282,7 +285,7 @@ function ticketOf(row: RunRow): TicketView {
 
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
-function lifecycleOf(row: RunRow, steps: Step[], flow: string): LifecycleStage[] {
+function lifecycleOf(row: RunRow, steps: Step[], flow: string, tracker: TrackerFacts | null): LifecycleStage[] {
   const at = (s?: Step) => (s ? day(s.endedAt ?? s.startedAt) : "");
   const ready = last(steps.filter((s) => s.nodeId === "readiness"));
   const pub = last(steps.filter((s) => s.nodeId === "publish"));
@@ -308,6 +311,21 @@ function lifecycleOf(row: RunRow, steps: Step[], flow: string): LifecycleStage[]
   if (flow === "implement" && row.state === "succeeded" && !pub && ready?.output?.node === "readiness" && ready.output.delivery?.status === "done") {
     m.implement = { ...m.implement, status: "skipped", detail: "Nothing to implement" };
     m.pr = { status: "skipped", at: "", detail: "No PR needed" };
+  }
+  if (tracker) {
+    // The bar is the ticket's: the tracker's work item status and PR decide each stage. Only a run still
+    // in flight (active) or stopped (blocked) on a stage outranks it.
+    for (const [id, t] of Object.entries(trackerStages(tracker))) {
+      const r = m[id];
+      if (r?.status === "active" || r?.status === "blocked") continue;
+      m[id] = r?.status === "done" && t.status === "done" ? r : { ...r, ...t, at: "" };
+    }
+  } else if (flow === "fix-review" || flow === "fix-qa") {
+    // No tracker to ask: a review-fix / QA-fix run only exists once the ticket got that far, so every earlier stage was passed.
+    const own = STAGES.findIndex(([id]) => id === (flow === "fix-review" ? "review" : "qa"));
+    STAGES.slice(0, own).forEach(([id]) => {
+      m[id] ??= { status: "done", detail: "Passed earlier" };
+    });
   }
   return STAGES.map(([id, label]) => ({ id, label, status: "todo", at: "", detail: "", runs: [], ...(m[id] ?? {}) }));
 }

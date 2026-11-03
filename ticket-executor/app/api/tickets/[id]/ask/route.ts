@@ -30,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!repo.ok) return NextResponse.json({ error: repo.error }, { status: 400 });
 
   // Returns as soon as the CLI is spawned; the answer arrives over the stream.
-  const started = startAsk({ ticketId: id, rootRepo, prompt, model, effort });
+  const started = await startAsk({ ticketId: id, rootRepo, prompt, model, effort });
   if (!started.ok) return NextResponse.json({ error: started.error }, { status: 409 });
 
   return jsonNoStore({ ok: true });

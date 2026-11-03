@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import { CLAUDE_BIN } from "./execution/claudeCli";
 
 /** Open an OS terminal in `rootRepo` with the Claude CLI already running in it.
  *
@@ -24,16 +25,16 @@ function unsafePath(p: string): boolean {
 function candidates(p: string): Candidate[] {
   if (process.platform === "win32")
     return [
-      { cmd: "wt.exe", args: ["-d", p, "cmd", "/k", "claude"] },
-      { cmd: "cmd.exe", args: ["/c", "start", "", "cmd", "/k", "claude"] },
+      { cmd: "wt.exe", args: ["-d", p, "cmd", "/k", CLAUDE_BIN] },
+      { cmd: "cmd.exe", args: ["/c", "start", "", "cmd", "/k", CLAUDE_BIN] },
     ];
   if (process.platform === "darwin")
-    return [{ cmd: "osascript", args: ["-e", `tell application "Terminal" to do script "cd '${p}' && claude"`, "-e", 'tell application "Terminal" to activate'] }];
+    return [{ cmd: "osascript", args: ["-e", `tell application "Terminal" to do script "cd '${p}' && '${CLAUDE_BIN}'"`, "-e", 'tell application "Terminal" to activate'] }];
   return [
-    { cmd: "x-terminal-emulator", args: ["-e", "claude"] },
-    { cmd: "gnome-terminal", args: ["--", "claude"] },
-    { cmd: "konsole", args: ["-e", "claude"] },
-    { cmd: "xterm", args: ["-e", "claude"] },
+    { cmd: "x-terminal-emulator", args: ["-e", CLAUDE_BIN] },
+    { cmd: "gnome-terminal", args: ["--", CLAUDE_BIN] },
+    { cmd: "konsole", args: ["-e", CLAUDE_BIN] },
+    { cmd: "xterm", args: ["-e", CLAUDE_BIN] },
   ];
 }
 
@@ -63,6 +64,8 @@ export async function openTerminalAt(rootRepo: string): Promise<TerminalResult> 
   const p = rootRepo.trim();
   if (process.platform === "darwin" && unsafePath(p))
     return { ok: false, error: `Cannot open a terminal at ${p}: the path contains a character macOS cannot be asked for safely.` };
+  if (process.platform === "darwin" && unsafePath(CLAUDE_BIN))
+    return { ok: false, error: `Cannot open a terminal: CLAUDE_BIN (${CLAUDE_BIN}) contains a character macOS cannot be asked for safely.` };
   for (const c of candidates(p)) {
     if (await trySpawn(c, p)) return { ok: true };
   }
@@ -70,6 +73,6 @@ export async function openTerminalAt(rootRepo: string): Promise<TerminalResult> 
     ok: false,
     error: process.platform === "win32"
       ? "No terminal could be launched. Windows Terminal (wt.exe) and cmd.exe were both unavailable."
-      : `No terminal emulator was found on this machine. Open one yourself and run: cd ${p} && claude`,
+      : `No terminal emulator was found on this machine. Open one yourself and run: cd ${p} && ${CLAUDE_BIN}`,
   };
 }

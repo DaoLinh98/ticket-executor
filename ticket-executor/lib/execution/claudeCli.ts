@@ -334,8 +334,19 @@ function sandboxEnv(): Record<string, string> {
   return asRoot ? { IS_SANDBOX: "1" } : {};
 }
 
-/** Run one Claude turn; resolves when the process closes. */
-export function runTurn(live: TurnLive, args: string[]): Promise<TurnResult> {
+/** Run one Claude turn; resolves when the process closes. Out of quota or a
+ *  rejected token re-runs it on the next Claude account (`lib/claudeAccounts.ts`);
+ *  `limitResetAt` is therefore set only when the last account is spent too. */
+export async function runTurn(live: TurnLive, args: string[]): Promise<TurnResult> {
+  // Imported lazily: claudeAccounts → claudeAuth imports this module.
+  const { runWithClaudeAccounts } = await import("../claudeAccounts");
+  return runWithClaudeAccounts(
+    (account) => runTurnAs(live, args, account.env),
+    (text, warn) => live.logLines.push({ text, kind: warn ? "err" : "muted" }),
+  );
+}
+
+function runTurnAs(live: TurnLive, args: string[], accountEnv: Record<string, string>): Promise<TurnResult> {
   return new Promise((resolve) => {
     const out: TurnResult = {
       ok: false, structured: null, text: "", error: "", usage: { ...ZERO_USAGE }, sessionId: "", limitResetAt: null,
@@ -349,7 +360,7 @@ export function runTurn(live: TurnLive, args: string[]): Promise<TurnResult> {
     try {
       child = spawn(CLAUDE_BIN, args, {
         cwd: live.cwd,
-        env: { ...process.env, ...sandboxEnv() },
+        env: { ...process.env, ...sandboxEnv(), ...accountEnv },
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       });

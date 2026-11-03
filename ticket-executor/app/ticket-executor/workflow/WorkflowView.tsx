@@ -79,7 +79,7 @@ const INITIAL: Ui = {
   retryFrom: null,
   copied: false,
   fixOpen: false,
-  lcOpen: false,
+  lcOpen: true,
   hudOpen: false,
   mLcOpen: false,
   allPaths: false,

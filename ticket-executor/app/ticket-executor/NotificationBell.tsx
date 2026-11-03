@@ -57,6 +57,9 @@ const KIND_LABEL: Record<NotificationKind, string> = {
   "ticket.qa-failed": "QA FAILED",
   "ticket.qa-reply-ready": "QC FOLLOW-UP",
   "report.unsent": "REPORT",
+  "claude.credential-rejected": "CLAUDE TOKEN",
+  "claude.credential-expiring": "CLAUDE TOKEN",
+  "claude.credential-expired": "CLAUDE TOKEN",
 };
 
 type Filter = "action" | "all";

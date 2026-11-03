@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ProviderId } from "@/lib/providers";
 import type { PreflightResult } from "@/lib/preflight";
 import type { ClaudeModel } from "@/lib/claudeOptions";
+import type { ClaudeCredentialView } from "@/lib/claudeAccounts";
 import type { HistoryFilter, HistoryPage } from "@/lib/dagent/historyShape";
 import type { InsightsPayload, InsightsPeriod } from "@/lib/dagent/insights";
 
@@ -76,6 +77,20 @@ export const useClaudeModels = () =>
     },
     staleTime: 600_000,
   });
+
+// Settings → Claude: the saved Claude accounts, in the order runs try them. Status (limited / rejected) changes
+// while runs go on, so it is refetched on every visit.
+export const CLAUDE_CREDENTIALS_KEY = ["claude-credentials"] as const;
+
+export const fetchClaudeCredentials = async (): Promise<{ credentials: ClaudeCredentialView[] }> => {
+  const r = await fetch("/api/claude-credentials", { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(d?.credentials)) throw new Error(d?.error || "Could not read the Claude credentials.");
+  return d;
+};
+
+export const useClaudeCredentials = () =>
+  useQuery({ queryKey: CLAUDE_CREDENTIALS_KEY, queryFn: fetchClaudeCredentials, staleTime: 0 });
 
 // Run History: every D-Agent run, newest first, one numbered page per fetch. The prefix is swept by the run-list stream.
 export const RUN_HISTORY_PREFIX = ["dagent", "history"] as const;

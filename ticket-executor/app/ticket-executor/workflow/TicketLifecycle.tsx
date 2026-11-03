@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { COLORS, FONT, chipShape } from "@/lib/ui";
 import { IC, STAGE_STATUS, TONE, usd } from "@/lib/workflow/meta";
 import type { LifecycleStage, RunChip, Tone } from "@/lib/workflow/types";
@@ -19,11 +20,15 @@ type Props = {
 const chipTone = (state: string): Tone =>
   ({ running: "accent", preparing: "accent", waiting: "warning", succeeded: "success", failed: "danger" } as Record<string, Tone>)[state] ?? "muted";
 
-function StageIcon({ stage, size = 22 }: { stage: LifecycleStage; size?: number }) {
+function StageIcon({ stage, size = 22, i = 0 }: { stage: LifecycleStage; size?: number; i?: number }) {
   const m = STAGE_STATUS[stage.status];
+  const done = stage.status === "done";
   return (
-    <span style={{ ...chipShape(6), flex: "0 0 auto", width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center", background: TONE[m.tone].bg, color: TONE[m.tone].c }}>
-      <Ico d={m.icon} size={13} sw={2.2} />
+    <span className="te-lc-tick" data-done={done ? "" : undefined} style={{ "--i": i } as CSSProperties}>
+      <span style={{ ...chipShape(6), flex: "0 0 auto", width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center", background: TONE[m.tone].bg, color: TONE[m.tone].c }}>
+        <Ico d={m.icon} size={13} sw={2.2} />
+      </span>
+      {done ? <i aria-hidden="true" className="te-lc-spark" /> : null}
     </span>
   );
 }
@@ -95,12 +100,12 @@ export default function TicketLifecycle({ stages, runKey, open, onToggle, mobile
           <ol style={{ listStyle: "none", margin: 0, padding: "0 16px 10px", display: "grid", gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))`, minHeight: 108 }}>
             {stages.map((s, i) => {
               const m = STAGE_STATUS[s.status];
-              const lineDone = i < stages.length - 1 && s.status === "done";
+              const lineDone = s.status === "done";
               return (
                 <li key={s.id} style={{ position: "relative", minWidth: 0, paddingRight: 12 }}>
-                  <span aria-hidden="true" style={{ position: "absolute", left: 26, right: 0, top: 11, height: 2, background: lineDone ? COLORS.success : COLORS.border }} />
+                  <span aria-hidden="true" className="te-lc-line" data-done={lineDone ? "" : undefined} style={{ position: "absolute", left: 26, right: 0, top: 11, height: 2, background: lineDone ? COLORS.success : COLORS.border, "--i": i } as CSSProperties} />
                   <span style={{ position: "relative", display: "flex", alignItems: "center", gap: 6 }}>
-                    <StageIcon stage={s} />
+                    <StageIcon stage={s} i={i} />
                     <span style={{ fontSize: FONT.sm, fontWeight: 600, whiteSpace: "nowrap", background: COLORS.panelBg, paddingRight: 6 }}>{s.label}</span>
                   </span>
                   <span style={{ display: "block", marginTop: 5, fontSize: FONT.xs, color: COLORS.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -143,8 +148,8 @@ export default function TicketLifecycle({ stages, runKey, open, onToggle, mobile
                 return (
                   <li key={s.id} style={{ display: "flex", gap: 10, minHeight: 44 }}>
                     <span style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                      <StageIcon stage={s} />
-                      <span aria-hidden="true" style={{ flex: 1, width: 2, minHeight: 10, background: i < stages.length - 1 && s.status === "done" ? COLORS.success : COLORS.border }} />
+                      <StageIcon stage={s} i={i} />
+                      <span aria-hidden="true" className="te-lc-line te-lc-line-v" data-done={i < stages.length - 1 && s.status === "done" ? "" : undefined} style={{ flex: 1, width: 2, minHeight: 10, background: i < stages.length - 1 && s.status === "done" ? COLORS.success : COLORS.border, "--i": i } as CSSProperties} />
                     </span>
                     <span style={{ flex: 1, minWidth: 0, paddingBottom: 10 }}>
                       <span style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>

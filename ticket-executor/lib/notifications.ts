@@ -33,7 +33,10 @@ export type NotificationKind =
   | "ticket.ready-for-qa"
   | "ticket.qa-failed"
   | "ticket.qa-reply-ready"
-  | "report.unsent";
+  | "report.unsent"
+  | "claude.credential-rejected"
+  | "claude.credential-expiring"
+  | "claude.credential-expired";
 
 /** `action` means the developer has to do something; `info` is a record of
  *  something the app did on their behalf. It splits the panel into its two
@@ -538,6 +541,43 @@ export function fromLifecycle(rows: LifecycleSource[]): AppNotification[] {
   });
 }
 
+/** A saved Claude credential (Settings → Claude), as the bell needs it. */
+export type ClaudeCredentialSource = {
+  id: string;
+  label: string;
+  expiresAt: string | null;
+  invalidAt: string | null;
+};
+
+/** How long before a known expiry the bell starts asking for a new token. */
+export const CLAUDE_EXPIRY_WARNING_MS = 3 * 24 * 60 * 60_000;
+
+/** A Claude credential the developer has to replace: the CLI rejected it, it has
+ *  expired, or it expires within `CLAUDE_EXPIRY_WARNING_MS`. */
+export function fromClaudeCredentials(rows: ClaudeCredentialSource[], now = new Date()): AppNotification[] {
+  return rows.flatMap((c): AppNotification[] => {
+    const base = { ticketId: "", refId: c.id, severity: "action" as const, tab: "overview" as const, href: "/settings?tab=claude" };
+    if (c.invalidAt) {
+      return [{ ...base, kind: "claude.credential-rejected", summary: `Claude credential "${c.label}" was rejected — update its token in Settings → Claude`, at: c.invalidAt, fingerprint: `rejected::${c.invalidAt}` }];
+    }
+    if (!c.expiresAt) return [];
+    const left = Date.parse(c.expiresAt) - now.getTime();
+    if (left <= 0) {
+      return [{ ...base, kind: "claude.credential-expired", summary: `Claude credential "${c.label}" has expired — update its token in Settings → Claude`, at: c.expiresAt, fingerprint: `expired::${c.expiresAt}` }];
+    }
+    if (left <= CLAUDE_EXPIRY_WARNING_MS) {
+      return [{
+        ...base,
+        kind: "claude.credential-expiring",
+        summary: `Claude credential "${c.label}" expires ${new Date(c.expiresAt).toLocaleString()} — update its token in Settings → Claude`,
+        at: new Date(Date.parse(c.expiresAt) - CLAUDE_EXPIRY_WARNING_MS).toISOString(),
+        fingerprint: `expiring::${c.expiresAt}`,
+      }];
+    }
+    return [];
+  });
+}
+
 /** Every source merged into the one list the bell renders. */
 export function buildNotifications(sources: {
   reviews?: ReviewSource[];
@@ -546,6 +586,7 @@ export function buildNotifications(sources: {
   automation?: AutomationSource[];
   reportReminder?: ReportReminderSource | null;
   lifecycle?: LifecycleSource[];
+  claude?: ClaudeCredentialSource[];
 }): AppNotification[] {
   return sortNotifications([
     ...fromReviews(sources.reviews ?? []),
@@ -554,6 +595,7 @@ export function buildNotifications(sources: {
     ...fromAutomation(sources.automation ?? []),
     ...fromReportReminder(sources.reportReminder ?? null),
     ...fromLifecycle(sources.lifecycle ?? []),
+    ...fromClaudeCredentials(sources.claude ?? []),
   ]);
 }
 

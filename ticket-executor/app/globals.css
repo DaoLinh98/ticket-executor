@@ -166,6 +166,18 @@ input:not([type=checkbox]):not([type=radio]):focus,textarea:focus{--te-field-bg:
 .te-scroll::-webkit-scrollbar-corner{background:transparent;}
 .te-table-scroll{overscroll-behavior:auto;}
 .te-scroll--smooth{scroll-behavior:smooth;}
+
+/* A table whose header row must stay put while its body rows scroll under it,
+   inside whatever ancestor actually scrolls (a `te-sprint-pane`, a card, …).
+   Needs a solid background since rows scroll underneath. Reusable for any
+   fixed-header table, not just the Insights node table it was built for. */
+.te-table-sticky-head{position:sticky;top:0;z-index:1;background:var(--te-panel-bg);}
+
+/* Hides a scroll container's scrollbar without disabling scrolling — use on a
+   pane whose surrounding chrome (a sticky table header, a toolbar) already
+   makes it obvious it scrolls, instead of `te-scroll`'s themed scrollbar. */
+.te-scroll-hidden{scrollbar-width:none;}
+.te-scroll-hidden::-webkit-scrollbar{display:none;}
 @media (prefers-reduced-motion: reduce){.te-scroll--smooth{scroll-behavior:auto;}}
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,49%{opacity:1;}50%,100%{opacity:0;}}
@@ -236,9 +248,23 @@ html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border)
 @keyframes te-wf-dash { to { stroke-dashoffset: -12; } }
 @keyframes te-wf-pulse { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 10px var(--te-glow-accent)); } }
 @keyframes te-wf-blink { to { visibility: hidden; } }
+/* Ticket lifecycle: a light pulse runs down each completed connector (staggered by --i so it
+   reads as one signal travelling stage to stage); a completed stage's tick glows and twinkles. */
+.te-lc-line { position: relative; overflow: hidden; }
+.te-lc-line[data-done]::after { content: ""; position: absolute; top: 0; left: 0; width: 40%; height: 100%; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--te-text) 90%, transparent), transparent); transform: translateX(-100%); animation: te-lc-travel 2.6s linear infinite; animation-delay: calc(var(--i, 0) * .28s); }
+.te-lc-line-v[data-done]::after { width: 100%; height: 40%; background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--te-text) 90%, transparent), transparent); transform: translateY(-100%); animation-name: te-lc-travel-y; }
+.te-lc-tick { position: relative; flex: 0 0 auto; display: inline-flex; }
+.te-lc-tick[data-done] { animation: te-lc-glow 3.2s ease-in-out infinite; animation-delay: calc(var(--i, 0) * .28s); }
+.te-lc-spark { position: absolute; top: -4px; right: -4px; width: 9px; height: 9px; pointer-events: none; background: var(--te-text); clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); transform: scale(0) rotate(0deg); animation: te-lc-twinkle 3.2s ease-in-out infinite; animation-delay: calc(var(--i, 0) * .28s + .5s); }
+@keyframes te-lc-travel { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(250%); } }
+@keyframes te-lc-travel-y { 0% { transform: translateY(-100%); } 60%, 100% { transform: translateY(250%); } }
+@keyframes te-lc-glow { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--te-success) 70%, transparent)); } }
+@keyframes te-lc-twinkle { 0%, 55%, 100% { transform: scale(0) rotate(0deg); opacity: 0; } 70% { transform: scale(1) rotate(45deg); opacity: 1; } 85% { transform: scale(.4) rotate(90deg); opacity: .6; } }
 @media (prefers-reduced-motion: reduce) {
   .te-wf-edge-live, .te-wf-running, .te-wf-blink { animation: none !important; }
   .te-wf-particle { display: none; }
+  .te-lc-line::after, .te-lc-tick, .te-lc-spark { animation: none !important; }
+  .te-lc-spark { display: none; }
 }
 
 /* Global interaction feedback — every button/link across the app gets the

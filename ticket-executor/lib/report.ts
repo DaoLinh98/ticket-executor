@@ -70,6 +70,11 @@ export type ReportDraftState = {
    *  this report carries. */
   tasks: Record<ReportTaskId, { today: boolean; tomorrow: boolean }>;
   entries: Record<string, ReportEntry>;
+  /** Tickets the developer searched for and added by hand — work that is not
+   *  assigned to them (pairing, support) but belongs in today's report. */
+  manual?: Ticket[];
+  /** Assigned tickets the developer dismissed from this day's report. */
+  hidden?: string[];
   edited?: { text: string; base: string };
 };
 

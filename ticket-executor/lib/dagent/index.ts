@@ -4,6 +4,8 @@ import { isDriving, liveLogs, reconcileOrphans } from "./engine";
 import { flowOf } from "./graph";
 import { NEEDS_REVIEW, type Flow } from "./types";
 import { historyPage, historySlice, historyWhere, type HistoryFilter, type HistoryPage } from "./history";
+import type { TrackerFacts } from "../ticketLifecycle";
+import { loadLinkedPullRequest, loadTicketStatus, normalizeProvider } from "../tickets";
 import { buildView, listItem, type RunListItem, type RunView } from "./view";
 
 export { cancelRun, onRunEnded, resumeRun, startRun, type ResumeAction, type StartInput } from "./engine";
@@ -33,7 +35,18 @@ export async function getRunView(id: string): Promise<RunView | null> {
   if (row.state === "running" && !isDriving(id)) await reconcileOrphans();
   // Only the ticket's newest run may be retried or cancelled; told here so a run linked directly is judged right.
   const newer = await prisma.dagentRun.count({ where: { ticketId: row.ticketId, startedAt: { gt: row.startedAt } } });
-  return { ...buildView(row, row.steps, row.transitions, row.artifacts, liveLogs(id)), newest: newer === 0 };
+  return { ...buildView(row, row.steps, row.transitions, row.artifacts, liveLogs(id), await trackerFacts(row)), newest: newer === 0 };
+}
+
+/** The tracker's word on the ticket for the lifecycle bar; null when it cannot be read — the bar then falls back to the run alone. */
+async function trackerFacts(row: { provider: string; ticketId: string; prUrl: string }): Promise<TrackerFacts | null> {
+  try {
+    const provider = normalizeProvider(row.provider);
+    const [status, pr] = await Promise.all([loadTicketStatus(provider, row.ticketId), loadLinkedPullRequest(provider, row.ticketId, row.prUrl || null)]);
+    return status ? { status, pr: pr && { status: pr.status, isDraft: pr.isDraft } } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** One numbered page of Run History, newest first, with the filter's total. Keyed by the list fingerprint, so a changed run is never served stale. */

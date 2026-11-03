@@ -51,6 +51,8 @@ never a hex in a component. Three consequences, all of which have bitten:
 | `sectionCaption()` | Uppercase caption over read-only content; one step smaller than `fieldLabel()`. |
 | `codeBlock(opts?)` | Read-only mono code / command block. |
 | `dropdownPanelStyle(opts?)` | Dropdown/menu chrome. `opts.maxHeight` also sets `overflowY: auto`. |
+| `te-table-sticky-head` | A table row that must stay pinned while the rest scrolls under it: `position: sticky; top: 0` plus an opaque `--te-panel-bg` so rows don't show through. Put it on the header row and let whatever ancestor already scrolls (a `te-sprint-pane`, a card) carry the scroll — see `app/(app)/insights/page.tsx`'s `NodeTable`. |
+| `te-scroll-hidden` | Hides a scroll container's scrollbar (standard + WebKit) without disabling scrolling, for a pane whose own chrome (a sticky header, a toolbar) already signals it scrolls — swap in for `te-scroll`'s themed scrollbar there. |
 | `pill(opts)` | Generic pill/badge. `size: "xs" \| "sm" \| "md"`. |
 | `tabStyle({ active, enabled? })` | THE tab-bar button (detail tabs + Settings tabs). |
 | `ctaButtonStyle(variant, opts?)` | Action buttons: `primary \| success \| warning \| danger \| outline \| ghost`. |
@@ -131,6 +133,7 @@ media query, so the phone layout lives in **one CSS block at the foot of
 | `te-modal-shell` / `te-modal-overlay` | Modals go full-screen, inset-padded. |
 | `te-flow` | Scope for the react-flow canvas: maps its `--xy-*` chrome onto the app's tokens (all widths). |
 | `te-wf-md` / `te-wf-md-h` | All widths: an agent's markdown output in the workflow inspector (`OutputMarkdown`, over `te-rich`) — compact type, each heading an icon row picked by `headingMeta()` (`lib/workflow/meta.ts`). |
+| `te-lc-line` / `te-lc-line-v` / `te-lc-tick` / `te-lc-spark` | All widths: the Ticket lifecycle stepper. A connector with `data-done` carries a travelling light pulse (`-v` runs it down the phone's vertical rail); a done stage's tick (`data-done`) glows and twinkles via the `te-lc-spark` star. All take `--i` (stage index) as an animation stagger, and stop under `prefers-reduced-motion`. |
 | `te-activity` | A step's activity feed takes a share of the viewport rather than a fixed 520px. |
 | `te-exec-hud` | The run summary strip tightens its gaps so its metrics wrap two per row. |
 | `te-picker-label` / `te-picker-short` | A picker's label truncates **in a header only** — the toolbar wraps instead. A picker given `shortLabel` swaps to it below the breakpoint. |
