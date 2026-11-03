@@ -804,6 +804,8 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
     if (d.context) chips.push({ text: `context: ${d.context}`, tone: "indigo" });
     if (d.maxVisits) chips.push({ text: `max ${d.maxVisits} visits`, tone: "muted" });
     if (d.kind !== "agent") chips.push({ text: "0 tokens", tone: "muted" });
+    if (step?.model) chips.push({ text: `model: ${step.model}`, tone: "accent" });
+    if (step?.effort) chips.push({ text: `effort: ${step.effort}`, tone: "accent" });
   }
 
   let note: Inspector["note"] = null;

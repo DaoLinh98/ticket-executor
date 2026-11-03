@@ -95,6 +95,29 @@ model ProviderCredential {
   @@index([provider])
 }
 
+// A Claude account the CLI can run as instead of this machine's own login
+// (`lib/claudeAccounts.ts`). Tried in `priority` order; the machine login is
+// always the last resort. The token is an OAuth token (`claude setup-token`, or
+// the accessToken of a pasted .credentials.json), encrypted by lib/crypto.ts and
+// handed to the CLI as CLAUDE_CODE_OAUTH_TOKEN — never sent to a page.
+model ClaudeCredential {
+  id           String    @id @default(cuid())
+  label        String    @default("")
+  token        String
+  priority     Int       @default(0)
+  enabled      Boolean   @default(true)
+  // Known only when the token came from a .credentials.json (its expiresAt).
+  expiresAt    DateTime?
+  // Out of quota: skipped until this moment.
+  limitedUntil DateTime?
+  // The CLI rejected the token: skipped until the developer replaces it.
+  invalidAt    DateTime?
+  lastError    String    @default("")
+  lastUsedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
 // Distinct values ever used for Root Repo / Project / Skill fields, so the
 // Overview tab's Combobox can offer them as saved options next time (any
 // project/session), not just the ones seen in the current tickets list.

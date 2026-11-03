@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   buildNotifications, markAllRead, markRead, mergeWithHistory, notificationKey,
-  type AppNotification, type AutomationSource, type LifecycleSource, type PullRequestSource, type ReadEntry, type ReadMap,
+  type AppNotification, type AutomationSource, type ClaudeCredentialSource, type LifecycleSource, type PullRequestSource, type ReadEntry, type ReadMap,
   type ReportReminderSource, type ReviewSource, type TicketActivitySource,
 } from "@/lib/notifications";
 
@@ -72,6 +72,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
   const [planReviews, setPlanReviews] = useState<ReviewSource[]>([]);
   const [reportReminder, setReportReminder] = useState<ReportReminderSource | null>(null);
   const [lifecycle, setLifecycle] = useState<LifecycleSource[]>([]);
+  const [claude, setClaude] = useState<ClaudeCredentialSource[]>([]);
   const [local, setLocal] = useState<LocalNotificationSources>({});
   const [read, setRead] = useState<ReadMap>({});
   const [history, setHistory] = useState<AppNotification[]>([]);
@@ -229,6 +230,7 @@ export default function NotificationsProvider({ children }: { children: ReactNod
       if (Array.isArray(data.reviews)) setPlanReviews(data.reviews);
       if ("reportReminder" in data) setReportReminder(data.reportReminder ?? null);
       if (Array.isArray(data.lifecycle)) setLifecycle(data.lifecycle);
+      if (Array.isArray(data.claude)) setClaude(data.claude);
       if (!readRes.ok) throw new Error(`GET /api/notifications/read -> ${readRes.status}`);
       const readData = await readRes.json();
       if (readData?.read) applyRead(readData.read as ReadMap);
@@ -295,8 +297,9 @@ export default function NotificationsProvider({ children }: { children: ReactNod
         automation,
         reportReminder,
         lifecycle,
+        claude,
       }), history),
-    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, lifecycle, history]
+    [mergedReviews, pullRequests, ticketActivity, automation, reportReminder, lifecycle, claude, history]
   );
 
   const titleOf = useCallback((ticketId: string) => local.titles?.[ticketId] ?? "", [local.titles]);

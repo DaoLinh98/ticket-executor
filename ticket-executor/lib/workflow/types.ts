@@ -106,6 +106,9 @@ export type Step = {
   input: Refusal[] | null;
   /** The brief an agent step was started with — the only context a fresh turn has. "" for a check/harness step. */
   brief?: string;
+  /** The model and effort an agent step ran on, read from the step's own log. Absent for a check/harness step. */
+  model?: string;
+  effort?: string;
 };
 
 export type Transition = { seq: number; fromNode: string; toNode: string; reason: string; at: number };

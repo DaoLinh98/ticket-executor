@@ -2,7 +2,7 @@ import type { CommitFile, CommitSummary, MentionCandidate, PullRequestBrief, Rea
 import {
   adoCreds, getScopedTickets, getMyOpenWorkItems, getMyOpenWorkItemsAnyProject, getWorkItemComments, addWorkItemComment, searchIdentities, setWorkItemCommentReaction, getPullRequestReview, getWorkItemTypeStates, updateWorkItemState,
   getPullRequestCommits, getCommitFileChanges, resolveWorkItemState, listProjects, getPullRequestOutcomes,
-  getWorkItemState, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
+  getWorkItemState, getWorkItemStateCached, listIterations, getWorkItemDetail, getWorkItemTicket, listActivePullRequests, listRecentTicketActivity,
   getLinkedPullRequest, getWorkItemCommentMarks, getWorkItemsByIds, searchWorkItems, isPullRequestAbandoned,
   type CommentMark, type LinkedPullRequest, type ProjectInfo,
 } from "./ado";
@@ -597,6 +597,11 @@ export async function updateTicketStatus(provider: ProviderId, ticketId: string,
 export async function readTicketStatus(provider: ProviderId, ticketId: string): Promise<string> {
   if (provider === "azure-devops") return getWorkItemState(ticketId);
   return "";
+}
+
+/** The ticket's current status for a load (cached) — `readTicketStatus` is the fresh read for after a write. */
+export async function loadTicketStatus(provider: ProviderId, ticketId: string): Promise<string> {
+  return provider === "azure-devops" ? getWorkItemStateCached(ticketId) : "";
 }
 
 function summaryEntry(ticketId: string, review: ReviewData): ReviewSummaryEntry {

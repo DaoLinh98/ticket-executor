@@ -19,6 +19,7 @@ import NotificationCenter from "../NotificationCenter";
 import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import PushNotifications from "./PushNotifications";
 import FlowRunnerSettings from "./FlowRunnerSettings";
+import ClaudeAccountsSettings from "./ClaudeAccountsSettings";
 import { SETTINGS_KEY, connectionsKey, fetchSettings, useConnections, type ConnectionsPayload } from "../../queries";
 
 const DEFAULTS: SettingsView = {
@@ -43,6 +44,7 @@ const DEFAULTS: SettingsView = {
 const TABS = [
   { id: "connection", label: "Connection" },
   { id: "execution", label: "Execution" },
+  { id: "claude", label: "Claude" },
   { id: "flowrunner", label: "Flow Runner" },
   { id: "notifications", label: "Notifications" },
   { id: "appearance", label: "Appearance" },
@@ -87,6 +89,12 @@ type ConnectionEditor = { id: string; label: string; org: string; pat: string; h
 export default function SettingsPage() {
   const { fireBoltFromEvent } = useBoltsContext();
   const [tab, setTab] = useState<SettingsTabId>("connection");
+  // `?tab=claude` — where the bell sends a Claude credential that needs replacing.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const hit = TABS.find((t) => t.id === wanted);
+    if (hit) setTab(hit.id);
+  }, []);
   const [settings, setSettings] = useState<SettingsView>(DEFAULTS);
   const [connTest, setConnTest] = useState<ConnTest>({ status: "idle", message: "" });
   const [error, setError] = useState("");
@@ -506,6 +514,7 @@ export default function SettingsPage() {
   const panes: Record<SettingsTabId, ReactNode> = {
     connection: connectionPane,
     execution: executionPane,
+    claude: <ClaudeAccountsSettings />,
     flowrunner: <FlowRunnerSettings />,
     notifications: notificationsPane,
     appearance: appearancePane,
@@ -544,7 +553,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {tab !== "flowrunner" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
+            {tab !== "flowrunner" && tab !== "claude" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
               <button onClick={save} style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 7 }), padding: "0 20px" }}>Save changes</button>
             </div>}
           </div>

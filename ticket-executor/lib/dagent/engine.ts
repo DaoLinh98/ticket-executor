@@ -6,6 +6,7 @@ import { removeRunMcpConfig, resolveMcp, writeRunMcpConfig } from "../mcp";
 import { validateAgentAccess, validateRootRepo } from "../preflight";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
+import { runWithClaudeAccounts } from "../claudeAccounts";
 import { checkAgents } from "./agents";
 import { runAgentTurn } from "./cli";
 import { CHECKS, companionDirs, deliveryFacts, removeWorktrees, seatBase, type CheckEnv, type RetrySeed } from "./checks";
@@ -13,8 +14,9 @@ import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS } from "./graph";
 import { PLAN_FILE } from "./prompts";
 import { deliveryOf, knowledgeDiff } from "./rules";
 import { skillCatalog } from "./skills";
+import { turnFor } from "./stepModels";
 import { closeStep, nextSeq, openStep, saveArtifact, saveRun, saveTransition } from "./store";
-import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo } from "./types";
+import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo, type Usage } from "./types";
 
 type Live = {
   id: string;
@@ -88,18 +90,29 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   const prompt = node.prompt(live.ctx);
   // The brief is the only context a fresh turn gets — kept per step so /workflow shows what each agent was told.
   await saveArtifact(live.id, `${BRIEF_PREFIX}${live.stepId}`, prompt).catch(() => null);
-  const turn = await runAgentTurn({
-    cwd: live.ctx.cwd,
-    addDirs,
-    agent: node.agent,
-    prompt,
-    schema: node.output,
-    mcpConfigPath,
-    model: live.model,
-    effort: live.effort,
-    onLog: (e) => live.logs.push(e),
-    onChild: (c) => (live.child = c),
-  });
+  const pick = turnFor(node.id, live.ctx.visits, live);
+  live.logs.push({ t: Date.now(), lvl: "INFO", text: `model ${pick.model}${pick.effort ? ` · effort ${pick.effort}` : ""}` });
+  // Out of quota or token rejected → the same turn again on the next Claude account (lib/claudeAccounts.ts).
+  const turn = await runWithClaudeAccounts(
+    async (account) => {
+      const t = await runAgentTurn({
+        cwd: live.ctx.cwd,
+        addDirs,
+        agent: node.agent,
+        prompt,
+        schema: node.output,
+        mcpConfigPath,
+        model: pick.model,
+        effort: pick.effort,
+        accountEnv: account.env,
+        onLog: (e) => live.logs.push(e),
+        onChild: (c) => (live.child = c),
+      });
+      return live.cancelled && !t.ok ? { ...t, error: "cancelled" } : t;
+    },
+    (text, warn) => live.logs.push({ t: Date.now(), lvl: warn ? "WARN" : "INFO", text }),
+    (abandoned, last) => ({ ...last, usage: abandoned.reduce((u, a) => addUsage(u, a.usage), last.usage) }),
+  );
   removeRunMcpConfig(mcpConfigPath);
   if (!turn.ok) return { ok: false, data: {}, error: turn.error || "the agent's turn failed", usage: turn.usage };
   if (!turn.structured) {
@@ -109,6 +122,14 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   const error = PICKS_SKILLS.includes(node.id) ? applySkills(live, data) : "";
   return error ? { ok: false, data, error, usage: turn.usage } : { ok: true, data, error: "", usage: turn.usage };
 }
+
+const addUsage = (a: Usage, b: Usage): Usage => ({
+  costUsd: a.costUsd + b.costUsd,
+  inputTokens: a.inputTokens + b.inputTokens,
+  outputTokens: a.outputTokens + b.outputTokens,
+  cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+  numTurns: a.numTurns + b.numTurns,
+});
 
 const PICKS_SKILLS = ["readiness", "qaTriage", "reviewTriage"];
 

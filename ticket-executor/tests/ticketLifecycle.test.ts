@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { commentsSince, isFixingQa, isQueueable, pendingActionFor, stageFrom, stageOf } from "../lib/ticketLifecycle";
+import { commentsSince, isFixingQa, isQueueable, pendingActionFor, stageFrom, stageOf, trackerStages } from "../lib/ticketLifecycle";
 
 test("every Azure DevOps state in the team's process maps to a stage", () => {
   const expected: Record<string, string> = {
@@ -102,4 +102,32 @@ test("a stored stage id is read as is, not as a tracker status", () => {
   assert.equal(stageFrom("code-review", ""), "code-review");
   assert.equal(stageFrom("", "QA Failed"), "qa-failed");
   assert.equal(stageFrom("bogus", "In Progress"), "doing");
+});
+
+test("trackerStages: an active draft PR proves PR and CI, not release", () => {
+  const s = trackerStages({ status: "In Progress", pr: { status: "active", isDraft: true } });
+  assert.equal(s.pr.status, "done");
+  assert.equal(s.ci.status, "done");
+  assert.equal(s.release, undefined);
+  assert.equal(s.review, undefined);
+});
+
+test("trackerStages: a published PR in Code Review is released and under review", () => {
+  const s = trackerStages({ status: "Code Review", pr: { status: "active", isDraft: false } });
+  assert.equal(s.release.status, "done");
+  assert.equal(s.review.status, "active");
+  assert.equal(s.qa, undefined);
+});
+
+test("trackerStages: QA states and a merged, closed ticket", () => {
+  assert.equal(trackerStages({ status: "QA Failed", pr: null }).qa.status, "blocked");
+  assert.equal(trackerStages({ status: "In QA", pr: { status: "completed", isDraft: false } }).merged.status, "done");
+  const closed = trackerStages({ status: "Closed", pr: null });
+  assert.equal(closed.closed.status, "done");
+  assert.equal(closed.review.status, "done");
+});
+
+test("trackerStages: no PR and an early status says nothing; an abandoned PR is ignored", () => {
+  assert.deepEqual(trackerStages({ status: "New", pr: null }), {});
+  assert.equal(trackerStages({ status: "In Progress", pr: { status: "abandoned", isDraft: false } }).pr, undefined);
 });

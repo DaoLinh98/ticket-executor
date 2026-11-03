@@ -138,8 +138,8 @@ export const STAGES: [string, string][] = [
   ["ci", "CI"],
   ["release", "Release"],
   ["review", "Code review"],
-  ["qa", "QA"],
   ["merged", "Merged"],
+  ["qa", "QA"],
   ["closed", "Close-out"],
 ];
 

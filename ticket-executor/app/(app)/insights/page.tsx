@@ -35,9 +35,9 @@ const dayOf = (t: number) => new Date(t).toLocaleDateString("en-GB", { day: "num
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <section style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
       <div style={sectionCaption()}>{title}</div>
-      {hint ? <div style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.5 }}>{hint}</div> : null}
+      {hint ? <div style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.4 }}>{hint}</div> : null}
       {children}
     </section>
   );
@@ -45,9 +45,9 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 
 function Tile({ label, value, sub, color }: { label: string; value: string; sub: string; color?: string }) {
   return (
-    <div style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 }}>
+    <div style={{ ...card({ padding: "9px 12px" }), display: "flex", flexDirection: "column", gap: "3px", minWidth: 0 }}>
       <div style={{ fontSize: FONT.sm, color: COLORS.textDim, fontWeight: 600 }}>{label}</div>
-      <div style={displayText("stat", color)}>{value}</div>
+      <div style={{ ...displayText("stat", color), fontSize: "clamp(22px, 5vw, 30px)" }}>{value}</div>
       <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>{sub}</div>
     </div>
   );
@@ -68,18 +68,18 @@ function paceAdvice(p: Pace): { tone: "success" | "warning" | "accent"; text: st
 function PaceCard({ pace }: { pace: Pace }) {
   const advice = paceAdvice(pace);
   return (
-    <div style={{ ...tintedCard(advice.tone), display: "flex", flexDirection: "column", gap: "12px" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 28px" }}>
+    <div style={{ ...tintedCard(advice.tone, { padding: "9px 14px" }), display: "flex", flexDirection: "column", gap: "6px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 24px" }}>
         {[
           ["Actual", pace.suggestedPointsPerDay == null ? "—" : String(pace.suggestedPointsPerDay)],
           ["Planned", pace.plannedPointsPerDay == null ? "—" : String(pace.plannedPointsPerDay)],
         ].map(([label, value]) => (
-          <div key={label} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <div key={label} style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
             <span style={{ fontSize: FONT.sm, color: COLORS.textDim, fontWeight: 600 }}>{label} points / day</span>
-            <span style={displayText("stat")}>{value}</span>
+            <span style={{ ...displayText("stat"), fontSize: "clamp(22px, 5vw, 30px)" }}>{value}</span>
           </div>
         ))}
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px", justifyContent: "flex-end", fontSize: FONT.sm, color: COLORS.textMuted }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "3px", justifyContent: "flex-end", fontSize: FONT.sm, color: COLORS.textMuted }}>
           <span>
             {pace.deliveredPoints} pts over {pace.workingDays} working day{pace.workingDays === 1 ? "" : "s"}
           </span>
@@ -89,16 +89,16 @@ function PaceCard({ pace }: { pace: Pace }) {
           </span>
         </div>
       </div>
-      <div style={{ fontSize: FONT.base, color: COLORS.text, lineHeight: 1.55 }}>{advice.text}</div>
+      <div style={{ fontSize: FONT.base, color: COLORS.text, lineHeight: 1.4 }}>{advice.text}</div>
     </div>
   );
 }
 
 function NodeTable({ nodes }: { nodes: InsightsPayload["nodes"] }) {
   return (
-    <div className="te-table-scroll" style={{ ...card({ padding: "0" }), overflowX: "hidden" }}>
+    <div className="te-table-scroll" style={{ ...card({ padding: "0" }) }}>
       <div className="te-table-body">
-        <div style={{ display: "grid", gridTemplateColumns: NODE_GRID, gap: "10px", padding: "10px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.faint }}>
+        <div className="te-table-sticky-head" style={{ display: "grid", gridTemplateColumns: NODE_GRID, gap: "10px", padding: "10px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.faint }}>
           {NODE_COLUMNS.map((c) => (
             <span key={c}>{c}</span>
           ))}
@@ -163,119 +163,132 @@ function Insights() {
         ) : q.error ? (
           <div style={{ ...tintedCard("danger"), fontSize: FONT.base }}>{q.error.message}</div>
         ) : d ? (
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", gap: "10px" }}>
             {period === "sprint" && d.period !== "sprint" ? (
-              <div style={{ ...tintedCard("warning"), fontSize: FONT.base }}>No active plan with sprint dates — showing the last 14 days instead.</div>
+              <div style={{ ...tintedCard("warning"), fontSize: FONT.base, flex: "0 0 auto" }}>No active plan with sprint dates — showing the last 14 days instead.</div>
             ) : null}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
+            <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px" }}>
               <Tile label="Runs" value={String(d.totals.runs)} sub={`${d.totals.finished} finished`} />
               <Tile label="Success rate" value={pct(d.totals.successRate)} sub="of finished runs" color={d.totals.successRate != null && d.totals.successRate < 0.6 ? COLORS.danger : undefined} />
               <Tile label="Total cost" value={usd(d.totals.costUsd)} sub={d.budgetUsd ? `Budget ${usd(d.budgetUsd)} / ticket` : "No ticket budget set"} />
               <Tile label="Cost / point" value={d.totals.costPerPoint == null ? "—" : usd(d.totals.costPerPoint)} sub="tickets with points" />
             </div>
 
-            <Section title="Pace" hint="Points of tickets that reached a PR or were released, per working day, against the plan's points/day.">
-              <PaceCard pace={d.pace} />
-            </Section>
+            <div style={{ flex: "0 0 auto" }}>
+              <Section title="Pace" hint="Points of tickets that reached a PR or were released, per working day, against the plan's points/day.">
+                <PaceCard pace={d.pace} />
+              </Section>
+            </div>
 
-            <Section title="By flow">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px" }}>
-                {d.flows.map((f) => (
-                  <div key={f.flow} style={{ ...card({ padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "8px" }}>
-                      <span style={displayText("heading")}>{FLOW_LABEL[f.flow]}</span>
-                      <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{f.runs} runs</span>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                      {(
-                        [
-                          ["succeeded", f.succeeded, COLORS.success],
-                          ["for review", f.endedForReview, COLORS.info],
-                          ["failed", f.failed, COLORS.danger],
-                          ["cancelled", f.cancelled, COLORS.textDim],
-                          ["waiting PO", f.waitingForPo, COLORS.warning],
-                          ["running", f.running, COLORS.accent],
-                        ] as const
-                      )
-                        .filter(([, n]) => n)
-                        .map(([label, n, color]) => (
-                          <span key={label} style={pill({ color, border: COLORS.border, size: "xs" })}>
-                            {n} {label}
-                          </span>
-                        ))}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: FONT.sm, color: COLORS.textMuted }}>
-                      <span>Avg {usd(f.avgCostUsd)}</span>
-                      <span>Avg {f.avgDurationSec == null ? "—" : dur(f.avgDurationSec)}</span>
-                      {f.avgFixRounds != null ? <span>{f.avgFixRounds} fix rounds / run</span> : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Section>
-
-            <Section title="Where runs fail" hint="Per node. “Runs ended” counts failed runs that stopped there; ↺ are verdicts that sent the run back. Sorted by runs ended.">
-              {d.nodes.length ? <NodeTable nodes={d.nodes} /> : <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textMuted }}>No run in this window.</div>}
-            </Section>
-
-            <Section title="Failure reasons">
-              <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)", gap: "12px" }}>
-                <div style={{ ...card({ padding: "12px 14px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {(Object.keys(CLASS_META) as FailureClass[]).map((c) => (
-                    <div key={c} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-                      <span style={{ ...displayText("heading", d.failures.classes[c] ? CLASS_META[c].color : COLORS.faint), minWidth: "34px" }}>{d.failures.classes[c]}</span>
-                      <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                        <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600 }}>{CLASS_META[c].label}</span>
-                        <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{CLASS_META[c].hint}</span>
-                      </span>
+            <div style={{ flex: "0 0 auto" }}>
+              <Section title="By flow">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px" }}>
+                  {d.flows.map((f) => (
+                    <div key={f.flow} style={{ ...card({ padding: "8px 12px" }), display: "flex", flexDirection: "column", gap: "5px" }}>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "8px" }}>
+                        <span style={{ ...displayText("heading"), fontSize: "clamp(16px, 3.5vw, 19px)" }}>{FLOW_LABEL[f.flow]}</span>
+                        <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{f.runs} runs</span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                        {(
+                          [
+                            ["succeeded", f.succeeded, COLORS.success],
+                            ["for review", f.endedForReview, COLORS.info],
+                            ["failed", f.failed, COLORS.danger],
+                            ["cancelled", f.cancelled, COLORS.textDim],
+                            ["waiting PO", f.waitingForPo, COLORS.warning],
+                            ["running", f.running, COLORS.accent],
+                          ] as const
+                        )
+                          .filter(([, n]) => n)
+                          .map(([label, n, color]) => (
+                            <span key={label} style={pill({ color, border: COLORS.border, size: "xs" })}>
+                              {n} {label}
+                            </span>
+                          ))}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: FONT.sm, color: COLORS.textMuted }}>
+                        <span>Avg {usd(f.avgCostUsd)}</span>
+                        <span>Avg {f.avgDurationSec == null ? "—" : dur(f.avgDurationSec)}</span>
+                        {f.avgFixRounds != null ? <span>{f.avgFixRounds} fix rounds / run</span> : null}
+                      </div>
                     </div>
                   ))}
                 </div>
-                <div style={{ ...card({ padding: "6px 14px" }), display: "flex", flexDirection: "column" }}>
-                  {d.failures.top.length ? (
-                    d.failures.top.map((r) => (
-                      <div key={r.reason} style={{ display: "flex", gap: "10px", alignItems: "baseline", padding: "8px 0", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
-                        <span style={{ fontWeight: 700, color: COLORS.text, minWidth: "28px" }}>×{r.count}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.textSoft, overflowWrap: "anywhere" }}>{r.reason}</span>
-                        <span style={pill({ color: CLASS_META[r.cls].color, border: COLORS.border, size: "xs" })}>{CLASS_META[r.cls].label}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ padding: "8px 0", fontSize: FONT.base, color: COLORS.textMuted }}>No failed run in this window.</div>
-                  )}
-                </div>
-              </div>
-            </Section>
+              </Section>
+            </div>
 
-            <Section
-              title="Over budget"
-              hint={d.budgetUsd ? `Tickets whose runs in this window cost ${usd(d.budgetUsd)} or more. A warning only — no run is stopped.` : "Set a per-ticket budget in Settings → Flow Runner to flag expensive tickets."}
+            <div
+              className="te-sprint-split"
+              style={{ flex: "1 1 0", minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "12px" }}
             >
-              {d.budgetUsd ? (
-                d.overBudget.length ? (
-                  <div style={{ ...card({ padding: "4px 0" }), display: "flex", flexDirection: "column" }}>
-                    {d.overBudget.map((t) => (
-                      <Link
-                        key={t.ticketId}
-                        href={`/workflow?ticket=${encodeURIComponent(t.ticketId)}`}
-                        className="te-run-row"
-                        style={{ display: "flex", alignItems: "center", gap: "10px", minHeight: "44px", padding: "6px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, textDecoration: "none", color: COLORS.textSoft, fontSize: FONT.base }}
-                      >
-                        <span style={{ ...chipShape(6), flex: "0 0 auto", padding: "3px 7px", fontSize: FONT.xs, fontFamily: MONO, background: "var(--te-indigo-soft)", color: COLORS.indigo }}>{t.ticketId}</span>
-                        <span className="te-run-title" style={{ flex: 1, minWidth: 0, color: COLORS.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {t.title || "Untitled ticket"}
-                        </span>
-                        <span style={{ color: COLORS.textDim, fontSize: FONT.sm, whiteSpace: "nowrap" }}>{t.runs} runs</span>
-                        <span style={{ color: COLORS.danger, fontWeight: 700, whiteSpace: "nowrap" }}>{usd(t.costUsd)}</span>
-                      </Link>
-                    ))}
+              <div className="te-scroll-hidden te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <Section title="Where runs fail" hint="Per node. “Runs ended” counts failed runs that stopped there; ↺ are verdicts that sent the run back. Sorted by runs ended.">
+                  {d.nodes.length ? <NodeTable nodes={d.nodes} /> : <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textMuted }}>No run in this window.</div>}
+                </Section>
+              </div>
+
+              <div className="te-scroll te-sprint-pane" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px" }}>
+                <Section title="Failure reasons">
+                  <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)", gap: "12px" }}>
+                    <div style={{ ...card({ padding: "12px 14px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
+                      {(Object.keys(CLASS_META) as FailureClass[]).map((c) => (
+                        <div key={c} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+                          <span style={{ ...displayText("heading", d.failures.classes[c] ? CLASS_META[c].color : COLORS.faint), minWidth: "34px" }}>{d.failures.classes[c]}</span>
+                          <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600 }}>{CLASS_META[c].label}</span>
+                            <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>{CLASS_META[c].hint}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ ...card({ padding: "6px 14px" }), display: "flex", flexDirection: "column" }}>
+                      {d.failures.top.length ? (
+                        d.failures.top.map((r) => (
+                          <div key={r.reason} style={{ display: "flex", gap: "10px", alignItems: "baseline", padding: "8px 0", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
+                            <span style={{ fontWeight: 700, color: COLORS.text, minWidth: "28px" }}>×{r.count}</span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.textSoft, overflowWrap: "anywhere" }}>{r.reason}</span>
+                            <span style={pill({ color: CLASS_META[r.cls].color, border: COLORS.border, size: "xs" })}>{CLASS_META[r.cls].label}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: "8px 0", fontSize: FONT.base, color: COLORS.textMuted }}>No failed run in this window.</div>
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textMuted }}>No ticket reached the budget in this window.</div>
-                )
-              ) : null}
-            </Section>
+                </Section>
+
+                <Section
+                  title="Over budget"
+                  hint={d.budgetUsd ? `Tickets whose runs in this window cost ${usd(d.budgetUsd)} or more. A warning only — no run is stopped.` : "Set a per-ticket budget in Settings → Flow Runner to flag expensive tickets."}
+                >
+                  {d.budgetUsd ? (
+                    d.overBudget.length ? (
+                      <div style={{ ...card({ padding: "4px 0" }), display: "flex", flexDirection: "column" }}>
+                        {d.overBudget.map((t) => (
+                          <Link
+                            key={t.ticketId}
+                            href={`/workflow?ticket=${encodeURIComponent(t.ticketId)}`}
+                            className="te-run-row"
+                            style={{ display: "flex", alignItems: "center", gap: "10px", minHeight: "44px", padding: "6px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, textDecoration: "none", color: COLORS.textSoft, fontSize: FONT.base }}
+                          >
+                            <span style={{ ...chipShape(6), flex: "0 0 auto", padding: "3px 7px", fontSize: FONT.xs, fontFamily: MONO, background: "var(--te-indigo-soft)", color: COLORS.indigo }}>{t.ticketId}</span>
+                            <span className="te-run-title" style={{ flex: 1, minWidth: 0, color: COLORS.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {t.title || "Untitled ticket"}
+                            </span>
+                            <span style={{ color: COLORS.textDim, fontSize: FONT.sm, whiteSpace: "nowrap" }}>{t.runs} runs</span>
+                            <span style={{ color: COLORS.danger, fontWeight: 700, whiteSpace: "nowrap" }}>{usd(t.costUsd)}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ ...card(), fontSize: FONT.base, color: COLORS.textMuted }}>No ticket reached the budget in this window.</div>
+                    )
+                  ) : null}
+                </Section>
+              </div>
+            </div>
           </div>
         ) : null}
       </main>

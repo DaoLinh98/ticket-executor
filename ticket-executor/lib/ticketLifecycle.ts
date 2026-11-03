@@ -96,6 +96,41 @@ export function commentsSince(
   return { count, latestAt };
 }
 
+/** What the tracker says about a ticket right now: its work item status and its linked pull request, if any. */
+export type TrackerFacts = {
+  status: string;
+  pr: { status: string; isDraft: boolean } | null;
+};
+
+export type TrackerStage = { status: "done" | "active" | "blocked"; detail: string };
+
+const PAST_REVIEW: ReadonlySet<Stage> = new Set<Stage>(["qa", "qa-failed", "qa-passed", "done"]);
+
+/** The lifecycle bar's stages (ids from `STAGES`) as the tracker proves them, whatever run is on screen. A stage the
+ *  tracker cannot speak to is absent. CI has no source of its own: an active or merged PR counts as CI passed. */
+export function trackerStages(t: TrackerFacts): Record<string, TrackerStage> {
+  const stage = stageOf(t.status);
+  const pr = t.pr && t.pr.status !== "abandoned" ? t.pr : null;
+  const merged = pr?.status === "completed";
+  const past = PAST_REVIEW.has(stage);
+  const out: Record<string, TrackerStage> = {};
+  if (pr || past) {
+    out.readiness = { status: "done", detail: "Ready" };
+    out.implement = { status: "done", detail: "Implemented" };
+    out.pr = { status: "done", detail: merged ? "Merged" : pr?.isDraft ? "Draft PR" : "PR open" };
+  }
+  if (pr?.status === "active" || merged || past) out.ci = { status: "done", detail: merged ? "Merged" : "PR active" };
+  if ((pr && !pr.isDraft) || merged || past) out.release = { status: "done", detail: merged ? "Merged" : "Published" };
+  if (stage === "code-review") out.review = { status: "active", detail: STAGE_LABEL[stage] };
+  else if (past || merged) out.review = { status: "done", detail: "Reviewed" };
+  if (stage === "qa") out.qa = { status: "active", detail: STAGE_LABEL[stage] };
+  else if (stage === "qa-failed") out.qa = { status: "blocked", detail: STAGE_LABEL[stage] };
+  else if (stage === "qa-passed" || stage === "done") out.qa = { status: "done", detail: STAGE_LABEL[stage] };
+  if (merged || past) out.merged = { status: "done", detail: "Merged" };
+  if (stage === "done") out.closed = { status: "done", detail: STAGE_LABEL[stage] };
+  return out;
+}
+
 export const STAGE_LABEL: Record<Stage, string> = {
   ready: "Ready",
   doing: "In progress",

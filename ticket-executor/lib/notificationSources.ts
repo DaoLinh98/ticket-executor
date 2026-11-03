@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { hasIdentity, isMyPullRequest, myVoteOn, type DevIdentity } from "@/lib/identity";
 import {
-  buildNotifications, REPORT_REMINDER_START_MINUTE, type LifecycleSource, type PullRequestSource, type ReportReminderSource, type ReviewSource,
+  buildNotifications, REPORT_REMINDER_START_MINUTE, type ClaudeCredentialSource, type LifecycleSource, type PullRequestSource, type ReportReminderSource, type ReviewSource,
 } from "@/lib/notifications";
 import { historyScope, recordHistory } from "@/lib/notificationHistory";
+import { claudeCredentialSources } from "@/lib/claudeAccounts";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { loadSent } from "@/lib/reportDraft";
 import { slackReportChannel } from "@/lib/slack";
@@ -21,6 +22,8 @@ export type NotificationSources = {
   reviews: ReviewSource[];
   reportReminder: ReportReminderSource | null;
   lifecycle: LifecycleSource[];
+  /** Saved Claude credentials to replace — not scoped by identity: they belong to the app, not to a provider account. */
+  claude: ClaudeCredentialSource[];
 };
 
 /** How far back the bell looks. The scheduler's log is an audit trail and keeps
@@ -317,16 +320,17 @@ export async function collectNotificationSources(providerParam?: string): Promis
   // an unscoped read here would hand this developer the whole team's automation
   // and every pull request in the organization.
   if (!hasIdentity(identity)) {
-    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [], reportReminder: null, lifecycle: [] };
+    return { automation: [], pullRequests: [], ticketActivity: [], reviews: [], reportReminder: null, lifecycle: [], claude: await claudeCredentialSources() };
   }
 
-  const [automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle] = await Promise.all([
+  const [automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle, claude] = await Promise.all([
     automationSources(provider, org, identity),
     pullRequestSources(provider, identity),
     ticketActivitySources(provider, org, identity),
     planReviewSources(provider, org, identity),
     reportReminderSource(provider, org),
     lifecycleSources(provider, org, identity),
+    claudeCredentialSources(),
   ]);
 
   try {
@@ -338,7 +342,7 @@ export async function collectNotificationSources(providerParam?: string): Promis
     console.error("[notifications] history not saved", err);
   }
 
-  return { automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle };
+  return { automation, pullRequests, ticketActivity, reviews, reportReminder, lifecycle, claude };
 }
 
 /** Whose history the bell reads, or null when there is no identity to scope by. */

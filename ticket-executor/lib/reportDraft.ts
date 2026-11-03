@@ -115,6 +115,20 @@ function normalize(raw: unknown, name: string): ReportDraftState {
       block: !!e?.block,
     };
   }
+  const manual = (Array.isArray(d.manual) ? d.manual : [])
+    .filter((t) => typeof t?.id === "string" && typeof t?.title === "string")
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      type: String(t.type ?? ""),
+      status: String(t.status ?? ""),
+      assignee: String(t.assignee ?? ""),
+      project: String(t.project ?? ""),
+      areaPath: String(t.areaPath ?? ""),
+      url: String(t.url ?? ""),
+      ...(typeof t.boardColumn === "string" && { boardColumn: t.boardColumn }),
+    }));
+  const hidden = (Array.isArray(d.hidden) ? d.hidden : []).filter((id) => typeof id === "string");
   const edited =
     typeof d.edited?.text === "string" && typeof d.edited?.base === "string"
       ? { text: d.edited.text, base: d.edited.base }
@@ -123,6 +137,8 @@ function normalize(raw: unknown, name: string): ReportDraftState {
     name: typeof d.name === "string" && d.name ? d.name : name,
     tasks,
     entries,
+    ...(manual.length && { manual }),
+    ...(hidden.length && { hidden }),
     ...(edited && { edited }),
   };
 }

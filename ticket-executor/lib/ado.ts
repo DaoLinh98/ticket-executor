@@ -839,6 +839,12 @@ export async function getWorkItemState(id: string): Promise<string> {
   return data.fields?.["System.State"] ?? "";
 }
 
+/** `getWorkItemState` for loads: held briefly, dropped by `invalidateWorkItems` after any write. */
+export async function getWorkItemStateCached(id: string): Promise<string> {
+  const { org } = await loadCreds();
+  return cached(`${ADO_CACHE_PREFIX}workItem:${org}:state:${id}`, TTL.workItem, () => getWorkItemState(id));
+}
+
 /**
  * Map a desired state label (e.g. "Code Review") onto one of the work item
  * type's real configured states — process templates vary (Agile: New/Active/

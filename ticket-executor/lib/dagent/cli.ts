@@ -20,6 +20,8 @@ export type TurnRequest = {
   mcpConfigPath: string;
   model: string;
   effort: string;
+  /** The Claude account to run as (`lib/claudeAccounts.ts`); empty = this machine's login. */
+  accountEnv?: Record<string, string>;
   onLog: (e: LogEntry) => void;
   onChild: (c: ChildProcess | null) => void;
 };
@@ -149,6 +151,7 @@ export function runAgentTurn(req: TurnRequest): Promise<TurnResult> {
           ...process.env,
           ...(asRoot ? { IS_SANDBOX: "1" } : {}),
           ...(req.addDirs.length ? { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" } : {}),
+          ...req.accountEnv,
         },
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
