@@ -110,7 +110,12 @@ After touching `lib/dagent/` or `lib/workflow/`:
   page), read only via `resolveCredential()`.
 - **Identity** (`identityEmail` / `identityName`) lives on that row, not `Setting`. `isMine()` / `mineOnly()`
   (`lib/identity.ts`) are the only answer; **empty identity = no filter, and `isMine` is false** for every ticket.
-- **Claude CLI** uses the machine's `~/.claude` login (only `IS_SANDBOX=1` added at uid 0). The PAT reaches agents
+- **Claude account** = `lib/claudeAccounts.ts` only: saved `ClaudeCredential` rows (Settings → Claude, OAuth token
+  encrypted, passed as `CLAUDE_CODE_OAUTH_TOKEN`) in priority order, then the machine's `~/.claude` login as the last
+  resort (only `IS_SANDBOX=1` added at uid 0). `runWithClaudeAccounts()` re-runs a turn on the next account when
+  `classifyFailure()` (`lib/claudeAuth.ts`, pure) says limit (→ `limitedUntil`) or auth (→ `invalidAt`, bell asks to
+  replace it, as for a known expiry). D-Agent turns + Flow Runner `runTurn()` fall back; Ask takes the first ready
+  account; Slack and the terminal stay on the machine login. The PAT reaches agents
   via `lib/mcp.ts`: one file per run in `tmpdir()/te-mcp`, deleted after the turn, outside the repo.
 
 ## Sprint plan and automation
