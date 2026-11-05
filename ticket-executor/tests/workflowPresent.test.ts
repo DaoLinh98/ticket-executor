@@ -22,7 +22,7 @@ function step(nodeId: string, blockers?: Refusal[]): Step {
     cacheReadTokens: 0,
     numTurns: 0,
     errorMessage: "",
-    output: blockers ? { node: "evaluate", verdict: blockers.length ? "changes-required" : "pass", blockers, reviewedDelta: false } : null,
+    output: blockers ? { node: "evaluate", verdict: blockers.length ? "changes-required" : "pass", blockers, reviewedDelta: false, checked: [], assumptions: [], reviewNotes: [] } : null,
     logFrom: 0,
     logTo: 0,
     input: null,

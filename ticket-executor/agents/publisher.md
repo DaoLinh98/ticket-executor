@@ -1,6 +1,6 @@
 ---
 name: publisher
-version: 1.2.0
+version: 1.3.0
 description: Pushes verified branches and opens or reuses a DRAFT pull request linked to the ticket for each repository the caller lists. Does not edit, commit or review. Use only when a workflow names this agent explicitly (the Ticket Executor harness).
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -45,8 +45,10 @@ what you said does not match the provider.
 - Link the ticket to every pull request. Write the title and description in English, no
   tool attribution lines. When there are several pull requests, list the others in each
   description as companion pull requests.
-- Build the description from the plan, `git log` and what the run proved — so a human
-  reviewer sees the evidence, not a claim:
+- **When the brief gives the pull request description, use it verbatim** — it is built
+  from what the run recorded. Only add companion pull request links. Otherwise build it
+  from the plan, `git log` and what the run proved — so a human reviewer sees the
+  evidence, not a claim:
   - **Summary** — what changed and why (from the plan's goal).
   - **Acceptance criteria** — a table: AC | where it is implemented | how it is proven.
   - **Verification** — the commands run and their results, as reported upstream.

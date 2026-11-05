@@ -13,7 +13,7 @@ import {
   reviewImplementPrompt,
   reviewTriagePrompt,
 } from "./prompts";
-import { bundleOf, deliveryOf, followUpOf, threadsOf } from "./rules";
+import { bundleOf, deliveryOf, followUpOf, stalledFix, threadsOf } from "./rules";
 import {
   EVALUATE_OUTPUT,
   PLAN_OUTPUT,
@@ -25,7 +25,7 @@ import {
   REVIEW_TRIAGE_OUTPUT,
   STEP_OUTPUT,
 } from "./schemas";
-import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
+import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Ctx, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
 
 export const GRAPH_ID = "dagent-implement-v3";
 export const REVIEW_GRAPH_ID = "dagent-fix-review-v1";
@@ -61,8 +61,8 @@ const NODES: Node[] = [
     id: "implement", label: "Implement", phase: "build", kind: "agent", agent: "implementer", effects: "local",
     next: ["syncBase", NEEDS_REVIEW, FAIL], output: schema(STEP_OUTPUT), prompt: implementPrompt,
   },
-  { id: "syncBase", label: "Sync with base", phase: "build", kind: "harness", effects: "local", next: ["diffGuard", FAIL] },
-  { id: "diffGuard", label: "Diff guard", phase: "verify", kind: "check", effects: "pure", next: ["evaluate", FAIL] },
+  { id: "syncBase", label: "Sync with base", phase: "build", kind: "harness", effects: "local", next: ["diffGuard", "fix", FAIL] },
+  { id: "diffGuard", label: "Diff guard", phase: "verify", kind: "check", effects: "pure", next: ["evaluate", "fix", "prePublish", FAIL] },
   {
     id: "evaluate", label: "Independent review", phase: "verify", kind: "agent", agent: "reviewer", effects: "pure",
     next: ["prePublish", "fix", "reflect", FAIL], output: schema(EVALUATE_OUTPUT), prompt: evaluatePrompt,
@@ -111,12 +111,36 @@ const passOn = (to: string, ok: string): Edge => (_c, r) => (r.ok ? { to, reason
 
 const count = (v: unknown) => (Array.isArray(v) ? v.length : 0);
 
+// A re-sync after a passing review (pre-publish saw the base move) re-reviews only when the change itself differs:
+// every repo's own diff hashes to what that review judged.
+function reviewStillHolds(c: Ctx, r: NodeResult): boolean {
+  const e = c.channels.evaluate;
+  if (!e || e.verdict !== "pass" || count(e.blockers)) return false;
+  const was = (e.reviewedDiffs ?? {}) as Record<string, string>;
+  const now = (r.data.diffHashes ?? {}) as Record<string, string>;
+  const keys = Object.keys(now);
+  return keys.length > 0 && keys.length === Object.keys(was).length && keys.every((k) => was[k] === now[k]);
+}
+
+// A harness check's blockers go straight to the fixer (never to the read-only reviewer); with the fix budget spent the
+// run fails — it never publishes past them.
+function toFixer(c: Ctx, r: NodeResult, what: string): { to: string; reason: string } | null {
+  const n = count(r.data.blockers);
+  if (!n) return null;
+  const fixes = c.visits.fix ?? 0;
+  if (fixes >= MAX_FIX_ATTEMPTS) return { to: FAIL, reason: `${what} stands after ${fixes} fix attempt(s)` };
+  return { to: "fix", reason: `${n} ${what} → fix` };
+}
+
 const EDGES: Record<string, Edge> = {
   setup: (_c, r) => (r.ok ? { to: "readiness", reason: "workspace ready" } : { to: FAIL, reason: r.error || "workspace setup failed" }),
   readiness: (_c, r) => {
     const bad = guard(r);
     if (bad) return bad;
+    // A park needs something to ask, and a plan needs a spec: either missing is a broken verdict, not a wait.
+    if (!r.data.ready && !count(r.data.questions)) return { to: FAIL, reason: "not ready, but no question for the PO — nothing to wait for" };
     if (!r.data.ready) return { to: NEEDS_INPUT, reason: `not ready · ${count(r.data.questions)} question(s) for the PO` };
+    if (!count(r.data.acceptanceCriteria)) return { to: FAIL, reason: "ready, but no acceptance criteria — nothing to plan or review against" };
     const d = deliveryOf({ channels: { readiness: r.data } });
     if (d.status === "done") return { to: END, reason: `already delivered · ${d.evidence.length} acceptance criteria on the base` };
     const part = d.status === "partial" ? ` · ${d.evidence.length} already delivered` : "";
@@ -132,13 +156,18 @@ const EDGES: Record<string, Edge> = {
   },
   implement: implemented,
   fix: fixed,
-  syncBase: (_c, r) => {
+  syncBase: (c, r) => {
     if (!r.ok) return { to: FAIL, reason: r.error || "sync failed" };
+    const hard = toFixer(c, r, "rebase conflict");
+    if (hard) return hard;
     const n = count(r.data.warnings);
     return { to: "diffGuard", reason: n ? `${n} warning(s) · for the reviewer` : r.data.rebased ? `rebased · was ${r.data.behindBy} behind` : "up to date" };
   },
-  diffGuard: (_c, r) => {
+  diffGuard: (c, r) => {
     if (!r.ok) return { to: FAIL, reason: r.error || "diff guard failed to run" };
+    const hard = toFixer(c, r, "forbidden file or secret committed");
+    if (hard) return hard;
+    if (reviewStillHolds(c, r)) return { to: "prePublish", reason: "only the base moved — the change is the one the review passed" };
     const n = count(r.data.warnings);
     return { to: "evaluate", reason: n ? `${n} warning(s) · for the reviewer` : "diff clean" };
   },
@@ -149,11 +178,13 @@ const EDGES: Record<string, Edge> = {
     if (!bundle.length) return { to: "prePublish", reason: "review passed" };
     const fixes = c.visits.fix ?? 0;
     if (fixes >= MAX_FIX_ATTEMPTS) return { to: "reflect", reason: `${bundle.length} refusal(s) stand after ${fixes} fix attempt(s)` };
+    if (stalledFix(c)) return { to: "reflect", reason: `the same ${bundle.length} blocker(s) stand after a fix — no progress` };
     return { to: "fix", reason: `${bundle.length} blocker(s) → fix` };
   },
   reflect: (c) => {
     const b = (c.channels.fix?.blocked ?? {}) as Blocked;
     if (b.is) return { to: FAIL, reason: `blocked: ${b.reason || "no reason given"}` };
+    if (stalledFix(c)) return { to: FAIL, reason: `no progress · the same ${bundleOf(c).length} blocker(s) stand after ${c.visits.fix ?? 0} fix attempt(s)` };
     return { to: FAIL, reason: `fix loop exhausted (${c.visits.fix ?? 0}/${MAX_FIX_ATTEMPTS}) · ${bundleOf(c).length} blocker(s) stand` };
   },
   prePublish: (c, r) => {

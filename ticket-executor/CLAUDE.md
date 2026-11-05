@@ -47,26 +47,28 @@ runner beyond `node --test`; ask before adding tooling.
 `dagent-implement-v3` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
 --json-schema …` from `cli.ts`. **No skill runs as a step** — behaviour = `~/.claude/agents/<name>.md` + `prompts.ts` brief.
 **Ticket skills:** the first judging role (`readiness` / `qaTriage` / `reviewTriage`) picks from `skillCatalog()`
-(`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS`) into `skills`; `applySkills()`
+(`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS` and the skills switched off in
+Settings → Skills — `SavedOption` kind `dagent-skill-off`, `skillsOff()`, `/api/dagent/skills`; stored as the off names,
+so a newly installed skill is offered by default) into `skills`; `applySkills()`
 (`engine.ts`) resolves each to its `SKILL.md`, which every later brief names (brief wins on branch/commit/push/PR).
 A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<branch>` onto it before `plan`
 (none has it = FAIL); `basesOf()` then drives `syncBase`, `prePublish` and the publisher's PR target.
 
 | Node | Kind | Runs | Does | Next |
 |---|---|---|---|---|
-| `setup` | harness | git | identity, base (`origin` default or retry seed), a **worktree** per repo, restore `.te/plan.md` | readiness / FAIL |
-| `readiness` | agent | `analyst` | ready?, AC, `delivery` (none/partial/done) on base | plan / END / NEEDS_INPUT / FAIL |
-| `plan` | agent | `planner` | `planMd`, `branch`, `acMap`, `repos`, `decisions` (judgement calls, usually none); ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
-| `planCheck` | check | `planIssues()` | plan file, branch, every AC → files + test, repos in scope, each decision states point + reading | implement / plan / FAIL |
-| `implement` | agent | `implementer` | code, build/test, **commit locally, no push**; nothing to change (clean, 0 files, not blocked) → park | syncBase / NEEDS_REVIEW / FAIL |
-| `syncBase` | harness | git | fetch + rebase onto origin default (or the skill's base); conflict → abort + warning | diffGuard |
-| `diffGuard` | check | `diffViolations()` | agent/secret/unplanned-config files, credential lines; `changed` + `heads` | evaluate |
-| `evaluate` | agent | `reviewer` | `base..HEAD` vs AC + plan + warnings → `blockers` | prePublish / fix / reflect |
-| `fix` | agent | `fixer` | exactly the blockers, commit; ≤ `MAX_FIX_ATTEMPTS` (5) | syncBase / reflect |
-| `reflect` | agent | `reflector` | maybe a lesson in Root repo `KNOWLEDGE.md` | FAIL |
-| `prePublish` | check | git | clean, right branch, HEAD verified, base unmoved (re-sync ≤ `MAX_PRE_PUBLISH` 3) | publish / syncBase / FAIL |
-| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; `maxVisits: 1` | verifyPublish / FAIL |
-| `verifyPublish` | check | git + provider | remote head = HEAD, draft, ticket linked | END / NEEDS_REVIEW |
+| `setup` | harness | git | identity, base (`origin` default or retry seed), a **worktree** per repo (a retry past the plan: only the repos in its scope), restore `.te/plan.md`; a fresh retry (from `plan`) re-seats the kept readiness's skill base | readiness / FAIL |
+| `readiness` | agent | `analyst` | brief carries the work item the harness read (`readWorkItem()`, each visit — a recheck also gets the questions asked); ready?, AC, `delivery` on base; `checkReadiness()` caps PO questions at 3 and downgrades a `done` not proven per AC; not ready with no question / ready with no AC = FAIL | plan / END / NEEDS_INPUT / FAIL |
+| `plan` | agent | `planner` | `branch`, `acMap` (one row per AC by number `n`, `change` code / none), `repos`, `risks`, `decisions` (usually none), `planMd` = prose only; the harness writes `.te/plan.md` with `renderPlan()` (prose + AC map + risks + decisions). Brief carries readiness's `codeLeads` (planner only); ≤ `MAX_PLAN_ATTEMPTS` (2) | planCheck |
+| `planCheck` | check | `planIssues()` | `planMd` not empty, branch, every AC mapped exactly once by number, a `code` row names files, every row a test / how verified, no `code` row for an AC readiness proved delivered, repos in scope, each decision states point + reading; output `checked` (counts shown on a pass). A re-plan's brief carries the refused plan to amend | implement / plan / FAIL |
+| `implement` | agent | `implementer` | brief carries the whole plan (contract + "Plan steps" prose); code, build/test, **commit locally, no push**; after-deploy-only ACs go in `manualChecks` (not deviations; publisher lists them in the PR); code changed with tests not-run → reviewer warning; nothing to change (clean, 0 files, not blocked) → park | syncBase / NEEDS_REVIEW / FAIL |
+| `syncBase` | harness | git (async) | fetch + rebase onto origin default (or the skill's base); per-repo `repos` rows; conflict → abort + **blocker → fix** (the reviewer cannot resolve it); unreachable origin → reviewer warning | diffGuard / fix / FAIL |
+| `diffGuard` | check | `diffViolations()` | scans **every commit** since the base (a later delete still pushes a secret); `HARD_RULES` (agent files, secret files, credential lines) → **blocker → fix**, unplanned config → reviewer warning; `summary` (changed / planned / outside the plan), `changed` + `heads` | evaluate / fix / FAIL |
+| `evaluate` | agent | `reviewer` | `base..HEAD` vs AC + plan + warnings → `blockers`, `checked` (evidence table, shown on `/workflow`), `assumptions` (publisher lists them in the PR as "Not verified"); brief carries implement's `manualChecks` (never verified or blocked on); `checkReview()` logs an unproven pass as `reviewNotes` (UI badge, route unchanged) | prePublish / fix / reflect |
+| `fix` | agent | `fixer` | exactly the blockers (`fixBlockersOf()`: a rebase conflict, else a hard diff violation, else the review's), commit; ≤ `MAX_FIX_ATTEMPTS` (5) — shared by harness and review blockers; a harness blocker past the budget = FAIL. A later round's brief carries the previous attempt (given / reported / left unchanged); the re-review reads its disputes as "Fixer's account". `stalledFix()`: the review re-raises the blockers the last fix was given (same count, same files, ≥ 50 % word overlap) → reflect at once, not the rest of the budget | syncBase / reflect |
+| `reflect` | agent | `reflector` | maybe a lesson in Root repo `KNOWLEDGE.md`; brief: why it stops (blocked / no progress / budget), the blockers standing (what a blocked fixer was given, else the review's), what the last fix left unchanged | FAIL |
+| `prePublish` | check | git | clean, right branch, HEAD verified, base unmoved (re-sync ≤ `MAX_PRE_PUBLISH` 3). After a re-sync, diffGuard skips the re-review when every repo's own diff hashes (`diffHashes`) to what the passing review judged (`reviewedDiffs`) | publish / syncBase / FAIL |
+| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; description = `prBody()` verbatim (summary, AC table with the review's proof, verification, decisions, manual checks, not verified); `maxVisits: 1` | verifyPublish / FAIL |
+| `verifyPublish` | check | git + provider | remote head = HEAD, draft, ticket linked, PR targets the skill's base or the default branch (ADO read-back) | END / NEEDS_REVIEW |
 
 Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
 **`dagent-fix-review-v1`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
@@ -84,8 +86,14 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
    disallowed, plugins off, per-turn MCP config (`lib/mcp.ts`), related repos via `--add-dir`. The brief is the only
    handoff: implement / fix / evaluate get the plan's `acMap` + `risks` + `decisions` + `repos` from `channels.plan`
    (`planContract`; decisions are built to, never reopened — the reviewer blocks only code that breaks one; publisher
-   lists them in the PR description), evaluate also the last delivery's summary + deviations as claims (`deliveryClaims`). Each brief is saved as artifact
-   `brief:<stepId>` and shown as "Context received" on `/workflow`.
+   lists them in the PR description), evaluate also the last delivery's summary + deviations as claims (`deliveryClaims`).
+   The judging role writes a `digest` of the work item (`digestOf()`); every later brief carries it as `## Ticket`, so
+   no role re-reads the ticket. Blockers carry `evidence` + `expected` to the fixer; a re-review gets the delta since the
+   heads the last review judged (`reviewedHeads`, kept on the evaluate channel). Each brief is saved as artifact
+   `brief:<stepId>` and shown as "Context received" on `/workflow`. The digest is ticket facts only — no code locations;
+   where readiness found the code goes in `codeLeads` (`codeLeadsOf()`), handed to the planner alone.
+   `skillUse()` (`rules.ts`) reads each step's brief + log into picked / read / unread / opened skills, shown per node
+   and in the Run tab's Skills table.
 4. **Admission is `startRun()`**: preflight + `checkAgents()` (installed, named right, allows `StructuredOutput`,
    has a body, not older than bundled), then under `ticket-executor:dagent-admission`: no active D-Agent run for
    the ticket, and a free slot (`concurrentRuns`).
@@ -94,7 +102,9 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
    run `succeeded`** — the transition carries the reason, `runOutcomes().output.needsReview` exposes it, Flow Runner
    flags the row until "Mark reviewed" (`accept` only settles legacy parked runs); `output.noChange` settles the row
    `no-fix-needed`. Failed or cancelled → new run from `retryNodeFor()` (`retryPolicy.ts`: `plan` / `implement` /
-   `syncBase`), seeded with old base, branches, plan.
+   `syncBase`), seeded with old base, branches, plan — except a retry from `plan`, which commits nothing before it and so
+   starts fresh from today's base (`RetrySeed.fresh`). A readiness recheck after the PO answered first moves every
+   still-clean worktree to today's base (`refreshBase()`), dropping a skill base the last check seated.
 6. **Worktrees are per run, removed in `finish()`**; a `running` row not held by this process is failed by `reconcileOrphans()`.
 7. **`KNOWLEDGE.md` is audited**: start content on the run, diff saved as artifact `knowledge`.
 8. **Agents ship in `agents/<name>.md`**; `lib/agentPack.ts` (`BUNDLED_AGENTS` = `allAgents()`, tested) installs

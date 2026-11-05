@@ -16,7 +16,7 @@ import type {
   Transition,
 } from "../workflow/types";
 import { flowOf, GRAPH, graphById, MAX_FIX_ATTEMPTS, outline } from "./graph";
-import { deliveryOf, prNumber } from "./rules";
+import { codeLeadsOf, deliveryOf, digestOf, HARD_RULES, prNumber, skillUse } from "./rules";
 import { BRIEF_PREFIX, type Graph, type LogEntry } from "./types";
 
 export type RunRow = {
@@ -109,7 +109,19 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
 function refusals(v: unknown): UiRefusal[] {
-  return arr<{ source?: string; file?: string; issue?: string }>(v).map((r) => ({ source: r.source ?? "", file: r.file || undefined, issue: r.issue ?? "" }));
+  return arr<{ source?: string; file?: string; issue?: string; evidence?: string; expected?: string }>(v).map((r) => ({
+    source: r.source ?? "",
+    file: r.file || undefined,
+    issue: r.issue ?? "",
+    ...(r.evidence ? { evidence: r.evidence } : {}),
+    ...(r.expected ? { expected: r.expected } : {}),
+  }));
+}
+
+// The ticket digest a judging role wrote — kept on its output so /workflow shows what every later role was given.
+function digestPart(d: Data): { digest?: { summary: string; details: string[] } } {
+  const g = digestOf({ channels: { readiness: d } });
+  return g ? { digest: { summary: g.summary, details: g.details } } : {};
 }
 
 export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: string): NodeOutput | null {
@@ -117,21 +129,53 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
   if (!Object.keys(d).length) return null;
   switch (nodeId) {
     case "setup":
-      return { node: "setup", mode: str(d.mode), branch: str(d.branch), baseSha: str(d.baseSha).slice(0, 7), repos: arr(d.repos) };
+      return {
+        node: "setup",
+        branch: str(d.branch),
+        baseSha: str(d.baseSha).slice(0, 7),
+        repos: arr<Data>(d.repos).map((r) => ({ name: str(r.name), path: str(r.path), base: str(r.base).slice(0, 7), from: str(r.from), branch: str(r.branch) })),
+        warnings: arr<string>(d.warnings).filter((w) => typeof w === "string"),
+      };
     case "readiness":
       return {
         node: "readiness",
         ready: !!d.ready,
+        acceptanceCriteria: arr<string>(d.acceptanceCriteria).map(String),
+        skills: arr<Data>(d.skills).map((s) => ({ name: str(s.name), reason: str(s.reason) })),
+        baseBranch: str(d.baseBranch),
         missing: arr(d.missing),
         ambiguities: arr(d.ambiguities),
         questions: arr(d.questions),
         delivery: d.delivery ? deliveryOf({ channels: { readiness: d } }) : undefined,
+        codeLeads: codeLeadsOf({ channels: { readiness: d } }),
+        ...digestPart(d),
       };
     case "plan":
-      return { node: "plan", acMap: arr(d.acMap), repos: arr(d.repos), risks: arr(d.risks), decisions: arr(d.decisions), planMd };
+      // Each attempt shows its own plan — the run's last plan artifact belongs to the last attempt only.
+      return {
+        node: "plan",
+        acMap: arr<Data>(d.acMap).map((a, i) => ({
+          n: typeof a.n === "number" ? a.n : i + 1,
+          ac: str(a.ac),
+          change: a.change === "none" ? "none" : "code",
+          files: arr<string>(a.files).map(String),
+          test: str(a.test),
+        })),
+        repos: arr(d.repos),
+        risks: arr(d.risks),
+        decisions: arr(d.decisions),
+        planMd: str(d.planMd),
+      };
     case "planCheck":
-    case "prePublish":
-      return { node: nodeId, passed: !!d.passed, issues: arr(d.issues) };
+    case "prePublish": {
+      const k = d.checked as Data | undefined;
+      return {
+        node: nodeId,
+        passed: !!d.passed,
+        issues: arr(d.issues),
+        ...(k ? { checked: { criteria: num(k.criteria), mapped: num(k.mapped), code: num(k.code), none: num(k.none), files: num(k.files), repos: arr<string>(k.repos).map(String) } } : {}),
+      };
+    }
     case "implement":
     case "fix": {
       const v = (d.verification ?? {}) as Data;
@@ -140,23 +184,42 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
         commitSha: str(d.commitSha),
         summary: str(d.summary),
         filesChanged: num(d.filesChanged),
-        testExemption: str(d.testExemption),
         verification: { tests: str(v.tests), build: str(v.build), acceptanceCriteria: str(v.acceptanceCriteria) },
+        deviations: arr<Data>(d.deviations).map((x) => ({ what: str(x.what), why: str(x.why) })),
+        manualChecks: arr<Data>(d.manualChecks).map((x) => ({ n: num(x.n), check: str(x.check) })),
         addressed: nodeId === "fix" ? refusals(d.input) : undefined,
       };
     }
     case "syncBase":
-      return { node: "syncBase", rebased: !!d.rebased, behindBy: num(d.behindBy), conflicts: arr(d.conflicts) };
+      return {
+        node: "syncBase",
+        rebased: !!d.rebased,
+        behindBy: num(d.behindBy),
+        conflicts: arr(d.conflicts),
+        repos: arr<Data>(d.repos).map((r) => ({ name: str(r.name), upstream: str(r.upstream), behind: num(r.behind), status: str(r.status), base: str(r.base) })),
+      };
     case "testGate":
       return { node: "testGate", passed: !!d.passed, results: arr(d.results) };
     case "diffGuard":
-      return { node: "diffGuard", passed: !arr(d.violations).length, violations: arr(d.violations) };
+    {
+      const s = d.summary as Data | undefined;
+      return {
+        node: "diffGuard",
+        passed: !arr(d.violations).length,
+        violations: arr<Data>(d.violations).map((v) => ({ rule: str(v.rule), file: str(v.file), hard: HARD_RULES.has(str(v.rule)) })),
+        ...(s ? { summary: { changed: num(s.changed), planned: num(s.planned), unplanned: arr<string>(s.unplanned).map(String) } } : {}),
+      };
+    }
     case "evaluate":
       return {
         node: "evaluate",
         verdict: d.verdict === "pass" ? "pass" : "changes-required",
-        blockers: arr<{ file?: string; issue?: string }>(d.blockers).map((b) => ({ source: "evaluate", file: b.file || undefined, issue: b.issue ?? "" })),
+        blockers: refusals(arr<Data>(d.blockers).map((b) => ({ ...b, source: "evaluate" }))),
         reviewedDelta: attempt > 1,
+        checked: arr<Data>(d.checked).map((x) => ({ subject: str(x.subject), how: str(x.how), evidence: str(x.evidence), result: str(x.result) })),
+        assumptions: arr<string>(d.assumptions).map(String),
+        // Absent on reviews before the harness checked them — those show no badge rather than a guessed one.
+        reviewNotes: arr<string>(d.reviewNotes).map(String),
       };
     case "reflect":
       return { node: "reflect", recorded: !!d.recorded, lesson: str(d.lesson) };
@@ -168,9 +231,9 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
     case "verifyPublish":
       return { node: "verifyPublish", passed: !!d.passed, checks: arr(d.checks) };
     case "reviewTriage":
-      return { node: "reviewTriage", threads: arr(d.threads), planMd };
+      return { node: "reviewTriage", threads: arr(d.threads), planMd, ...digestPart(d) };
     case "qaTriage":
-      return { node: "qaTriage", outcome: d.outcome === "no-fix-needed" ? "no-fix-needed" : "fix", findings: arr(d.findings), qaReply: str(d.qaReply), planMd };
+      return { node: "qaTriage", outcome: d.outcome === "no-fix-needed" ? "no-fix-needed" : "fix", findings: arr(d.findings), qaReply: str(d.qaReply), planMd, ...digestPart(d) };
     case "respond":
       return { node: "respond", pushed: !!d.pushed, threadsReplied: num(d.threadsReplied) };
   }
@@ -188,6 +251,9 @@ function runState(row: RunRow): RunState {
 
 const last = <T>(list: T[]) => list[list.length - 1];
 
+// The judging roles that pick a run's skills; their output names the picks.
+const PICKERS = ["readiness", "qaTriage", "reviewTriage"];
+
 export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live, tracker: TrackerFacts | null = null): Omit<RunView, "newest"> {
   const graph = graphById(row.graphId) ?? GRAPH;
   const flow = FLOW_LABEL[flowOf(graph.id)];
@@ -196,11 +262,18 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
   const planMd = last(plans)?.body ?? "";
   const briefs = new Map(artifacts.filter((a) => a.kind.startsWith(BRIEF_PREFIX)).map((a) => [a.kind.slice(BRIEF_PREFIX.length), a.body]));
   const logs: LogLine[] = [];
+  // The run's picked skills, for an agent step kept before briefs were saved (it has no "Skills to follow" to read).
+  const runSkills = arr<{ name?: unknown }>(((stepRows.find((s) => PICKERS.includes(s.nodeId) && s.output)?.output ?? {}) as Data).skills).map((x) => str(x.name)).filter(Boolean);
   const steps: Step[] = stepRows.map((s, i) => {
     const entries = live && live.stepId === s.id && s.status === "running" ? live.logs : arr<LogEntry>(s.logLines);
     const from = logs.length;
     const picked = entries.map((e) => /^model (\S+)(?: · effort (\S+))?$/.exec(e.text)).find(Boolean);
     entries.forEach((e) => logs.push({ ts: e.t, lvl: e.lvl, node: s.nodeId, text: e.text, attempt: s.attempt }));
+    const brief = briefs.get(s.id) ?? "";
+    const picks = PICKERS.includes(s.nodeId) ? arr<{ name?: unknown }>((s.output as Data | null)?.skills).map((x) => str(x.name)).filter(Boolean) : [];
+    const isPicker = PICKERS.includes(s.nodeId);
+    const isAgent = defs.find((d) => d.id === s.nodeId)?.kind === "agent";
+    const skills = isAgent && (brief || picks.length || runSkills.length) ? skillUse(brief, entries.map((e) => e.text), picks, isPicker ? [] : runSkills) : [];
     return {
       id: s.id || `st${i}`,
       nodeId: s.nodeId,
@@ -218,8 +291,9 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
       logFrom: from,
       logTo: Math.max(from, logs.length - 1),
       input: s.input ? refusals(s.input) : null,
-      brief: briefs.get(s.id) ?? "",
+      brief,
       ...(picked ? { model: picked[1], ...(picked[2] ? { effort: picked[2] } : {}) } : {}),
+      ...(skills.length ? { skills } : {}),
     };
   });
 

@@ -28,7 +28,7 @@ export type NodeStatus =
   | "passed"
   | "reached";
 
-export type Refusal = { source: string; file?: string; issue: string };
+export type Refusal = { source: string; file?: string; issue: string; evidence?: string; expected?: string };
 
 export type PullRequestRef = {
   repo: string;
@@ -40,42 +40,81 @@ export type PullRequestRef = {
 
 export type Verification = { tests: string; build: string; acceptanceCriteria: string };
 
+/** The judging role's reading of the work item, which every later brief carries as its Ticket section. */
+export type TicketDigest = { summary: string; details: string[] };
+
 export type NodeOutput =
-  | { node: "setup"; mode: string; branch: string; baseSha: string; repos: { name: string; path: string }[] }
+  | { node: "setup"; branch: string; baseSha: string; repos: { name: string; path: string; base: string; from: string; branch: string }[]; warnings: string[] }
   | {
       node: "readiness";
       ready: boolean;
+      acceptanceCriteria: string[];
+      skills: { name: string; reason: string }[];
+      baseBranch: string;
       missing: string[];
       ambiguities: string[];
       questions: string[];
       delivery?: { status: "none" | "partial" | "done"; evidence: { ac: string; repo: string; proof: string }[] };
+      codeLeads: { at: string; what: string }[];
+      digest?: TicketDigest;
     }
   | {
       node: "plan";
-      acMap: { ac: string; files: string[]; test: string }[];
+      acMap: { n: number; ac: string; change: "code" | "none"; files: string[]; test: string }[];
       repos: string[];
       risks: string[];
       decisions: { point: string; decision: string; why: string }[];
       planMd: string;
     }
-  | { node: "planCheck" | "prePublish"; passed: boolean; issues: string[] }
+  | {
+      node: "planCheck" | "prePublish";
+      passed: boolean;
+      issues: string[];
+      /** planCheck only: what the check covered. */
+      checked?: { criteria: number; mapped: number; code: number; none: number; files: number; repos: string[] };
+    }
   | {
       node: "implement" | "fix";
       commitSha: string;
       summary: string;
       filesChanged: number;
-      testExemption: string;
       verification: Verification;
+      deviations: { what: string; why: string }[];
+      manualChecks: { n: number; check: string }[];
       addressed?: Refusal[];
     }
-  | { node: "syncBase"; rebased: boolean; behindBy: number; conflicts: string[] }
+  | {
+      node: "syncBase";
+      rebased: boolean;
+      behindBy: number;
+      conflicts: string[];
+      /** Per repo; empty on runs before it was recorded. */
+      repos: { name: string; upstream: string; behind: number; status: string; base: string }[];
+    }
   | {
       node: "testGate";
       passed: boolean;
       results: { repo: string; branch: string; files: number; tests: string[]; passed: boolean; issue: string }[];
     }
-  | { node: "diffGuard"; passed: boolean; violations: { rule: string; file: string }[] }
-  | { node: "evaluate"; verdict: "pass" | "changes-required"; blockers: Refusal[]; reviewedDelta: boolean }
+  | {
+      node: "diffGuard";
+      passed: boolean;
+      /** `hard`: blocks — went straight to the fixer; otherwise a warning for the reviewer. */
+      violations: { rule: string; file: string; hard: boolean }[];
+      summary?: { changed: number; planned: number; unplanned: string[] };
+    }
+  | {
+      node: "evaluate";
+      verdict: "pass" | "changes-required";
+      blockers: Refusal[];
+      reviewedDelta: boolean;
+      /** The reviewer's evidence table: one row per AC and per bug-axis check. */
+      checked: { subject: string; how: string; evidence: string; result: string }[];
+      /** What it could not verify. */
+      assumptions: string[];
+      /** The harness's consistency notes (`checkReview`); any means an unproven verdict. */
+      reviewNotes: string[];
+    }
   | { node: "reflect"; recorded: boolean; lesson: string }
   | { node: "publish"; prs: PullRequestRef[] }
   | { node: "verifyPublish"; passed: boolean; checks: { name: string; ok: boolean }[] }
@@ -83,9 +122,14 @@ export type NodeOutput =
       node: "reviewTriage";
       threads: { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string }[];
       planMd: string;
+      digest?: TicketDigest;
     }
-  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; kind?: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string }
+  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; kind?: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string; digest?: TicketDigest }
   | { node: "respond"; pushed: boolean; threadsReplied: number };
+
+/** How one step dealt with one skill: the picker `picked` it; a later role was told to follow it and `read` its
+ *  SKILL.md, or left it `unread`; or the step `opened` a skill nobody assigned it. */
+export type SkillUse = { name: string; state: "picked" | "read" | "unread" | "opened" };
 
 export type Step = {
   id: string;
@@ -109,6 +153,8 @@ export type Step = {
   /** The model and effort an agent step ran on, read from the step's own log. Absent for a check/harness step. */
   model?: string;
   effort?: string;
+  /** The skills the step picked, was told to follow, or opened unasked (`skillUse()`). Empty for a check/harness step. */
+  skills?: SkillUse[];
 };
 
 export type Transition = { seq: number; fromNode: string; toNode: string; reason: string; at: number };
@@ -186,10 +232,11 @@ export type ListItem = {
   mono?: boolean;
 };
 
-export type Section =
+/** `folded`: debug detail a developer opens only when something went wrong — shown as its title row, body one tap away. */
+export type Section = { folded?: boolean } & (
   | { kind: "kv"; title?: string; icon?: string; tone?: Tone; rows: { k: string; v: string; tone?: Tone; mono?: boolean }[] }
   | { kind: "list"; title?: string; icon?: string; tone?: Tone; items: ListItem[] }
-  | { kind: "table"; title?: string; icon?: string; tone?: Tone; cols: string[]; rows: Cell[][] }
+  | { kind: "table"; title?: string; icon?: string; tone?: Tone; cols: string[]; rows: Cell[][]; /** The panel reads better given room: its icon opens it in a dialog. */ expandable?: boolean }
   | { kind: "md"; title?: string; icon?: string; tone?: Tone; text: string }
   | { kind: "prs"; title?: string; icon?: string; tone?: Tone; prs: { repo: string; num: number; url: string; meta: string; draft: boolean }[] }
   | { kind: "copy"; questions: string[] }
@@ -203,7 +250,8 @@ export type Section =
       /** The node `retryNodeFor()` picked, marked "Suggested"; null = a fresh start is suggested. */
       suggestedId: string | null;
       advice: { title: string; text: string; tone: Tone };
-    };
+    }
+);
 
 export type LogLevel = "INFO" | "WARN" | "ERROR";
 

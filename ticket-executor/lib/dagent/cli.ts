@@ -97,6 +97,8 @@ function handle(obj: Record<string, unknown>, out: TurnResult, log: (lvl: LogEnt
         const name = String(b.name ?? "");
         const input = (b.input ?? {}) as Record<string, unknown>;
         if (name === "StructuredOutput") log("INFO", "⇢ reporting the step's result");
+        // Named, so /workflow can show which skill a step invoked (`skillUse()`).
+        else if (name === "Skill" && typeof input.skill === "string") log("INFO", `✎ Skill ${input.skill}`);
         else if (typeof input.command === "string") log("INFO", `$ ${first(input.command, 160)}`);
         else if (typeof input.file_path === "string") log("INFO", `✎ ${name} ${input.file_path}`);
         else log("INFO", `✎ ${name}`);

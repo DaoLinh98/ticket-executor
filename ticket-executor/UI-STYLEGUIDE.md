@@ -49,7 +49,7 @@ never a hex in a component. Three consequences, all of which have bitten:
 | `displayText(size, color?)` | Barlow Condensed 800 uppercase for headlines and big numbers: `hero` (Home) · `title` · `stat` (KPI values) · `heading` (card/section names). The only fluid `clamp()` sizes; body text stays on `FONT`. |
 | `fieldLabel()` / `fieldInput(opts?)` | Form caption / dark inset input chrome. |
 | `sectionCaption()` | Uppercase caption over read-only content; one step smaller than `fieldLabel()`. |
-| `codeBlock(opts?)` | Read-only mono code / command block. |
+| `codeBlock(opts?)` | Read-only mono code / command block. `wrap: true` wraps long lines instead of scrolling sideways — for prose given room to breathe (a panel opened in a dialog). |
 | `dropdownPanelStyle(opts?)` | Dropdown/menu chrome. `opts.maxHeight` also sets `overflowY: auto`. |
 | `te-table-sticky-head` | A table row that must stay pinned while the rest scrolls under it: `position: sticky; top: 0` plus an opaque `--te-panel-bg` so rows don't show through. Put it on the header row and let whatever ancestor already scrolls (a `te-sprint-pane`, a card) carry the scroll — see `app/(app)/insights/page.tsx`'s `NodeTable`. |
 | `te-scroll-hidden` | Hides a scroll container's scrollbar (standard + WebKit) without disabling scrolling, for a pane whose own chrome (a sticky header, a toolbar) already signals it scrolls — swap in for `te-scroll`'s themed scrollbar there. |
@@ -61,6 +61,7 @@ never a hex in a component. Three consequences, all of which have bitten:
 | `LoadingRing` | THE only spinner, always accent orange. Not over a `primary` fill (orange-on-orange) — use `warning`/`ghost`/`outline` or text-only there. |
 | `RichText` + `.te-rich` | THE way to render provider rich text, styled by selector, never inline. The HTML must already have passed `sanitizeHtml()` at the producer. |
 | `Tooltip` (`app/Tooltip.tsx`) | Mounted once in `app/layout.tsx`: turns every `title=` into a fading tooltip — keep using plain `title`, never a native-only popup or a bespoke tooltip. Hidden on touch. |
+| `FoldToggle` (`app/ticket-executor/workflow/parts.tsx`) | THE fold row for debug detail in the workflow inspector: the whole row toggles (tap target, `aria-expanded`), chevron at the end. A `Section` marked `folded: true` renders through it. Decisions stay open; briefs, token accounting, logs and hand-off data fold. |
 | `useBoltsContext()` | THE only click effect (`BoltsProvider` is mounted once in `app/layout.tsx`). Always accent orange; `{ big: true }` only for a run's primary "go" action. |
 
 ## Hard rules
