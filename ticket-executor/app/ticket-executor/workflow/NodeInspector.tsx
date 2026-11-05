@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { COLORS, FONT, card, chipShape, codeBlock, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
+import { COLORS, FONT, chipShape, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
 import { IC, STATUS, TONE, clock } from "@/lib/workflow/meta";
 import type { Inspector } from "@/lib/workflow/present";
 import type { LogLevel, LogLine, Section } from "@/lib/workflow/types";
-import { Badge, Ico, IconTile, MONO, StatusBadge } from "./parts";
+import BriefCard from "./BriefCard";
+import { Badge, FoldToggle, Ico, IconTile, MONO, StatusBadge } from "./parts";
 import Sections from "./Sections";
 
 export type InspectorTab = "node" | "run";
@@ -45,13 +46,58 @@ const FILTERS: [LogFilter, string][] = [
 
 const LEVEL_COLOR: Record<LogLevel, string> = { INFO: "var(--te-text-dim)", WARN: "var(--te-warning)", ERROR: "var(--te-danger)" };
 
+const SKILL_LEGEND = "orange = picked for the ticket · green = read · amber = assigned, never read · blue = opened unasked";
+
 const heading = { ...sectionCaption(), margin: "18px 0 6px", fontSize: FONT.xs, display: "flex", alignItems: "center", gap: 6 } as const;
+
+const metricGrid = (list: { k: string; v: string }[]) => (
+  <dl style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, margin: "8px 0 0" }}>
+    {list.map((m) => (
+      <div key={m.k} style={{ ...chipShape(6), padding: "6px 8px", background: "var(--te-panel-bg-dark)" }}>
+        <dt style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{m.k}</dt>
+        <dd style={{ margin: "2px 0 0", fontSize: FONT.sm, fontFamily: MONO }}>{m.v}</dd>
+      </div>
+    ))}
+  </dl>
+);
+
+// Token accounting and timestamps: folded under the three numbers a developer reads.
+function MoreMetrics({ list }: { list: { k: string; v: string }[] }) {
+  const [open, setOpen] = useState(false);
+  if (!list.length) return null;
+  return (
+    <div style={{ marginTop: 6, fontSize: FONT.xs, color: COLORS.textMuted }}>
+      <FoldToggle open={open} onToggle={() => setOpen((o) => !o)} label="tokens and timing">
+        Tokens &amp; timing
+      </FoldToggle>
+      {open ? metricGrid(list) : null}
+    </div>
+  );
+}
+
+// The step's log is what a developer watches while it runs; once it ended it is debug detail, folded.
+function LogFold({ live, children }: { live: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(live);
+  return (
+    <>
+      <h3 style={heading}>
+        <FoldToggle open={open} onToggle={() => setOpen((o) => !o)} label="the activity log">
+          <Ico d={IC.terminal} size={13} />
+          Activity log
+        </FoldToggle>
+      </h3>
+      {open ? children : null}
+    </>
+  );
+}
 
 export default function NodeInspector(p: Props) {
   const [wide, setWide] = useState(false);
   const ins = p.inspector;
   const isNode = p.tab === "node";
   const secs = isNode ? ins.sections : p.runSections;
+  // Folds start closed again on every node and attempt picked.
+  const foldKey = `${p.tab}:${ins.sub}#${ins.attemptIndex}`;
   return (
     <aside
       aria-label="Inspector"
@@ -115,6 +161,20 @@ export default function NodeInspector(p: Props) {
                 </Badge>
               ))}
             </span>
+            {ins.skills.length ? (
+              <div style={{ marginTop: 10 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginRight: 2 }}>Skills</span>
+                  {ins.skills.map((c) => (
+                    <Badge key={c.text} tone={c.tone} icon={c.icon} size="xs" title={c.title}>
+                      {c.text}
+                    </Badge>
+                  ))}
+                </span>
+                {/* Spelled out once: a phone has no tooltip to explain the chip's colour. */}
+                <span style={{ display: "block", marginTop: 4, fontSize: FONT.xs, color: COLORS.textMuted }}>{SKILL_LEGEND}</span>
+              </div>
+            ) : null}
             {ins.note ? (
               <p style={{ ...chipShape(6), margin: "10px 0 0", padding: "8px 10px", fontSize: FONT.sm, background: ins.note.tone === "neutral" ? "var(--te-panel-bg-dark)" : TONE[ins.note.tone].bg, color: COLORS.textSoft }}>{ins.note.text}</p>
             ) : null}
@@ -139,14 +199,8 @@ export default function NodeInspector(p: Props) {
                     );
                   })}
                 </div>
-                <dl style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, margin: "12px 0 0" }}>
-                  {ins.metrics.map((m) => (
-                    <div key={m.k} style={{ ...chipShape(6), padding: "6px 8px", background: "var(--te-panel-bg-dark)" }}>
-                      <dt style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{m.k}</dt>
-                      <dd style={{ margin: "2px 0 0", fontSize: FONT.sm, fontFamily: MONO }}>{m.v}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <div style={{ marginTop: 4 }}>{metricGrid(ins.metrics)}</div>
+                <MoreMetrics key={foldKey} list={ins.metricsMore} />
                 {ins.error ? <p style={{ ...chipShape(6), margin: "8px 0 0", padding: 8, fontSize: FONT.xs, fontFamily: MONO, background: "var(--te-danger-soft)", color: COLORS.danger }}>{ins.error}</p> : null}
               </>
             ) : null}
@@ -175,21 +229,10 @@ export default function NodeInspector(p: Props) {
         {!isNode ? p.runTop : null}
 
         {!p.json || !isNode ? (
-          <Sections sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} />
+          <Sections key={`sections:${foldKey}`} sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} />
         ) : null}
 
-        {isNode && ins.brief ? (
-          <details style={{ ...card({ padding: "0 12px", background: COLORS.panelBgDark, border: COLORS.borderSubtle }), marginTop: 12 }}>
-            <summary className="te-wf-tap" style={{ minHeight: 40, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
-              <IconTile d={IC.file} tone="indigo" size={24} iconSize={14} />
-              <span style={{ flex: 1 }}>Context received</span>
-              <span style={{ fontSize: FONT.xs, fontWeight: 400, color: COLORS.textMuted }}>the brief this agent started from</span>
-            </summary>
-            <pre className="te-scroll" style={{ ...codeBlock({ fontSize: FONT.xs }), margin: "0 0 12px", maxHeight: 420, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
-              {ins.brief}
-            </pre>
-          </details>
-        ) : null}
+        {isNode && ins.brief ? <BriefCard key={`brief:${foldKey}`} label={ins.label} brief={ins.brief} prev={ins.briefPrev} prevAttempt={ins.briefPrevAttempt} /> : null}
 
         {isNode ? (
           <>
@@ -210,10 +253,7 @@ export default function NodeInspector(p: Props) {
               {!ins.transitions.length ? <li style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Not reached in this run.</li> : null}
             </ul>
 
-            <h3 style={heading}>
-              <Ico d={IC.terminal} size={13} />
-              Activity log
-            </h3>
+            <LogFold key={`${foldKey}:${p.following || ins.status === "running"}`} live={p.following || ins.status === "running"}>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
               {FILTERS.map(([k, label]) => (
                 <button
@@ -242,6 +282,7 @@ export default function NodeInspector(p: Props) {
               ))}
               {!p.logs.length ? <span style={{ color: COLORS.textMuted }}>No lines match.</span> : null}
             </div>
+            </LogFold>
           </>
         ) : null}
       </div>

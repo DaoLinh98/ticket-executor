@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { COLORS, FONT, card, chipShape, ctaButtonStyle, pill } from "@/lib/ui";
 import { IC, TONE } from "@/lib/workflow/meta";
 import { FRESH_START } from "@/lib/workflow/present";
 import type { Cell, Section, Tone } from "@/lib/workflow/types";
 import OutputMarkdown from "./OutputMarkdown";
-import { Badge, IconTile, Ico, MONO } from "./parts";
+import PanelDialog from "./PanelDialog";
+import { Badge, FoldToggle, IconTile, Ico, MONO } from "./parts";
 
 type Props = {
   sections: Section[];
@@ -18,13 +20,19 @@ type Props = {
 const toneColor = (t?: Tone) => (t ? TONE[t].c : COLORS.text);
 
 // Every titled section is a card: an icon tile in the section's tone, the title, and how many rows it holds.
-function Title({ title, icon, tone, count }: { title?: string; icon?: string; tone?: Tone; count?: number }) {
+// A section that reads better given room (`expandable`) gets one button, at the end of its title, that opens it.
+function Title({ title, icon, tone, count, onExpand }: { title?: string; icon?: string; tone?: Tone; count?: number; onExpand?: () => void }) {
   if (!title) return null;
   return (
     <h3 style={{ margin: "0 0 10px", display: "flex", alignItems: "center", gap: "8px", fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
       <IconTile d={icon ?? IC.list} tone={tone ?? "muted"} size={24} iconSize={14} />
       <span style={{ flex: 1, minWidth: 0 }}>{title}</span>
       {count ? <span style={pill({ color: COLORS.textDim, background: "var(--te-border-subtle)", size: "xs" })}>{count}</span> : null}
+      {onExpand ? (
+        <button type="button" className="te-wf-tap" aria-label={`Open ${title} in a larger view`} title="Open in a larger view" onClick={onExpand} style={{ ...chipShape(6), width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${COLORS.border}`, background: "transparent", color: COLORS.textDim, cursor: "pointer" }}>
+          <Ico d={IC.out} size={12} sw={2.2} />
+        </button>
+      ) : null}
     </h3>
   );
 }
@@ -33,11 +41,74 @@ const boxed = (sec: Section) => sec.kind !== "copy" && sec.kind !== "retry";
 
 const cellOf = (c: Cell) => (typeof c === "string" ? { t: c, tone: undefined, mono: false } : { t: c.t, tone: c.tone, mono: !!c.mono });
 
+// A table row set given room: one card per row, the first cell its heading, the
+// rest labelled fields — the same reading as inline, at a size worth opening.
+function RoomyTable({ sec }: { sec: Extract<Section, { kind: "table" }> }) {
+  return (
+    <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+      {sec.rows.map((row, r) => {
+        const [head, ...rest] = row.map(cellOf);
+        return (
+          <li key={r} style={{ ...chipShape(6), padding: "14px 16px", background: COLORS.panelBg, borderLeft: `3px solid ${head.tone ? TONE[head.tone].c : sec.tone ? TONE[sec.tone].c : COLORS.border}` }}>
+            <span style={{ display: "block", fontSize: FONT.md, fontWeight: 600, lineHeight: 1.5, color: head.tone ? TONE[head.tone].c : COLORS.text, wordBreak: "break-word", fontFamily: head.mono ? MONO : undefined }}>{head.t}</span>
+            {rest.length ? (
+              <dl style={{ margin: "10px 0 0", display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 14px", alignItems: "baseline" }}>
+                {rest.map((cell, c) => (
+                  <div key={c} style={{ display: "contents" }}>
+                    <dt style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{sec.cols[c + 1]}</dt>
+                    <dd style={{ margin: 0, minWidth: 0, fontSize: FONT.base, lineHeight: 1.55, color: cell.tone ? TONE[cell.tone].c : COLORS.textSoft, wordBreak: "break-word", fontFamily: cell.mono ? MONO : undefined }}>{cell.t}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** A section's rows as plain text, for the dialog's translation turn — the same
+ *  lines it shows, so VIE and ENG read the same content. */
+function tablePlainText(sec: Extract<Section, { kind: "table" }>): string {
+  return sec.rows
+    .map((row) => {
+      const [head, ...rest] = row.map(cellOf);
+      return [`${sec.cols[0]}: ${head.t}`, ...rest.map((cell, c) => `${sec.cols[c + 1]}: ${cell.t}`)].join("\n");
+    })
+    .join("\n\n");
+}
+
+// A folded section is its title row only; tapping it shows the body with the title already above it.
+function FoldedTitle({ sec, open, onToggle }: { sec: Section; open: boolean; onToggle: () => void }) {
+  const title = "title" in sec ? sec.title ?? "" : "";
+  const count = sec.kind === "list" ? sec.items.length : sec.kind === "table" ? sec.rows.length : 0;
+  return (
+    <div style={{ margin: open ? "0 0 10px" : 0, fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
+      <FoldToggle open={open} onToggle={onToggle} label={title}>
+        <IconTile d={("icon" in sec && sec.icon) || IC.list} tone={("tone" in sec && sec.tone) || "muted"} size={24} iconSize={14} />
+        <span style={{ flex: 1, minWidth: 0 }}>{title}</span>
+        {count ? <span style={pill({ color: COLORS.textDim, background: "var(--te-border-subtle)", size: "xs" })}>{count}</span> : null}
+      </FoldToggle>
+    </div>
+  );
+}
+
 export default function Sections({ sections, copied, onCopy, retryFrom, onRetryPick }: Props) {
+  const [expanded, setExpanded] = useState<Extract<Section, { kind: "table" }> | null>(null);
+  const [opened, setOpened] = useState<Set<number>>(new Set());
+  const toggle = (i: number) => setOpened((s) => (s.has(i) ? new Set([...s].filter((x) => x !== i)) : new Set(s).add(i)));
   return (
     <>
-      {sections.map((sec, i) => (
+      {sections.map((folded, i) => {
+        const open = !folded.folded || opened.has(i);
+        // The body of a folded section drops its own title: the fold row above already shows it.
+        const sec = (folded.folded ? { ...folded, title: undefined } : folded) as Section;
+        return (
         <section key={i} style={{ marginTop: "12px", ...(boxed(sec) ? card({ padding: "12px", background: COLORS.panelBgDark, border: COLORS.borderSubtle }) : null) }}>
+          {folded.folded ? <FoldedTitle sec={folded} open={open} onToggle={() => toggle(i)} /> : null}
+          {open ? (
+          <>
           {sec.kind === "kv" ? (
             <>
               <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
@@ -82,7 +153,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
 
           {sec.kind === "table" ? (
             <>
-              <Title title={sec.title} icon={sec.icon} tone={sec.tone} count={sec.rows.length} />
+              <Title title={sec.title} icon={sec.icon} tone={sec.tone} count={sec.rows.length} onExpand={sec.expandable ? () => setExpanded(sec) : undefined} />
               <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {sec.rows.map((row, r) => {
                   const [head, ...rest] = row.map(cellOf);
@@ -170,8 +241,23 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
           {sec.kind === "retry" ? (
             <RetrySection sec={sec} picked={retryFrom ?? sec.defaultId} onPick={onRetryPick} />
           ) : null}
+          </>
+          ) : null}
         </section>
-      ))}
+        );
+      })}
+
+      {expanded ? (
+        <PanelDialog
+          title={expanded.title ?? "Section"}
+          subtitle={`${expanded.rows.length} row${expanded.rows.length === 1 ? "" : "s"} · ${expanded.cols.join(" · ")}`}
+          icon={expanded.icon ?? IC.list}
+          tone={expanded.tone ?? "muted"}
+          source={tablePlainText(expanded)}
+          eng={<RoomyTable sec={expanded} />}
+          onClose={() => setExpanded(null)}
+        />
+      ) : null}
     </>
   );
 }

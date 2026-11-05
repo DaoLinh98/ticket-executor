@@ -474,6 +474,10 @@ export function fieldInput(opts?: {
 export function codeBlock(opts?: {
   padding?: string;
   fontSize?: string;
+  /** Wrap long lines instead of scrolling sideways — for read-only prose given
+   *  room to breathe (a panel opened in a dialog), where a sideways scroll
+   *  hides the end of every line. */
+  wrap?: boolean;
 }): CSSProperties {
   return {
     ...card({
@@ -485,8 +489,8 @@ export function codeBlock(opts?: {
     fontFamily: "var(--font-mono), monospace",
     fontSize: opts?.fontSize ?? FONT.base,
     lineHeight: 1.7,
-    whiteSpace: "pre",
-    overflowX: "auto",
+    whiteSpace: opts?.wrap ? "pre-wrap" : "pre",
+    ...(opts?.wrap ? { wordBreak: "break-word", overflowX: "visible" } : { overflowX: "auto" }),
     margin: 0,
   };
 }

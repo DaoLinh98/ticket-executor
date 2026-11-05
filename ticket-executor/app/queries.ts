@@ -64,6 +64,24 @@ export const fetchSettings = async (): Promise<SettingsPayload> => {
   return (await r.json()) as SettingsPayload;
 };
 
+/** One machine skill and whether D-Agent runs are offered it (`/api/dagent/skills`). */
+export type DagentSkill = { name: string; description: string; enabled: boolean };
+
+export const DAGENT_SKILLS_KEY = ["dagent-skills"] as const;
+
+const readSkills = async (r: Response): Promise<DagentSkill[]> => {
+  const d = await r.json();
+  if (!r.ok || !Array.isArray(d?.skills)) throw new Error(d?.error || "Could not read the skills.");
+  return d.skills as DagentSkill[];
+};
+
+export const useDagentSkills = () =>
+  useQuery({ queryKey: DAGENT_SKILLS_KEY, queryFn: async () => readSkills(await fetch("/api/dagent/skills", { cache: "no-store" })), staleTime: 0 });
+
+/** Switches one skill on or off; resolves to the whole list as the server now has it. */
+export const putDagentSkill = async (name: string, enabled: boolean): Promise<DagentSkill[]> =>
+  readSkills(await fetch("/api/dagent/skills", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, enabled }) }));
+
 export const CLAUDE_MODELS_KEY = ["claude-models"] as const;
 
 export const useClaudeModels = () =>
@@ -138,3 +156,23 @@ export const fetchPlanRow = async (ticketId: string, provider: string): Promise<
 
 export const usePlanRow = (ticketId: string, provider: string) =>
   useQuery({ queryKey: planRowKey(ticketId, provider), queryFn: () => fetchPlanRow(ticketId, provider), enabled: !!ticketId, staleTime: 0 });
+
+// A panel's Vietnamese translation — one Claude turn, so it is asked for only on demand, never retried, and kept
+// for the session (`staleTime: Infinity`) so reopening a panel does not pay for it again. Keyed by a hash of the text.
+const textHash = (s: string) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return `${(h >>> 0).toString(36)}-${s.length}`;
+};
+
+export const translationKey = (text: string) => ["translate", textHash(text)] as const;
+
+export const fetchTranslation = async (text: string): Promise<string> => {
+  const r = await fetch("/api/translate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || typeof d?.vietnamese !== "string") throw new Error(d?.error || "Translation failed.");
+  return d.vietnamese as string;
+};
+
+export const useTranslation = (text: string, enabled: boolean) =>
+  useQuery({ queryKey: translationKey(text), queryFn: () => fetchTranslation(text), enabled: enabled && !!text.trim(), staleTime: Infinity, gcTime: 30 * 60_000, retry: false });

@@ -28,11 +28,33 @@ import type {
   Refusal,
   Run,
   Section,
+  SkillUse,
   Step,
+  TicketDigest,
   Tone,
 } from "./types";
 
-export type NodeChip = { text: string; icon?: string; tone: Tone };
+export type NodeChip = { text: string; icon?: string; tone: Tone; /** What the chip means, for its tooltip. */ title?: string };
+
+// How a step dealt with a skill, as a chip. A running step has not finished reading, so its unread skills are not yet a warning.
+function skillChip(u: SkillUse, running: boolean): NodeChip {
+  if (u.state === "picked") return { text: u.name, icon: IC.flag, tone: "accent", title: "Picked for this ticket — every later role is told to follow it" };
+  if (u.state === "read") return { text: u.name, icon: IC.check, tone: "success", title: "Assigned, and the step read its SKILL.md" };
+  if (u.state === "opened") return { text: u.name, icon: IC.search, tone: "info", title: "Not assigned — the step opened it on its own" };
+  return running
+    ? { text: u.name, tone: "muted", title: "Assigned — not read yet" }
+    : { text: u.name, icon: IC.alert, tone: "warning", title: "Assigned, but the step never read its SKILL.md" };
+}
+
+// One chip for the canvas card: how many skills the node's last attempt used, amber when one assigned was ignored.
+function skillSummaryChip(list: SkillUse[] | undefined, running: boolean): NodeChip | null {
+  const used = (list ?? []).filter((u) => u.state !== "opened");
+  if (!used.length) return null;
+  const unread = running ? 0 : used.filter((u) => u.state === "unread").length;
+  const title = used.map((u) => `${u.name}: ${u.state}`).join(" · ");
+  if (unread) return { text: `skills ${used.length - unread}/${used.length} read`, icon: IC.alert, tone: "warning", title };
+  return { text: plural(used.length, "skill"), icon: IC.book, tone: used.some((u) => u.state === "picked") ? "accent" : "success", title };
+}
 
 export type NodeFrame = "default" | "pending" | "running" | "danger" | "warning";
 
@@ -119,14 +141,21 @@ export type Inspector = {
   kindTone: Tone;
   status: NodeStatus;
   chips: NodeChip[];
+  /** The selected attempt's skills, one chip each, toned by how the step dealt with it. */
+  skills: NodeChip[];
   note: { text: string; tone: Tone | "neutral" } | null;
   attempts: { n: number; status: NodeStatus }[];
   attemptIndex: number;
   metrics: { k: string; v: string }[];
+  /** Token accounting and timestamps — debug detail, folded under the metrics. */
+  metricsMore: { k: string; v: string }[];
   error: string;
   sections: Section[];
   /** What the agent was told when the selected attempt started; "" when none was kept. */
   brief: string;
+  /** The brief of the attempt before the selected one, to show what a retry was told differently; "" when none. */
+  briefPrev: string;
+  briefPrevAttempt: number;
   json: string;
   transitions: { seq: number; incoming: boolean; other: string; reason: string }[];
 };
@@ -152,13 +181,13 @@ export function oneLine(out: NodeOutput | null): string {
   if (!out) return "";
   switch (out.node) {
     case "setup":
-      return `${out.mode} · ${plural(out.repos.length, "repo")}`;
+      return `${plural(out.repos.length, "repo")}${out.warnings.length ? ` · ${plural(out.warnings.length, "warning")}` : ""}`;
     case "readiness":
       if (!out.ready) return `${out.questions.length} questions for PO`;
       return out.delivery?.status === "done" ? "Already delivered" : out.delivery?.status === "partial" ? `Ready · ${out.delivery.evidence.length} AC delivered` : "Ready";
     case "plan": {
       const files = new Set<string>();
-      out.acMap.forEach((a) => a.files.forEach((f) => files.add(f)));
+      out.acMap.forEach((a) => (a.change === "none" ? null : a.files.forEach((f) => files.add(f))));
       return `${out.acMap.length} AC → ${files.size} files${out.decisions.length ? ` · ${plural(out.decisions.length, "decision")}` : ""}`;
     }
     case "planCheck":
@@ -169,16 +198,17 @@ export function oneLine(out: NodeOutput | null): string {
     case "fix":
       return `fixed ${refusalCount((out.addressed ?? []).length)} · ${out.filesChanged} files`;
     case "syncBase":
-      return out.conflicts.length ? plural(out.conflicts.length, "conflict") : out.rebased ? `rebased · was ${out.behindBy} behind` : "up to date";
+      return out.conflicts.length ? `${plural(out.conflicts.length, "conflict")} → fix` : out.rebased ? `rebased · was ${out.behindBy} behind` : "up to date";
     case "testGate": {
       const t = out.results.reduce((n, r) => n + r.tests.length, 0);
       const bad = out.results.filter((r) => !r.passed).length;
       return `${plural(out.results.length, "repo")} · ${plural(t, "test file")}${bad ? ` · ${bad} refused` : ""}`;
     }
     case "diffGuard":
-      return out.passed ? "OK" : plural(out.violations.length, "violation");
+      if (out.passed) return "OK";
+      return out.violations.some((v) => v.hard) ? `${plural(out.violations.filter((v) => v.hard).length, "blocker")} → fix` : plural(out.violations.length, "warning");
     case "evaluate":
-      return out.verdict === "pass" ? "pass" : plural(out.blockers.length, "blocker");
+      return `${out.verdict === "pass" ? "pass" : plural(out.blockers.length, "blocker")}${out.reviewNotes.length ? " · unproven" : ""}`;
     case "reflect":
       return out.recorded ? "Lesson recorded" : "No lesson";
     case "publish":
@@ -201,8 +231,20 @@ export function refusalSections(list: Refusal[], prefix = ""): Section[] {
   list.forEach((r) => {
     (groups[r.source] ??= []).push(r);
   });
-  return Object.keys(groups).map((src) => {
+  return Object.keys(groups).map((src): Section => {
     const m = REFUSAL_SOURCE[src] ?? { title: src, icon: IC.alert, tone: "muted" as Tone };
+    // Reviewer blockers carry their proof and the expected result: a table, so both read beside the issue.
+    if (groups[src].some((r) => r.evidence || r.expected)) {
+      return {
+        kind: "table",
+        title: `${prefix}${m.title} · ${groups[src].length}`,
+        icon: m.icon,
+        tone: m.tone,
+        cols: ["Blocker", "File", "Evidence", "Expected"],
+        rows: groups[src].map((r): Cell[] => [{ t: r.issue }, { t: r.file ?? "", mono: true }, { t: r.evidence ?? "" }, { t: r.expected ?? "" }]),
+        expandable: true,
+      };
+    }
     return {
       kind: "list",
       title: `${prefix}${m.title} · ${groups[src].length}`,
@@ -225,18 +267,64 @@ const verdictTone = (ok: boolean): Tone => (ok ? "success" : "danger");
 
 const items = (list: string[], icon: string, tone: Tone): ListItem[] => list.map((text) => ({ icon, tone, text }));
 
+// What every later role was given instead of the work item — shown on the role that wrote it, folded: a developer
+// opens it only to see why a later role misread the ticket.
+const digestSections = (d: TicketDigest | undefined): Section[] =>
+  d
+    ? [{ kind: "md", folded: true, title: "Ticket summary for later roles", icon: IC.file, tone: "indigo", text: [d.summary, d.details.map((x) => `- ${x}`).join("\n")].filter(Boolean).join("\n\n") }]
+    : [];
+
+const DELIVERY_TEXT = { none: "Nothing on the base yet", partial: "Partly on the base", done: "Already on the base — nothing to build" } as const;
+
 export function outSections(out: NodeOutput | null): Section[] {
   if (!out) return [];
   switch (out.node) {
     case "setup":
       return [
-        kv("Workspace", [["Mode", out.mode], ["Branch", out.branch, undefined, true], ["Base", out.baseSha, undefined, true]], IC.gear, "warning"),
-        { kind: "list", title: "Repos", icon: IC.git, tone: "muted", items: out.repos.map((r) => ({ icon: IC.git, tone: "muted" as Tone, text: r.name, sub: r.path })) },
+        ...(out.warnings.length ? [{ kind: "list" as const, title: `Warnings · ${out.warnings.length}`, icon: IC.alert, tone: "warning" as Tone, items: items(out.warnings, IC.alert, "warning") }] : []),
+        kv("Workspace", [["Branch", out.branch || "— named by the plan", undefined, !!out.branch], ["Base", out.baseSha, undefined, true]], IC.gear, "muted"),
+        {
+          kind: "list",
+          title: "Repos",
+          icon: IC.git,
+          tone: "muted",
+          items: out.repos.map((r) => ({
+            icon: IC.git,
+            tone: (r.from.includes("last fetched") || r.from === "local HEAD" ? "warning" : "muted") as Tone,
+            text: r.name,
+            sub: [[r.base, r.from].filter(Boolean).join(" · "), r.branch && `on ${r.branch}`, r.path].filter(Boolean).join(" — "),
+          })),
+        },
       ];
     case "readiness": {
-      const S: Section[] = [kv("Verdict", [["Ready", out.ready ? "Yes" : "No — run parked", out.ready ? "success" : "warning"]], IC.flag, out.ready ? "success" : "warning")];
+      // What the node decided, in the order a developer checks it: the verdict, the spec it wrote, what it assumed or
+      // asks, what is already done. The ticket summary for later roles is debug detail, folded.
+      const status = out.delivery?.status ?? "none";
+      const delivered = new Set((out.delivery?.evidence ?? []).map((e) => e.ac.trim()));
+      const verdict: [string, string, Tone?, boolean?][] = [["Ready", out.ready ? "Yes" : "No — run parked for the PO", out.ready ? "success" : "warning"]];
+      if (out.ready) verdict.push(["Delivery", DELIVERY_TEXT[status], status === "none" ? undefined : "success"]);
+      if (out.skills.length) verdict.push(["Skills", out.skills.map((s) => s.name).join(", ")]);
+      if (out.baseBranch) verdict.push(["Base branch", out.baseBranch, undefined, true]);
+      const S: Section[] = [kv("Verdict", verdict, IC.flag, out.ready ? "success" : "warning")];
+      if (out.acceptanceCriteria.length) {
+        S.push({
+          kind: "list",
+          title: "Acceptance criteria",
+          icon: IC.list,
+          tone: "accent",
+          // A criterion the ticket already numbered ("1.a …") keeps its own number instead of a second one.
+          items: out.acceptanceCriteria.map((ac, i) => {
+            const mark = /^\s*\d+(\.\w+)?[.)]?\s/.test(ac) ? "•" : `${i + 1}.`;
+            return delivered.has(ac.trim()) ? { mark, tone: "success" as Tone, text: ac, sub: "already on the base — no change planned", subPlain: true } : { mark, text: ac };
+          }),
+        });
+      }
       if (out.missing.length) S.push({ kind: "list", title: "Missing", icon: IC.search, tone: "warning", items: items(out.missing, IC.alert, "warning") });
-      if (out.ambiguities.length) S.push({ kind: "list", title: "Ambiguities", icon: IC.alert, tone: "warning", items: items(out.ambiguities, IC.alert, "warning") });
+      // When ready, each entry is a choice the analyst made instead of asking — the planner builds to it, so it is
+      // what a developer most needs to overrule in time.
+      if (out.ambiguities.length) {
+        S.push({ kind: "list", title: out.ready ? "Assumptions made" : "Ambiguities", icon: IC.alert, tone: "warning", items: items(out.ambiguities, IC.alert, "warning") });
+      }
       if (out.questions.length) {
         S.push({
           kind: "list",
@@ -247,16 +335,31 @@ export function outSections(out: NodeOutput | null): Section[] {
         });
         S.push({ kind: "copy", questions: out.questions });
       }
+      if (out.skills.length) {
+        S.push({ kind: "list", folded: true, title: "Why these skills", icon: IC.book, tone: "muted", items: out.skills.map((s) => ({ icon: IC.book, tone: "muted" as Tone, text: s.name, sub: s.reason, subPlain: true })) });
+      }
+      if (out.codeLeads.length) {
+        S.push({
+          kind: "list",
+          folded: true,
+          title: "Code leads for the planner",
+          icon: IC.file,
+          tone: "muted",
+          items: out.codeLeads.map((l) => ({ icon: IC.file, tone: "muted" as Tone, text: l.at, mono: true, sub: l.what, subPlain: true })),
+        });
+      }
       if (out.delivery?.evidence.length) {
         S.push({
           kind: "table",
-          title: out.delivery.status === "done" ? "Already delivered — nothing to implement" : "Already delivered",
+          title: out.delivery.status === "done" ? "Proof already delivered — nothing to implement" : "Proof already delivered",
           icon: IC.check,
           tone: "success",
           cols: ["Acceptance criterion", "Repo", "Proof"],
           rows: out.delivery.evidence.map((e): Cell[] => [{ t: e.ac }, { t: e.repo, mono: true }, { t: e.proof, mono: true }]),
+          expandable: true,
         });
       }
+      S.push(...digestSections(out.digest));
       return S;
     }
     case "plan":
@@ -267,7 +370,11 @@ export function outSections(out: NodeOutput | null): Section[] {
           icon: IC.target,
           tone: "accent",
           cols: ["Acceptance criterion", "Files", "Test"],
-          rows: out.acMap.map((a): Cell[] => [a.ac, { t: a.files.map((f) => f.split("/").pop()).join(", "), mono: true }, { t: a.test, tone: "info" }]),
+          rows: out.acMap.map((a): Cell[] => [
+            a.ac,
+            a.change === "none" ? { t: "no change", tone: "muted" } : { t: a.files.map((f) => f.split("/").pop()).join(", "), mono: true },
+            { t: a.test, tone: "info" },
+          ]),
         },
         ...(out.decisions.length
           ? [
@@ -281,11 +388,30 @@ export function outSections(out: NodeOutput | null): Section[] {
             ]
           : []),
         { kind: "list", title: "Risks", icon: IC.alert, tone: "warning", items: items(out.risks, IC.alert, "warning") },
-        { kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd },
+        // The planner's prose only (goal, data assumptions, steps, standards): the AC map, decisions and risks are above.
+        ...(out.planMd ? [{ kind: "md", title: "Plan steps", icon: IC.book, tone: "indigo", text: out.planMd } satisfies Section] : []),
       ];
     case "planCheck":
     case "prePublish": {
-      const S: Section[] = [kv("Verdict", [["Passed", out.passed ? "Yes" : "No", verdictTone(out.passed)]], IC.shield, verdictTone(out.passed))];
+      const k = out.checked;
+      const S: Section[] = [
+        kv(
+          "Verdict",
+          [
+            ["Passed", out.passed ? "Yes" : "No", verdictTone(out.passed)],
+            ...(k
+              ? ([
+                  ["Criteria mapped", `${k.mapped} / ${k.criteria}`, k.mapped >= k.criteria ? "success" : "danger"],
+                  ["Change", `${k.code} code · ${k.none} no change`],
+                  ["Planned files", k.files],
+                  ["Repos", k.repos.join(", ") || "—"],
+                ] satisfies [string, string | number, Tone?][])
+              : []),
+          ],
+          IC.shield,
+          verdictTone(out.passed),
+        ),
+      ];
       if (out.issues.length) S.push({ kind: "list", title: "Issues", icon: IC.x, tone: "danger", items: items(out.issues, IC.x, "danger") });
       return S;
     }
@@ -299,10 +425,29 @@ export function outSections(out: NodeOutput | null): Section[] {
           ["Tests", v.tests, v.tests === "passed" ? "success" : "warning"],
           ["Build", v.build, v.build === "passed" ? "success" : "warning"],
           ["Acceptance", v.acceptanceCriteria, v.acceptanceCriteria === "met" ? "success" : "warning"],
-          ["Test exemption", out.testExemption || "none"],
         ], IC.commit, "success"),
         { kind: "md", title: "Summary", icon: IC.book, tone: "indigo", text: out.summary },
       ];
+      if (out.deviations.length) {
+        S.push({
+          kind: "table",
+          title: "Deviations from the plan",
+          icon: IC.alert,
+          tone: "warning",
+          cols: ["What", "Why"],
+          rows: out.deviations.map((d): Cell[] => [{ t: d.what, tone: "warning" }, d.why]),
+          expandable: true,
+        });
+      }
+      if (out.manualChecks.length) {
+        S.push({
+          kind: "list",
+          title: "Manual checks after deploy",
+          icon: IC.check,
+          tone: "info",
+          items: out.manualChecks.map((m): ListItem => ({ mark: `AC ${m.n}`, tone: "info", text: m.check })),
+        });
+      }
       if (out.addressed?.length) S.push(...refusalSections(out.addressed, "Asked to fix · "));
       return S;
     }
@@ -314,7 +459,24 @@ export function outSections(out: NodeOutput | null): Section[] {
           ["Conflicts", out.conflicts.length || "none", out.conflicts.length ? "danger" : "success"],
         ], IC.git, out.conflicts.length ? "danger" : "info"),
       ];
-      if (out.conflicts.length) S.push({ kind: "list", title: "Conflicts", icon: IC.x, tone: "danger", items: items(out.conflicts, IC.x, "danger") });
+      if (out.repos.length) {
+        const tone: Record<string, Tone> = { "up to date": "success", rebased: "info", conflict: "danger", "not synced": "warning" };
+        S.push({
+          kind: "table",
+          title: "Repositories",
+          icon: IC.git,
+          tone: "info",
+          cols: ["Repo", "Upstream", "Behind", "Result", "Base"],
+          rows: out.repos.map((r): Cell[] => [
+            { t: r.name, mono: true },
+            { t: r.upstream, mono: true },
+            String(r.behind),
+            { t: r.status === "conflict" ? "conflict → fix" : r.status, tone: tone[r.status] ?? "muted" },
+            { t: r.base, mono: true },
+          ]),
+        });
+      }
+      if (out.conflicts.length) S.push({ kind: "list", title: "Conflicts · handed to the fixer", icon: IC.x, tone: "danger", items: items(out.conflicts, IC.x, "danger") });
       return S;
     }
     case "testGate":
@@ -333,16 +495,80 @@ export function outSections(out: NodeOutput | null): Section[] {
           ]),
         },
       ];
-    case "diffGuard":
-      return out.violations.length
-        ? [{ kind: "table", title: "Warnings · for the reviewer", icon: IC.diff, tone: "warning", cols: ["Rule", "File"], rows: out.violations.map((v): Cell[] => [{ t: v.rule, tone: "warning", mono: true }, { t: v.file, mono: true }]) }]
-        : [kv("Verdict", [["Violations", "none", "success"]], IC.shield, "success")];
+    case "diffGuard": {
+      const hard = out.violations.filter((v) => v.hard).length;
+      const s = out.summary;
+      const S: Section[] = [
+        kv(
+          "Verdict",
+          [
+            ["Violations", out.violations.length ? `${hard} blocking · ${out.violations.length - hard} warning` : "none", hard ? "danger" : out.violations.length ? "warning" : "success"],
+            ...(s
+              ? ([
+                  ["Changed files", s.changed],
+                  ["Planned files", s.planned],
+                  ["Outside the plan", s.unplanned.length, s.unplanned.length ? "warning" : "success"],
+                ] satisfies [string, string | number, Tone?][])
+              : []),
+          ],
+          IC.shield,
+          hard ? "danger" : out.violations.length ? "warning" : "success",
+        ),
+      ];
+      if (out.violations.length) {
+        S.push({
+          kind: "table",
+          title: "Violations",
+          icon: IC.diff,
+          tone: hard ? "danger" : "warning",
+          cols: ["Rule", "File", "Effect"],
+          rows: out.violations.map((v): Cell[] => [
+            { t: v.rule, tone: v.hard ? "danger" : "warning", mono: true },
+            { t: v.file, mono: true },
+            { t: v.hard ? "blocks → fix" : "warning → reviewer", tone: v.hard ? "danger" : "warning" },
+          ]),
+        });
+      }
+      // Informational: tests and helpers the plan did not name land here too — the reviewer judges them.
+      if (s?.unplanned.length) {
+        S.push({ kind: "list", folded: true, title: "Changed outside the plan", icon: IC.file, tone: "muted", items: s.unplanned.map((f): ListItem => ({ icon: IC.file, tone: "muted", text: f, mono: true })) });
+      }
+      return S;
+    }
     case "evaluate": {
       const ok = out.verdict === "pass";
-      return [
-        kv("Verdict", [["Verdict", out.verdict, verdictTone(ok)], ["Reviewed", out.reviewedDelta ? "delta since last review" : "full diff"]], IC.sparkle, verdictTone(ok)),
-        ...refusalSections(out.blockers, "Blockers · "),
+      const unproven = out.reviewNotes.length > 0;
+      const counts = (r: string) => out.checked.filter((x) => x.result === r).length;
+      const S: Section[] = [
+        kv(
+          "Verdict",
+          [
+            ["Verdict", unproven ? `${out.verdict} · unproven` : out.verdict, unproven ? "warning" : verdictTone(ok)],
+            ["Reviewed", out.reviewedDelta ? "delta since last review" : "full diff"],
+            ...(out.checked.length
+              ? ([["Checked", `${counts("ok")} ok · ${counts("issue")} issue · ${counts("unverified")} unverified`, counts("issue") ? "danger" : counts("unverified") ? "warning" : "success"]] satisfies [string, string, Tone][])
+              : []),
+          ],
+          IC.sparkle,
+          unproven ? "warning" : verdictTone(ok),
+        ),
       ];
+      if (unproven) S.push({ kind: "list", title: "Harness check of this review", icon: IC.alert, tone: "warning", items: items(out.reviewNotes, IC.alert, "warning") });
+      S.push(...refusalSections(out.blockers, "Blockers · "));
+      if (out.checked.length) {
+        const tone: Record<string, Tone> = { ok: "success", issue: "danger", unverified: "warning" };
+        S.push({
+          kind: "table",
+          title: "What was checked",
+          icon: IC.check,
+          tone: "info",
+          cols: ["Subject", "How", "Evidence", "Result"],
+          rows: out.checked.map((x): Cell[] => [x.subject, x.how, { t: x.evidence, mono: true }, { t: x.result, tone: tone[x.result] ?? "muted" }]),
+          expandable: true,
+        });
+      }
+      if (out.assumptions.length) S.push({ kind: "list", title: "Not verified", icon: IC.alert, tone: "warning", items: items(out.assumptions, IC.alert, "warning") });
+      return S;
     }
     case "reflect": {
       const S: Section[] = [kv("Lesson", [["Recorded", out.recorded ? "yes · KNOWLEDGE.md" : "no"]], IC.bulb, "warning")];
@@ -380,6 +606,7 @@ export function outSections(out: NodeOutput | null): Section[] {
           rows: out.threads.map((t): Cell[] => [{ t: t.file || t.comment, mono: !!t.file }, { t: t.decision, tone: t.decision === "fix" ? "warning" : "muted" }, t.reason]),
         },
         { kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd },
+        ...digestSections(out.digest),
       ];
     case "qaTriage": {
       const S: Section[] = [
@@ -394,6 +621,7 @@ export function outSections(out: NodeOutput | null): Section[] {
       ];
       if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", icon: IC.chat, tone: "indigo", text: out.qaReply });
       if (out.planMd) S.push({ kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd });
+      S.push(...digestSections(out.digest));
       return S;
     }
     case "respond":
@@ -483,6 +711,8 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
       chips.push({ text: cost ? usd(cost) : "$—", tone: "muted" });
     } else chips.push({ text: "0 tokens", tone: "muted" });
     if (d.effects === "external") chips.push({ text: ran.length ? "ran once" : "one-way", icon: ran.length ? IC.lock : undefined, tone: "warning" });
+    const sk = skillSummaryChip(ss[ss.length - 1]?.skills, isRun);
+    if (sk) chips.push(sk);
   }
 
   let dots = "";
@@ -788,6 +1018,47 @@ export function timelineOf(run: Run | null, now: number): Timeline {
   return { rows, ticks: [0, 0.25, 0.5, 0.75, 1].map((f) => dur((span * f) / 1000)), total: dur(span / 1000) };
 }
 
+/** Share of the prompt served from the prompt cache ("—" before any token is counted). The CLI reports fresh input
+ *  and cache reads apart, so the prompt is their sum. */
+export function cacheHit(inputTokens: number, cacheReadTokens: number): string {
+  const total = inputTokens + cacheReadTokens;
+  return total > 0 ? `${Math.round((cacheReadTokens / total) * 100)}%` : "—";
+}
+
+/** A rough token count for a brief (≈ 4 characters a token) — enough to see which brief is heavy. */
+export const briefTokens = (text: string): number => Math.ceil(text.length / 4);
+
+/** The `## ` sections of a brief, in order, with the line each starts on — the brief's table of contents. */
+export function briefOutline(text: string): { title: string; line: number }[] {
+  return text.split("\n").flatMap((l, line) => (/^## \S/.test(l) ? [{ title: l.slice(3).trim(), line }] : []));
+}
+
+export type DiffLine = { op: "same" | "add" | "del"; text: string };
+
+/** Line diff of two briefs (longest common subsequence) — what a retry was told that the attempt before was not. */
+export function lineDiff(before: string, after: string): DiffLine[] {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  const n = a.length;
+  const m = b.length;
+  const L: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push({ op: "same", text: a[i] });
+      i++;
+      j++;
+    } else if (L[i + 1][j] >= L[i][j + 1]) out.push({ op: "del", text: a[i++] });
+    else out.push({ op: "add", text: b[j++] });
+  }
+  while (i < n) out.push({ op: "del", text: a[i++] });
+  while (j < m) out.push({ op: "add", text: b[j++] });
+  return out;
+}
+
 export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode, attempt: number | null, now: number): Inspector {
   const d = n.def;
   const isGate = n.kind === "gate";
@@ -798,12 +1069,12 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
   const ai = attempt !== null && ss[attempt] ? attempt : ss.length - 1;
   const step: Step | undefined = ss[ai];
   const chips: NodeChip[] = [];
+  // Only what tells this node apart: effects/context are the same on every node of a kind (the canvas card carries
+  // them), so only a one-way external step keeps its chip.
   if (!isTerm && !isGate) {
     chips.push({ text: d.kind, icon: km.icon, tone: km.tone });
-    chips.push({ text: `effects: ${d.effects}`, icon: d.effects === "external" ? IC.out : undefined, tone: d.effects === "external" ? "warning" : "muted" });
-    if (d.context) chips.push({ text: `context: ${d.context}`, tone: "indigo" });
+    if (d.effects === "external") chips.push({ text: "effects: external", icon: IC.out, tone: "warning" });
     if (d.maxVisits) chips.push({ text: `max ${d.maxVisits} visits`, tone: "muted" });
-    if (d.kind !== "agent") chips.push({ text: "0 tokens", tone: "muted" });
     if (step?.model) chips.push({ text: `model: ${step.model}`, tone: "accent" });
     if (step?.effort) chips.push({ text: `effort: ${step.effort}`, tone: "accent" });
   }
@@ -831,19 +1102,28 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
   }
   if (isGate) sections = [];
 
+  // The three numbers a developer reads; token accounting and timestamps are kept one tap away.
   const end = step ? step.endedAt ?? now : now;
+  const isAgent = d.kind === "agent";
+  const pairs = (list: [string, string][]) => list.map(([k, v]) => ({ k, v }));
   const metrics = step
-    ? ([
-        ["Duration", dur((end - step.startedAt) / 1000)],
-        ["Cost", usd(step.costUsd)],
-        ["Turns", String(step.numTurns || "—")],
-        ["Tokens in", ktok(step.inputTokens)],
-        ["Tokens out", ktok(step.outputTokens)],
-        ["Cache read", ktok(step.cacheReadTokens)],
+    ? pairs([["Duration", dur((end - step.startedAt) / 1000)], ...(isAgent ? ([["Cost", usd(step.costUsd)], ["Turns", String(step.numTurns || "—")]] as [string, string][]) : [])])
+    : [];
+  const metricsMore = step
+    ? pairs([
+        ...(isAgent
+          ? ([
+              ["Tokens in", ktok(step.inputTokens)],
+              ["Tokens out", ktok(step.outputTokens)],
+              ["Cache read", ktok(step.cacheReadTokens)],
+              ["Cache hit", cacheHit(step.inputTokens, step.cacheReadTokens)],
+              ...(step.brief ? ([["Brief", `~${ktok(briefTokens(step.brief))} tokens`]] as [string, string][]) : []),
+            ] as [string, string][])
+          : []),
         ["Started", clock(step.startedAt)],
         ["Ended", step.endedAt ? clock(step.endedAt) : "—"],
         ["Log lines", `${step.logFrom}–${step.logTo}`],
-      ] as [string, string][]).map(([k, v]) => ({ k, v }))
+      ])
     : [];
 
   const transitions = run
@@ -862,16 +1142,47 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
     kindTone: km.tone,
     status,
     chips,
+    skills: (step?.skills ?? []).map((u) => skillChip(u, step?.status === "running")),
     note,
     attempts: ss.map((s) => ({ n: s.attempt, status: s.status })),
     attemptIndex: ai,
     metrics,
+    metricsMore,
     error: step?.errorMessage ?? "",
     sections,
     brief: step?.brief ?? "",
+    briefPrev: ai > 0 ? ss[ai - 1]?.brief ?? "" : "",
+    briefPrevAttempt: ai > 0 ? ss[ai - 1]?.attempt ?? 0 : 0,
     json: JSON.stringify(obj, null, 2),
     transitions,
   };
+}
+
+// Every skill of the run against the steps that picked, read, ignored or opened it — the run's skill audit at a glance.
+export function skillsSections(run: Run): Section[] {
+  const rows = new Map<string, Record<SkillUse["state"], string[]>>();
+  for (const s of run.steps) {
+    const label = `${run.defs.find((d) => d.id === s.nodeId)?.label ?? s.nodeId}${s.attempt > 1 ? ` #${s.attempt}` : ""}`;
+    for (const u of s.skills ?? []) {
+      const r = rows.get(u.name) ?? { picked: [], read: [], unread: [], opened: [] };
+      // A step still running has not had its chance to read the skill yet.
+      if (!(u.state === "unread" && s.status === "running")) r[u.state].push(label);
+      rows.set(u.name, r);
+    }
+  }
+  if (!rows.size) return [];
+  const cell = (list: string[], tone: Tone): Cell => (list.length ? { t: list.join(", "), tone } : { t: "—" });
+  return [
+    {
+      kind: "table",
+      title: "Skills",
+      icon: IC.book,
+      tone: [...rows.values()].some((r) => r.unread.length) ? "warning" : "accent",
+      cols: ["Skill", "Picked by", "Read by", "Never read by", "Opened unasked by"],
+      rows: [...rows.entries()].map(([name, r]): Cell[] => [{ t: name, mono: true }, cell(r.picked, "accent"), cell(r.read, "success"), cell(r.unread, "warning"), cell(r.opened, "info")]),
+      expandable: true,
+    },
+  ];
 }
 
 export function runSections(run: Run | null, gates: GateResult[], now: number): Section[] {
@@ -927,7 +1238,8 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
   const pub = [...run.steps].reverse().find((s) => s.nodeId === "publish" && s.output);
   if (pub) S.push(...outSections(pub.output).slice(0, 1));
   const rd = run.steps.find((s) => s.output?.node === "readiness" && !s.output.ready);
-  if (rd) S.push(...outSections(rd.output).slice(1));
+  if (rd) S.push(...outSections(rd.output).filter((s) => s.kind === "copy" || (s.kind === "list" && ["Missing", "Ambiguities", "Draft questions for the PO"].includes(s.title ?? ""))));
+  S.push(...skillsSections(run));
   const tot = run.costUsd || 1;
   S.push({ kind: "bar", title: "Cost by phase", icon: IC.clock, tone: "accent", bars: PHASES.map((p) => ({ k: PHASE_LABEL[p], v: usd(run.costByPhase[p]), w: (run.costByPhase[p] / tot) * 100, phase: p })) });
   return S;

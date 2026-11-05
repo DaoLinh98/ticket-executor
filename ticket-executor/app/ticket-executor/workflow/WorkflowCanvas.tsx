@@ -79,7 +79,7 @@ const FlowCard = memo(function FlowCard({ data }: NodeProps<Node<CardData>>) {
           {view.chips.length ? (
             <span style={{ display: "flex", gap: 4, flexWrap: "nowrap", overflow: "hidden", width: "100%" }}>
               {view.chips.map((c, i) => (
-                <Badge key={i} tone={c.tone} icon={c.icon} size="xs">
+                <Badge key={i} tone={c.tone} icon={c.icon} size="xs" title={c.title}>
                   {c.text}
                 </Badge>
               ))}

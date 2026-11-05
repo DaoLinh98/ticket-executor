@@ -30,16 +30,38 @@ const BASE_BRANCH = {
   description: "The branch a picked skill requires the work to start from and the pull request to target, when it is not the default branch. Empty otherwise.",
 } as const;
 
+// The judging role's reading of the work item, handed to every later role so none of them re-reads the ticket.
+const DIGEST = {
+  type: "object",
+  description: "The ticket as every later role reads it: they work from this and open the work item only for what it leaves out.",
+  properties: {
+    summary: { type: "string", description: "Two to four sentences: what the ticket asks for and why, in plain words." },
+    details: {
+      ...STRINGS,
+      description:
+        "Concrete facts a later role needs that the acceptance criteria do not carry: exact values, names, UI text, rules, data examples, " +
+        "answers given in comments, what an attachment shows. One fact per entry, quoted where the wording matters. Empty when there are none. " +
+        "Only what the work item says — never file paths, line numbers or code findings of your own.",
+    },
+  },
+  required: ["summary", "details"],
+  additionalProperties: false,
+} as const;
+
 export const READINESS_OUTPUT = {
   type: "object",
   properties: {
     title: { type: "string", description: "The work item's title." },
     type: { type: "string", description: "The work item's type, e.g. User Story, Bug, Task." },
+    digest: DIGEST,
     ready: { type: "boolean" },
     acceptanceCriteria: { ...STRINGS, description: "The ticket's stated acceptance criteria, one per entry in its order — never items from the description. Only when it states none: criteria derived from the description, each prefixed '(derived)'." },
     missing: { ...STRINGS, description: "Information the ticket lacks. Empty when ready." },
-    ambiguities: { ...STRINGS, description: "Requirements with materially different readings. Empty when ready." },
-    questions: { ...STRINGS, description: "Questions for the Product Owner. Empty when ready." },
+    ambiguities: { ...STRINGS, description: "Requirements with materially different readings. When ready, each one you settled by assumption, as '<point> — assumed <choice>: <why>'." },
+    questions: {
+      ...STRINGS,
+      description: "At most 3 questions for the Product Owner, only for what blocks the work and has no safe default. Empty when ready; at least one when not ready. The harness drops any past the third.",
+    },
     delivery: {
       type: "object",
       description: "Whether the acceptance criteria are already on the base commits named in the brief.",
@@ -47,13 +69,16 @@ export const READINESS_OUTPUT = {
         status: { type: "string", enum: ["none", "partial", "done"], description: "done only when every acceptance criterion is already delivered." },
         evidence: {
           type: "array",
-          description: "One entry per acceptance criterion that is already delivered. Empty when status is none.",
+          description: "One entry per acceptance criterion that is fully delivered — partly done or unverified is not. Empty when status is none.",
           items: {
             type: "object",
             properties: {
-              ac: { type: "string" },
+              ac: { type: "string", description: "The acceptance criterion, as in acceptanceCriteria." },
               repo: { type: "string", description: "The repository name exactly as the brief gives it." },
-              proof: { type: "string", description: "Commit, merged pull request or file:line that delivers it." },
+              proof: {
+                type: "string",
+                description: "One line: the commit, merged pull request or file:line that delivers this criterion. Nothing about other criteria.",
+              },
             },
             required: ["ac", "repo", "proof"],
             additionalProperties: false,
@@ -63,11 +88,26 @@ export const READINESS_OUTPUT = {
       required: ["status", "evidence"],
       additionalProperties: false,
     },
+    codeLeads: {
+      type: "array",
+      description:
+        "Where the code this ticket touches lives, as you found it while judging it — up to 8 entries, most relevant first. " +
+        "Handed only to the planner as starting points, never to the digest. Empty when you read no code.",
+      items: {
+        type: "object",
+        properties: {
+          at: { type: "string", description: "repo-relative `path:line`, or `path` + symbol; repo-prefixed when several repositories are listed." },
+          what: { type: "string", description: "One line: what is there and why it matters to this ticket." },
+        },
+        required: ["at", "what"],
+        additionalProperties: false,
+      },
+    },
     skills: SKILLS,
     baseBranch: BASE_BRANCH,
     blocked: BLOCKED,
   },
-  required: ["title", "type", "ready", "acceptanceCriteria", "missing", "ambiguities", "questions", "delivery", "skills", "baseBranch", "blocked"],
+  required: ["title", "type", "digest", "ready", "acceptanceCriteria", "missing", "ambiguities", "questions", "delivery", "codeLeads", "skills", "baseBranch", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -77,15 +117,26 @@ export const PLAN_OUTPUT = {
     branch: { type: "string", description: "The branch the implementer must create." },
     acMap: {
       type: "array",
-      description: "One entry per acceptance criterion.",
+      description: "Exactly one entry per acceptance criterion in the brief.",
       items: {
         type: "object",
         properties: {
+          n: { type: "integer", description: "The criterion's number in the brief's Acceptance criteria list (1-based)." },
           ac: { type: "string" },
-          files: { ...STRINGS, description: "Files that implement it, repo-prefixed when several repos are listed." },
-          test: { type: "string", description: "The test that proves it." },
+          change: {
+            type: "string",
+            enum: ["code", "none"],
+            description:
+              "code when this plan changes files for it; none when no file changes — already delivered, or met by a step outside the code " +
+              "(a branch, a pipeline run, a deployment, a manual check).",
+          },
+          files: {
+            ...STRINGS,
+            description: "change=code: the files that implement it. change=none: where it already lives, or empty. Repo-prefixed when several repos are listed.",
+          },
+          test: { type: "string", description: "The test that proves it (name + realistic input); for change=none, how it is verified." },
         },
-        required: ["ac", "files", "test"],
+        required: ["n", "ac", "change", "files", "test"],
         additionalProperties: false,
       },
     },
@@ -107,7 +158,12 @@ export const PLAN_OUTPUT = {
         additionalProperties: false,
       },
     },
-    planMd: { type: "string", description: "The full plan in Markdown, under 80 lines. The harness writes it to .te/plan.md." },
+    planMd: {
+      type: "string",
+      description:
+        "The plan's prose in Markdown, under 50 lines: Goal, Data assumptions, Steps, Standards that apply. Never repeat the AC map, risks or " +
+        "decisions — the harness writes them into .te/plan.md from the fields above.",
+    },
     blocked: BLOCKED,
   },
   required: ["branch", "acMap", "repos", "risks", "decisions", "planMd", "blocked"],
@@ -126,14 +182,18 @@ export const STEP_OUTPUT = {
       properties: {
         tests: { type: "string", enum: ["passed", "failed", "not-run"] },
         build: { type: "string", enum: ["passed", "failed", "not-run"] },
-        acceptanceCriteria: { type: "string", enum: ["met", "partial", "cannot-verify"] },
+        acceptanceCriteria: {
+          type: "string",
+          enum: ["met", "partial", "cannot-verify"],
+          description: "met when every criterion is met or listed in manualChecks; partial when one is left out (each a deviation).",
+        },
       },
       required: ["tests", "build", "acceptanceCriteria"],
       additionalProperties: false,
     },
     deviations: {
       type: "array",
-      description: "Anything that diverged from .te/plan.md, including any acceptance criterion left out.",
+      description: "Anything that diverged from .te/plan.md, including any acceptance criterion left out. Never a criterion listed in manualChecks.",
       items: {
         type: "object",
         properties: { what: { type: "string" }, why: { type: "string" } },
@@ -141,9 +201,24 @@ export const STEP_OUTPUT = {
         additionalProperties: false,
       },
     },
+    manualChecks: {
+      type: "array",
+      description:
+        "Criteria the plan marks change=none that only a person can confirm after the branch is published or deployed (a Dev URL, a dashboard, " +
+        "a pipeline run). They go to the pull request for QA and are not deviations. Empty otherwise — and always empty for a fix round.",
+      items: {
+        type: "object",
+        properties: {
+          n: { type: "integer", description: "The criterion's number in the brief." },
+          check: { type: "string", description: "One line: what to check and what result proves it." },
+        },
+        required: ["n", "check"],
+        additionalProperties: false,
+      },
+    },
     blocked: BLOCKED,
   },
-  required: ["committed", "branch", "summary", "verification", "deviations", "blocked"],
+  required: ["committed", "branch", "summary", "verification", "deviations", "manualChecks", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -159,8 +234,10 @@ export const EVALUATE_OUTPUT = {
         properties: {
           file: { type: "string", description: "Path, with a line number when you have one." },
           issue: { type: "string", description: "What is wrong and what it breaks." },
+          evidence: { type: "string", description: "What proves it: the quoted code at file:line, or the command run and its outcome — so the fixer does not re-diagnose it." },
+          expected: { type: "string", description: "What correct looks like once fixed — the behaviour or result, not a patch." },
         },
-        required: ["file", "issue"],
+        required: ["file", "issue", "evidence", "expected"],
         additionalProperties: false,
       },
     },
@@ -247,10 +324,11 @@ export const REVIEW_TRIAGE_OUTPUT = {
       },
     },
     planMd: { type: "string", description: "A short Markdown plan: a Thread Decisions table and, for each fix, the files to change. The harness writes it to .te/plan.md." },
+    digest: DIGEST,
     skills: SKILLS,
     blocked: BLOCKED,
   },
-  required: ["threads", "planMd", "skills", "blocked"],
+  required: ["threads", "planMd", "digest", "skills", "blocked"],
   additionalProperties: false,
 } as const;
 
@@ -258,6 +336,7 @@ export const QA_TRIAGE_OUTPUT = {
   type: "object",
   properties: {
     title: { type: "string", description: "The work item's title." },
+    digest: DIGEST,
     findings: {
       type: "array",
       description: "One entry per point QC raised (question, issue, failure) in the comments the brief's window covers.",
@@ -300,7 +379,7 @@ export const QA_TRIAGE_OUTPUT = {
     baseBranch: BASE_BRANCH,
     blocked: BLOCKED,
   },
-  required: ["title", "findings", "outcome", "branch", "repos", "planMd", "qaReply", "summary", "skills", "baseBranch", "blocked"],
+  required: ["title", "digest", "findings", "outcome", "branch", "repos", "planMd", "qaReply", "summary", "skills", "baseBranch", "blocked"],
   additionalProperties: false,
 } as const;
 

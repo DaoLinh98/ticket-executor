@@ -7,16 +7,17 @@ import { validateAgentAccess, validateRootRepo } from "../preflight";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { runWithClaudeAccounts } from "../claudeAccounts";
+import { loadTicket, loadTicketComments, loadTicketDetail, normalizeProvider } from "../tickets";
 import { checkAgents } from "./agents";
 import { runAgentTurn } from "./cli";
-import { CHECKS, companionDirs, deliveryFacts, removeWorktrees, seatBase, type CheckEnv, type RetrySeed } from "./checks";
+import { CHECKS, companionDirs, deliveryFacts, refreshBase, removeWorktrees, seatBase, type CheckEnv, type RetrySeed } from "./checks";
 import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS } from "./graph";
 import { PLAN_FILE } from "./prompts";
-import { deliveryOf, knowledgeDiff } from "./rules";
-import { skillCatalog } from "./skills";
+import { checkReadiness, checkReview, deliveryOf, knowledgeDiff, renderPlan, richToText } from "./rules";
+import { skillCatalog, skillsOff } from "./skills";
 import { turnFor } from "./stepModels";
 import { closeStep, nextSeq, openStep, saveArtifact, saveRun, saveTransition } from "./store";
-import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo, type Usage } from "./types";
+import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo, type Usage, type WorkItem } from "./types";
 
 type Live = {
   id: string;
@@ -87,7 +88,13 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   }
   const addDirs = companionDirs(live.ctx);
   live.logs.push({ t: Date.now(), lvl: "INFO", text: `▶ agent ${node.agent} · context fresh${addDirs.length ? ` · +${addDirs.length} related repo(s)` : ""}` });
+  // A recheck runs on the worktree set up when the run began: bring it to today's base before judging delivery.
+  if (node.id === "readiness" && (live.ctx.visits.readiness ?? 0) > 1) live.logs.push(...(await refreshBase(live.ctx)));
+  if (node.id === "readiness") live.ctx.workItem = await readWorkItem(live);
+  if (PICKS_SKILLS.includes(node.id)) live.ctx.skillsOff = await skillsOff();
   const prompt = node.prompt(live.ctx);
+  live.ctx.workItem = undefined;
+  live.ctx.skillsOff = undefined;
   // The brief is the only context a fresh turn gets — kept per step so /workflow shows what each agent was told.
   await saveArtifact(live.id, `${BRIEF_PREFIX}${live.stepId}`, prompt).catch(() => null);
   const pick = turnFor(node.id, live.ctx.visits, live);
@@ -118,8 +125,25 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   if (!turn.structured) {
     return { ok: false, data: {}, error: `${node.agent} finished without its structured output — the run cannot route on free text.`, usage: turn.usage };
   }
-  const data = node.id === "implement" || node.id === "fix" ? { ...turn.structured, ...deliveryFacts(live.ctx) } : turn.structured;
-  const error = PICKS_SKILLS.includes(node.id) ? applySkills(live, data) : "";
+  // A review keeps the heads it judged, so the next re-review is briefed on the delta since (`evaluatePrompt`).
+  let data =
+    node.id === "implement" || node.id === "fix"
+      ? { ...turn.structured, ...deliveryFacts(live.ctx) }
+      : node.id === "evaluate" && live.ctx.channels.diffGuard?.heads
+        ? { ...turn.structured, reviewedHeads: live.ctx.channels.diffGuard.heads, reviewedDiffs: live.ctx.channels.diffGuard.diffHashes ?? {} }
+        : turn.structured;
+  if (node.id === "readiness") {
+    const checked = checkReadiness(data);
+    checked.notes.forEach((text) => live.logs.push({ t: Date.now(), lvl: "WARN", text }));
+    // When it judged — a recheck tells the next analyst which comments came after its questions.
+    data = { ...checked.data, checkedAt: new Date().toISOString() };
+  }
+  if (node.id === "evaluate") {
+    const notes = checkReview(data);
+    notes.forEach((text) => live.logs.push({ t: Date.now(), lvl: "WARN", text }));
+    data = { ...data, reviewNotes: notes };
+  }
+  const error = PICKS_SKILLS.includes(node.id) ? await applySkills(live, data) : "";
   return error ? { ok: false, data, error, usage: turn.usage } : { ok: true, data, error: "", usage: turn.usage };
 }
 
@@ -133,10 +157,38 @@ const addUsage = (a: Usage, b: Usage): Usage => ({
 
 const PICKS_SKILLS = ["readiness", "qaTriage", "reviewTriage"];
 
+// The work item, read by the harness so the analyst starts from it instead of spending its first turns fetching it.
+// Read again on every visit, so a recheck sees the PO's replies. Unreadable (or a provider not wired) → undefined, and
+// the brief tells the analyst to read it through MCP as before.
+async function readWorkItem(live: Live): Promise<WorkItem | undefined> {
+  const provider = normalizeProvider(live.ctx.provider);
+  const id = live.ctx.ticketId;
+  const [ticket, detail, comments] = await Promise.all([
+    loadTicket(provider, id).catch(() => null),
+    loadTicketDetail(provider, id).catch(() => null),
+    loadTicketComments(provider, id).catch(() => null),
+  ]);
+  if (!ticket || !detail) {
+    live.logs.push({ t: Date.now(), lvl: "WARN", text: "could not read the work item for the brief — the analyst reads it through MCP" });
+    return undefined;
+  }
+  const item: WorkItem = {
+    title: ticket.title,
+    type: ticket.type,
+    state: ticket.status,
+    description: richToText(detail.description),
+    criteria: richToText(detail.criteria),
+    comments: (comments ?? []).map((c) => ({ author: c.author, date: c.date, text: richToText(c.text) })),
+  };
+  live.logs.push({ t: Date.now(), lvl: "INFO", text: `work item read by the harness · ${item.comments.length} comment(s)` });
+  return item;
+}
+
 // The first judging role picks the skills that fit the ticket; the harness resolves each to its SKILL.md (every later
 // brief names it) and, when one requires another base branch, moves the worktrees there before any work is planned.
-function applySkills(live: Live, data: Record<string, unknown>): string {
-  const catalog = skillCatalog(live.ctx.rootRepo);
+async function applySkills(live: Live, data: Record<string, unknown>): Promise<string> {
+  // A pick of a skill switched off in Settings is dropped like one that is not installed.
+  const catalog = skillCatalog(live.ctx.rootRepo, await skillsOff());
   const picked = Array.isArray(data.skills) ? (data.skills as { name?: string; reason?: string }[]) : [];
   data.skills = picked.flatMap((p) => {
     const s = catalog.find((x) => x.name === p.name);
@@ -149,7 +201,7 @@ function applySkills(live: Live, data: Record<string, unknown>): string {
     live.logs.push({ t: Date.now(), lvl: "WARN", text: `base branch ${branch} ignored — no installed skill was picked to require it` });
     return "";
   }
-  const seat = seatBase(live.ctx, branch);
+  const seat = await seatBase(live.ctx, branch);
   live.logs.push(...seat.log);
   if (!seat.error) data.bases = seat.bases;
   return seat.error;
@@ -211,9 +263,10 @@ function promote(live: Live, node: Node, data: Record<string, unknown>): Record<
   return patch;
 }
 
-function capturePlan(live: Live, data: Record<string, unknown>): Promise<void> {
+// The planner writes only the prose; the AC map, risks and decisions are rendered from its structured fields.
+function capturePlan(live: Live, nodeId: string, data: Record<string, unknown>): Promise<void> {
   const file = path.join(live.ctx.cwd, PLAN_FILE);
-  const md = typeof data.planMd === "string" ? data.planMd.trim() : "";
+  const md = nodeId === "plan" ? renderPlan(data) : typeof data.planMd === "string" ? data.planMd.trim() : "";
   if (md) {
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, `${md}\n`, "utf8");
@@ -249,7 +302,7 @@ async function drive(live: Live, from: string) {
       await closeStep(step.id, live.cancelled ? "abandoned" : stepStatus(node, r), r, live.logs);
       if (live.cancelled) return await abort(live, node.id);
 
-      if (r.ok && typeof r.data.planMd === "string" && r.data.planMd.trim()) await capturePlan(live, r.data);
+      if (r.ok && typeof r.data.planMd === "string" && r.data.planMd.trim()) await capturePlan(live, node.id, r.data);
       live.ctx.channels[node.id] = input ? { ...r.data, input } : r.data;
 
       let next = live.graph.edges[node.id](live.ctx, r);
@@ -316,6 +369,9 @@ async function retrySeed(graph: Graph, retryOf: string, from: string): Promise<{
   const plan = from === "plan" ? null : await prisma.dagentArtifact.findFirst({ where: { runId: retryOf, kind: "plan" }, orderBy: { createdAt: "desc" } });
   const keep = from === "plan" ? ["readiness"] : from === "implement" ? ["readiness", "plan", "planCheck"] : ["readiness", "plan", "planCheck", "implement", "fix"];
   const channels = Object.fromEntries(keep.filter((k) => old[k]).map((k) => [k, old[k]]));
+  // Nothing was committed before the plan, so a retry from it starts over from today's base — not the old run's base,
+  // branches or plan, which a new plan would only build on stale.
+  if (from === "plan") return { seed: { baseSha: "", branches: {}, companionBases: {}, planMd: "", fresh: true }, channels };
   return { seed: { baseSha: prev.baseSha, branches, companionBases, planMd: plan?.body ?? "" }, channels };
 }
 

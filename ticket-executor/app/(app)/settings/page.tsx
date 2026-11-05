@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
@@ -20,7 +20,7 @@ import { CONNECTION_CHANGED_EVENT } from "../../connectionEvents";
 import PushNotifications from "./PushNotifications";
 import FlowRunnerSettings from "./FlowRunnerSettings";
 import ClaudeAccountsSettings from "./ClaudeAccountsSettings";
-import { SETTINGS_KEY, connectionsKey, fetchSettings, useConnections, type ConnectionsPayload } from "../../queries";
+import { DAGENT_SKILLS_KEY, SETTINGS_KEY, connectionsKey, fetchSettings, putDagentSkill, useConnections, useDagentSkills, type ConnectionsPayload, type DagentSkill } from "../../queries";
 
 const DEFAULTS: SettingsView = {
   provider: "azure-devops", org: "", pat: "", hasPat: false,
@@ -45,6 +45,7 @@ const TABS = [
   { id: "connection", label: "Connection" },
   { id: "execution", label: "Execution" },
   { id: "claude", label: "Claude" },
+  { id: "skills", label: "Skills" },
   { id: "flowrunner", label: "Flow Runner" },
   { id: "notifications", label: "Notifications" },
   { id: "appearance", label: "Appearance" },
@@ -80,6 +81,49 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: ReactNo
 }
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono), monospace" };
+
+// The machine's skills (~/.claude/skills) the judging roles may pick for a ticket. Each switch saves at once — like
+// the Claude and Flow Runner panes, it is not part of the settings form. Stored as the switched-off names, so a skill
+// installed later is offered until it is turned off here.
+function SkillsPane() {
+  const { fireBoltFromEvent } = useBoltsContext();
+  const queryClient = useQueryClient();
+  const showToast = useToast();
+  const skillsQuery = useDagentSkills();
+  const toggle = useMutation({
+    mutationFn: (s: DagentSkill) => putDagentSkill(s.name, !s.enabled),
+    onSuccess: (list) => queryClient.setQueryData(DAGENT_SKILLS_KEY, list),
+    onError: (e) => showToast(e instanceof Error ? e.message : "Could not save the skill.", "warning"),
+  });
+  const hint: CSSProperties = { fontSize: FONT.sm, color: COLORS.textMuted, lineHeight: 1.55 };
+  if (skillsQuery.isPending) return <div style={{ display: "flex", justifyContent: "center", padding: "24px" }}><LoadingRing size={40} /></div>;
+  if (skillsQuery.isError) return <span style={{ ...hint, color: COLORS.danger }}>{skillsQuery.error.message}</span>;
+  const skills = skillsQuery.data;
+  const on = skills.filter((s) => s.enabled).length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+        <span style={fieldLabel()}>SKILLS OFFERED TO RUNS · {on} OF {skills.length}</span>
+        <span style={hint}>
+          Readiness (and QA / review triage) picks the skills that fit a ticket from this list, and every later role follows
+          the ones it picks. Turn off a skill no ticket needs and it is never offered — the run&apos;s Skills table shows which
+          ones were picked and read. Skills the harness runs itself are never listed.
+        </span>
+      </div>
+      {skills.map((s, i) => (
+        <div key={s.name} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {i > 0 && <div style={{ height: "1px", background: COLORS.borderSubtle }} />}
+          <ToggleRow
+            label={s.name}
+            on={s.enabled}
+            onToggle={(e) => { if (toggle.isPending) return; fireBoltFromEvent(e); toggle.mutate(s); }}
+            desc={s.description.length > 180 ? `${s.description.slice(0, 180).replace(/\s+\S*$/, "")}…` : s.description}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // One saved organization, as /api/connections reports it — never the token.
 type Connection = { id: string; label: string; org: string; hasPat: boolean; isActive: boolean; identityEmail: string; identityName: string; reviewers: string[] };
@@ -515,6 +559,7 @@ export default function SettingsPage() {
     connection: connectionPane,
     execution: executionPane,
     claude: <ClaudeAccountsSettings />,
+    skills: <SkillsPane />,
     flowrunner: <FlowRunnerSettings />,
     notifications: notificationsPane,
     appearance: appearancePane,
@@ -553,7 +598,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {tab !== "flowrunner" && tab !== "claude" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
+            {tab !== "flowrunner" && tab !== "claude" && tab !== "skills" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
               <button onClick={save} style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 7 }), padding: "0 20px" }}>Save changes</button>
             </div>}
           </div>

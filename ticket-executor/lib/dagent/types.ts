@@ -13,7 +13,8 @@ export const TERMINALS = [END, FAIL, NEEDS_INPUT, NEEDS_REVIEW];
 
 export type Target = string;
 
-export type Refusal = { source: string; file: string; issue: string };
+/** `evidence` / `expected` come only from the reviewer, so the fixer starts from its proof instead of re-diagnosing. */
+export type Refusal = { source: string; file: string; issue: string; evidence?: string; expected?: string };
 
 export type Usage = {
   costUsd: number;
@@ -56,6 +57,19 @@ export type Ctx = {
   knowledgeFile: string;
   channels: Record<string, Record<string, unknown>>;
   visits: Record<string, number>;
+  /** The work item as the harness read it for the judging role's brief — per turn, never persisted. */
+  workItem?: WorkItem;
+  /** Skills switched off in Settings, read for a skill-picking role's brief — per turn, never persisted. */
+  skillsOff?: string[];
+};
+
+export type WorkItem = {
+  title: string;
+  type: string;
+  state: string;
+  description: string;
+  criteria: string;
+  comments: { author: string; date: string; text: string }[];
 };
 
 type NodeBase = {

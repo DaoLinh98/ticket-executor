@@ -22,14 +22,32 @@ export function IconTile({ d, tone, size = 24, iconSize = 14 }: { d: string; ton
   );
 }
 
+/** The header row of folded debug detail: the whole row toggles it (a tap target, not a hover), a chevron says which way. */
+export function FoldToggle({ open, onToggle, label, children }: { open: boolean; onToggle: () => void; label: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="te-wf-tap"
+      aria-expanded={open}
+      aria-label={`${open ? "Hide" : "Show"} ${label}`}
+      onClick={onToggle}
+      style={{ width: "100%", minHeight: 28, padding: 0, border: 0, background: "none", color: "inherit", font: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+    >
+      <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>{children}</span>
+      <Ico d={open ? IC.up : IC.down} size={14} sw={2.2} />
+    </button>
+  );
+}
+
 /** A status glyph; a running one is the app's loading ring, like every other page. */
 export function StatusIcon({ icon, size, sw = 2.6 }: { icon: string; size: number; sw?: number }) {
   return icon === IC.running ? <LoadingRing size={size + 1} /> : <Ico d={icon} size={size} sw={sw} />;
 }
 
-export function Badge({ tone, icon, children, size = "sm", mono }: { tone: Tone; icon?: string; children: ReactNode; size?: "xs" | "sm"; mono?: boolean }) {
+export function Badge({ tone, icon, children, size = "sm", mono, title }: { tone: Tone; icon?: string; children: ReactNode; size?: "xs" | "sm"; mono?: boolean; title?: string }) {
   return (
     <span
+      title={title}
       style={{
         ...chipShape(6),
         flex: "0 0 auto",
