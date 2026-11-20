@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
-import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, QA_GRAPH, REVIEW_GRAPH } from "../lib/dagent/graph";
+import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, MAX_RECAPS, QA_GRAPH, recapWorth, REVIEW_GRAPH } from "../lib/dagent/graph";
 import {
   evaluatePrompt,
   fixPrompt,
@@ -26,8 +26,9 @@ import path from "path";
 import { BUNDLED_AGENTS } from "../lib/agentPack";
 import { BUNDLED_SKILLS, readVersion } from "../lib/skillPack";
 import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, TERMINALS, ZERO_USAGE, type Ctx, type NodeResult } from "../lib/dagent/types";
-import { buildView, outputOf } from "../lib/dagent/view";
-import { briefOutline, briefTokens, cacheHit, lineDiff, outSections, refusalSections } from "../lib/workflow/present";
+import { buildView, flowDefs, outputOf } from "../lib/dagent/view";
+import type { NodeOutput } from "../lib/workflow/types";
+import { briefOutline, briefTokens, cacheHit, lineDiff, outSections, recapText, refusalSections } from "../lib/workflow/present";
 
 const ctx = (channels: Ctx["channels"] = {}, visits: Ctx["visits"] = {}): Ctx => ({
   runId: "r1",
@@ -125,6 +126,13 @@ test("review fix: answering is required, and a committed fix must be pushed", ()
   assert.equal(REVIEW_GRAPH.edges.respond(changed, ok({ pushed: true, threadsReplied: 0, ...clear })).to, FAIL);
   assert.equal(REVIEW_GRAPH.edges.respond(changed, ok({ pushed: true, threadsReplied: 2, ...clear })).to, END);
   assert.equal(REVIEW_GRAPH.edges.respond(reviewCtx(), ok({ pushed: false, threadsReplied: 1, ...clear })).to, END);
+
+  // When only developer-provided manual findings were present and fixed, 0 PR thread replies is accepted
+  const manualOnly = reviewCtx({
+    diffGuard: { changed: [{ repo: "r", branch: "b", files: 1 }] },
+    reviewTriage: { threads: [{ threadId: "manual-1", file: "a.ts", comment: "fix", decision: "fix", reason: "bug" }] },
+  });
+  assert.equal(REVIEW_GRAPH.edges.respond(manualOnly, ok({ pushed: true, threadsReplied: 0, ...clear })).to, END);
 });
 
 test("QA fix: no defect ends with a reply, a defect enters the implement loop", () => {
@@ -165,7 +173,62 @@ test("every agent node runs a global agent and declares a schema", () => {
     if (n.kind !== "agent") continue;
     assert.equal(typeof n.output.type, "string");
   }
-  assert.deepEqual(agentsOf().sort(), ["analyst", "fixer", "implementer", "planner", "publisher", "reflector", "reviewer"]);
+  assert.deepEqual(agentsOf().sort(), ["analyst", "fixer", "implementer", "planner", "publisher", "recapper", "reflector", "reviewer"]);
+});
+
+test("recap: every ending is worth one, but only once the ticket has been read", () => {
+  const judged = { readiness: { ready: true } };
+  for (const t of TERMINALS) assert.equal(recapWorth(GRAPH, ctx(judged), t), true, t);
+  // Nothing has been read yet — a run that dies in setup has its reason on the failure panel already.
+  assert.equal(recapWorth(GRAPH, ctx(), FAIL), false);
+  // Not an ending.
+  assert.equal(recapWorth(GRAPH, ctx(judged), "implement"), false);
+  // A resumed run recaps its new ending, but the budget is finite.
+  assert.equal(recapWorth(GRAPH, ctx(judged, { recap: MAX_RECAPS - 1 }), END), true);
+  assert.equal(recapWorth(GRAPH, ctx(judged, { recap: MAX_RECAPS }), END), false);
+  // The shapes that predate the node never route to it.
+  assert.equal(recapWorth(graphById("dagent-implement-v3")!, ctx(judged), END), false);
+  // The other flows judge under their own role, and get a recap too.
+  assert.equal(recapWorth(QA_GRAPH, ctx({ qaTriage: { outcome: "fix" } }), END), true);
+  assert.equal(recapWorth(REVIEW_GRAPH, ctx({ reviewTriage: { threads: [] } }), END), true);
+});
+
+test("recap: a report never changes the ending the harness stashed", () => {
+  const c = ctx({ readiness: { ready: true } });
+  c.outcome = { to: NEEDS_REVIEW, reason: "read-back mismatch" };
+  assert.deepEqual(edge("recap", c, ok({ headline: "x", headlineVi: "x", sections: [] })), c.outcome);
+  // A turn that failed outright still lands on the stashed ending: the developer loses the summary, not the result.
+  assert.deepEqual(edge("recap", c, notOk("the agent's turn failed")), c.outcome);
+  assert.deepEqual(GRAPH.nodes.recap.next, [END, NEEDS_REVIEW, NEEDS_INPUT, FAIL]);
+});
+
+test("recap: the canvas routes every exit through it, and the older shapes still do not", () => {
+  const defs = flowDefs(GRAPH);
+  const def = (id: string) => defs.find((d) => d.id === id)!;
+  assert.deepEqual(def("verifyPublish").next, ["recap"]);
+  assert.deepEqual(def("readiness").next, ["plan", "recap"]);
+  assert.deepEqual(def("recap").next, [END, NEEDS_REVIEW, NEEDS_INPUT, FAIL]);
+  assert.equal(def("recap").phase, "outcome");
+  assert.deepEqual(flowDefs(graphById("dagent-implement-v3")!).find((d) => d.id === "verifyPublish")!.next, [END, NEEDS_REVIEW]);
+});
+
+test("recapText: one block per section, in the language asked for, falling back line by line", () => {
+  const out = outputOf("recap", {
+    headline: "Historical imports now skip the rule.",
+    headlineVi: "Import Historical giờ bỏ qua rule.",
+    sections: [
+      { key: "ask", title: "What was asked", titleVi: "Ticket yêu cầu gì", bullets: ["AC 1 met at Factory.cs:260"], bulletsVi: ["AC 1 đạt tại Factory.cs:260"] },
+      { key: "watch", title: "Needs your eyes", titleVi: "", bullets: ["Check the Dev URL"], bulletsVi: [] },
+    ],
+  }, 1, "") as Extract<NodeOutput, { node: "recap" }>;
+  const en = recapText(out, false);
+  const vi = recapText(out, true);
+  assert.match(en, /^Historical imports now skip the rule\./);
+  assert.match(en, /\n## What was asked\n- AC 1 met at Factory\.cs:260/);
+  assert.match(vi, /^Import Historical giờ bỏ qua rule\./);
+  assert.match(vi, /\n## Ticket yêu cầu gì\n- AC 1 đạt tại Factory\.cs:260/);
+  // A section the turn left half-written still renders — in the language it has.
+  assert.match(vi, /\n## Needs your eyes\n- Check the Dev URL/);
 });
 
 test("readiness parks the run when the ticket is not ready", () => {
@@ -258,6 +321,43 @@ test("the PR description carries the review's proof per criterion; a re-sync tha
   assert.match(body, /Independent review: pass — 1 checks ok/);
   assert.equal(edge("diffGuard", c, ok({ blockers: [], warnings: [], diffHashes: { api: "h1" } })).to, "prePublish");
   assert.equal(edge("diffGuard", c, ok({ blockers: [], warnings: [], diffHashes: { api: "h2" } })).to, "evaluate");
+});
+
+test("the PR description fits Azure DevOps' limit: unchanged when it fits, compact then trimmed when it does not", () => {
+  const long = (s: string, n: number) => `${s} ${"x".repeat(n)}`;
+  const acs = Array.from({ length: 12 }, (_, i) => `Criterion ${i + 1} ${"y".repeat(60)}`);
+  const big = (provider: string) => ({
+    ...ctx({
+      readiness: { ...DIGESTED, acceptanceCriteria: acs },
+      plan: {
+        branch: "b",
+        planMd: "## Goal\nUpgrade pipelines.\n\n## Steps\n1. x",
+        acMap: acs.map((ac, i) => ({ n: i + 1, ac, change: "code", files: [`F${i}.cs`], test: "T" })),
+        decisions: Array.from({ length: 6 }, (_, i) => ({ point: `Point ${i}`, decision: long("Decided", 120), why: long("Because", 200) })),
+      },
+      implement: { summary: "Moved to .NET 10.", verification: { tests: "passed", build: "passed", acceptanceCriteria: "met" }, manualChecks: [{ n: 3, check: "Run the Dev pipeline" }] },
+      evaluate: { verdict: "pass", blockers: [], assumptions: [long("Not run locally", 200)], checked: acs.map((_, i) => ({ subject: `AC${i + 1}`, evidence: long(`F${i}.cs:1`, 300), result: "ok" })) },
+    }),
+    provider,
+  });
+  const ado = big("azure-devops");
+  // GitHub has room: the full record, untouched.
+  const gh = prBody(big("github"));
+  assert.ok(gh.length > 4000);
+  assert.doesNotMatch(gh, /Shortened to fit/);
+  const body = prBody(ado);
+  assert.ok(body.length <= 4000, `${body.length} chars`);
+  assert.match(body, /Shortened to fit the 4,000-character limit/);
+  assert.match(body, /The full record is on Ticket Executor run r1\./);
+  // The core always stays, every criterion keeps its row.
+  assert.match(body, /^## Summary\nUpgrade pipelines\./);
+  for (let i = 1; i <= 12; i++) assert.match(body, new RegExp(`\\| ${i} \\| Criterion ${i} `));
+  assert.match(body, /## Verification\n/);
+  // A tiny limit still yields a description under it, cut on a line.
+  assert.ok(prBody(ado, 600).length <= 600);
+  // Shortened only past the limit: a small description is the same text as before.
+  const small = ctx({ readiness: { ...DIGESTED, acceptanceCriteria: ["a"] }, plan: { planMd: "## Goal\nG", acMap: [{ n: 1, ac: "a", change: "none", files: [], test: "t" }] } });
+  assert.equal(prBody(small), prBody(small, Infinity));
 });
 
 test("a fix round that changes nothing stops the loop early; reflect is told so", () => {
@@ -587,6 +687,16 @@ test("every role after the judging one is briefed on the ticket digest instead o
   }
   for (const name of judging) assert.match(ALL_BRIEFS[name as keyof typeof ALL_BRIEFS](c), /`digest`/, `${name}: asked to write it`);
   assert.equal(digestOf(ctx({ readiness: { title: "x", digest: { summary: "", details: [] } } })), null);
+});
+
+test("a review run on a run-local branch pushes HEAD to the pull request branch", () => {
+  const changed = { changed: [{ repo: "billing-api", branch: "te-run/r1", files: 1 }] };
+  const local = ctx({ setup: { branch: "feature/9-x", localBranch: "te-run/r1" }, diffGuard: changed });
+  assert.match(respondPrompt(local), /git push origin HEAD:feature\/9-x/);
+  assert.match(reviewImplementPrompt(local), /local branch `te-run\/r1` — a run-local copy of the pull request's source branch `feature\/9-x`/);
+  const own = ctx({ setup: { branch: "feature/9-x" }, implement: { branch: "feature/9-x" }, diffGuard: changed });
+  assert.match(respondPrompt(own), /git push origin HEAD:feature\/9-x/);
+  assert.match(reviewImplementPrompt(own), /on the pull request's source branch `feature\/9-x`/);
 });
 
 test("roles that only push and reply are not briefed on project knowledge", () => {

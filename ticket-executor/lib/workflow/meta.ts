@@ -89,7 +89,7 @@ export const KIND_META: Record<NodeKind, { icon: string; tone: Tone }> = {
   terminal: { icon: IC.flag, tone: "muted" },
 };
 
-export const PHASES: PhaseKey[] = ["prepare", "understand", "build", "verify", "publish"];
+export const PHASES: PhaseKey[] = ["prepare", "understand", "build", "verify", "publish", "outcome"];
 
 export const PHASE_LABEL: Record<PhaseKey, string> = {
   prepare: "Prepare",
@@ -97,6 +97,7 @@ export const PHASE_LABEL: Record<PhaseKey, string> = {
   build: "Build",
   verify: "Verify",
   publish: "Publish",
+  outcome: "Recap",
 };
 
 export const LANE_TITLE: Record<string, string> = {
@@ -106,6 +107,7 @@ export const LANE_TITLE: Record<string, string> = {
   build: "2 · Build",
   verify: "3 · Verify",
   publish: "4 · Publish",
+  outcome: "5 · Recap",
   unknown: "Other",
   terminal: "Outcome",
 };

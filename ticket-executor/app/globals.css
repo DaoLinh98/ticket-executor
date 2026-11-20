@@ -261,8 +261,7 @@ html.te-ring-static{--te-ring-image:linear-gradient(var(--te-btn-outline-border)
 @keyframes te-lc-glow { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--te-success) 70%, transparent)); } }
 @keyframes te-lc-twinkle { 0%, 55%, 100% { transform: scale(0) rotate(0deg); opacity: 0; } 70% { transform: scale(1) rotate(45deg); opacity: 1; } 85% { transform: scale(.4) rotate(90deg); opacity: .6; } }
 @media (prefers-reduced-motion: reduce) {
-  .te-wf-edge-live, .te-wf-running, .te-wf-blink { animation: none !important; }
-  .te-wf-particle { display: none; }
+  .te-wf-running, .te-wf-blink { animation: none !important; }
   .te-lc-line::after, .te-lc-tick, .te-lc-spark { animation: none !important; }
   .te-lc-spark { display: none; }
 }

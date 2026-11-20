@@ -4,7 +4,7 @@ export type Effects = "pure" | "local" | "external";
 
 export type NodeKind = "agent" | "check" | "harness" | "gate" | "terminal";
 
-export type PhaseKey = "prepare" | "understand" | "build" | "verify" | "publish";
+export type PhaseKey = "prepare" | "understand" | "build" | "verify" | "publish" | "outcome";
 
 export type FlowNodeDef = {
   id: string;
@@ -122,10 +122,15 @@ export type NodeOutput =
       node: "reviewTriage";
       threads: { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string }[];
       planMd: string;
+      skills?: { name: string; reason: string }[];
       digest?: TicketDigest;
     }
-  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; kind?: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string; digest?: TicketDigest }
-  | { node: "respond"; pushed: boolean; threadsReplied: number };
+  | { node: "qaTriage"; outcome: "fix" | "no-fix-needed"; findings: { finding: string; kind?: string; defect: boolean; reason: string; files: string[] }[]; qaReply: string; planMd: string; skills?: { name: string; reason: string }[]; baseBranch?: string; digest?: TicketDigest }
+  | { node: "respond"; pushed: boolean; threadsReplied: number }
+  | { node: "recap"; headline: string; headlineVi: string; sections: RecapSection[] };
+
+/** One part of the run's story, written in both languages in the same turn so the VIE toggle never calls out. */
+export type RecapSection = { key: string; title: string; titleVi: string; bullets: string[]; bulletsVi: string[] };
 
 /** How one step dealt with one skill: the picker `picked` it; a later role was told to follow it and `read` its
  *  SKILL.md, or left it `unread`; or the step `opened` a skill nobody assigned it. */

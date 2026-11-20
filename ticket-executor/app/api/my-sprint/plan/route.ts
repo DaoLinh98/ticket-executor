@@ -202,9 +202,11 @@ export async function PUT(req: Request) {
   // The manual half of the review lane. Same starter the scheduler uses, so the
   // button cannot start a run the automation would have refused.
   if (typeof body.resolveReview === "string" && body.resolveReview) {
+    const findings = typeof body.findings === "string" ? body.findings.trim() : "";
     const outcome = await startReviewRun(body.resolveReview, {
       reason: "asked-by-user",
-      detail: "Started from the Review column on Flow Runner.",
+      detail: findings ? "Started from Release Plan with manual reviewer findings." : "Started from the Review column on Flow Runner.",
+      findings,
     });
     const item = await prisma.plannedTicket.findUnique({ where: { id: body.resolveReview } });
     return NextResponse.json(

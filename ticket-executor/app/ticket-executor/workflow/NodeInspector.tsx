@@ -7,6 +7,7 @@ import type { Inspector } from "@/lib/workflow/present";
 import type { LogLevel, LogLine, Section } from "@/lib/workflow/types";
 import BriefCard from "./BriefCard";
 import { Badge, FoldToggle, Ico, IconTile, MONO, StatusBadge } from "./parts";
+import RecapCard from "./RecapCard";
 import Sections from "./Sections";
 
 export type InspectorTab = "node" | "run";
@@ -231,6 +232,8 @@ export default function NodeInspector(p: Props) {
         {!p.json || !isNode ? (
           <Sections key={`sections:${foldKey}`} sections={secs} copied={p.copied} onCopy={p.onCopy} retryFrom={p.retryFrom} onRetryPick={p.onRetryPick} />
         ) : null}
+
+        {isNode && ins.recap ? <RecapCard key={`recap:${foldKey}`} en={ins.recap.en} vi={ins.recap.vi} /> : null}
 
         {isNode && ins.brief ? <BriefCard key={`brief:${foldKey}`} label={ins.label} brief={ins.brief} prev={ins.briefPrev} prevAttempt={ins.briefPrevAttempt} /> : null}
 

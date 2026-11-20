@@ -158,6 +158,8 @@ export type Inspector = {
   briefPrevAttempt: number;
   json: string;
   transitions: { seq: number; incoming: boolean; other: string; reason: string }[];
+  /** The recap step only: the whole story in both languages, already written — the dialog's toggle costs nothing. */
+  recap?: { en: string; vi: string };
 };
 
 export type TimelineRow = {
@@ -223,6 +225,8 @@ export function oneLine(out: NodeOutput | null): string {
       return out.outcome === "no-fix-needed" ? "No defect · reply drafted" : plural(out.findings.filter((f) => f.defect).length, "defect");
     case "respond":
       return `${plural(out.threadsReplied, "thread")} answered${out.pushed ? " · pushed" : ""}`;
+    case "recap":
+      return out.headline || `${plural(out.sections.length, "section")} written`;
   }
 }
 
@@ -269,12 +273,56 @@ const items = (list: string[], icon: string, tone: Tone): ListItem[] => list.map
 
 // What every later role was given instead of the work item — shown on the role that wrote it, folded: a developer
 // opens it only to see why a later role misread the ticket.
+// The skills a judging role picked and why, folded — the same section readiness shows, for the review and QA flows.
+const skillWhySections = (skills: { name: string; reason: string }[] | undefined, baseBranch = ""): Section[] =>
+  skills?.length
+    ? [
+        {
+          kind: "list",
+          folded: true,
+          title: baseBranch ? `Why these skills · base ${baseBranch}` : "Why these skills",
+          icon: IC.book,
+          tone: "muted",
+          items: skills.map((s) => ({ icon: IC.book, tone: "muted" as Tone, text: s.name, sub: s.reason, subPlain: true })),
+        },
+      ]
+    : [];
+
 const digestSections = (d: TicketDigest | undefined): Section[] =>
   d
     ? [{ kind: "md", folded: true, title: "Ticket summary for later roles", icon: IC.file, tone: "indigo", text: [d.summary, d.details.map((x) => `- ${x}`).join("\n")].filter(Boolean).join("\n\n") }]
     : [];
 
 const DELIVERY_TEXT = { none: "Nothing on the base yet", partial: "Partly on the base", done: "Already on the base — nothing to build" } as const;
+
+// The recap's own sections, in the order the recapper writes them. An unknown key still renders — the agent's
+// wording is shown as it came, only its icon falls back.
+const RECAP_META: Record<string, { icon: string; tone: Tone }> = {
+  outcome: { icon: IC.flag, tone: "success" },
+  ask: { icon: IC.check, tone: "accent" },
+  work: { icon: IC.route, tone: "indigo" },
+  review: { icon: IC.shield, tone: "info" },
+  watch: { icon: IC.alert, tone: "warning" },
+  next: { icon: IC.bulb, tone: "warning" },
+};
+
+/** The recap as the one block of prose the dialog reads — `## ` per section, so it splits the way every other
+ *  panel does. `vi` falls back to the English line when the turn came back uneven. */
+export function recapText(out: Extract<NodeOutput, { node: "recap" }>, vi: boolean): string {
+  const head = (vi ? out.headlineVi : "") || out.headline;
+  const blocks = out.sections.map((s) => {
+    const title = (vi ? s.titleVi : "") || s.title;
+    const lines = vi && s.bulletsVi.length ? s.bulletsVi : s.bullets;
+    return `## ${title}\n${lines.map((b) => `- ${b}`).join("\n")}`;
+  });
+  return [head, ...blocks].filter(Boolean).join("\n\n");
+}
+
+/** The run's recap, newest first — the one panel a developer reads instead of opening every node. */
+export function recapOf(run: Run | null): Extract<NodeOutput, { node: "recap" }> | null {
+  const step = [...(run?.steps ?? [])].reverse().find((s) => s.output?.node === "recap");
+  return step?.output?.node === "recap" ? step.output : null;
+}
 
 export function outSections(out: NodeOutput | null): Section[] {
   if (!out) return [];
@@ -606,6 +654,7 @@ export function outSections(out: NodeOutput | null): Section[] {
           rows: out.threads.map((t): Cell[] => [{ t: t.file || t.comment, mono: !!t.file }, { t: t.decision, tone: t.decision === "fix" ? "warning" : "muted" }, t.reason]),
         },
         { kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd },
+        ...skillWhySections(out.skills),
         ...digestSections(out.digest),
       ];
     case "qaTriage": {
@@ -621,11 +670,20 @@ export function outSections(out: NodeOutput | null): Section[] {
       ];
       if (out.qaReply) S.push({ kind: "md", title: "Reply to QA", icon: IC.chat, tone: "indigo", text: out.qaReply });
       if (out.planMd) S.push({ kind: "md", title: "Plan", icon: IC.book, tone: "indigo", text: out.planMd });
+      S.push(...skillWhySections(out.skills, out.baseBranch));
       S.push(...digestSections(out.digest));
       return S;
     }
     case "respond":
       return [kv("Result", [["Pushed", out.pushed ? "yes" : "no"], ["Threads answered", out.threadsReplied, out.threadsReplied ? "success" : "danger"], ["Resolved", "never — the reviewer decides"]], IC.chat, "indigo")];
+    case "recap":
+      return [
+        ...(out.headline ? [{ kind: "md" as const, title: "In one line", icon: IC.sparkle, tone: "accent" as Tone, text: out.headline }] : []),
+        ...out.sections.map((s): Section => {
+          const m = RECAP_META[s.key] ?? { icon: IC.list, tone: "muted" as Tone };
+          return { kind: "list", title: s.title, icon: m.icon, tone: m.tone, items: s.bullets.map((text): ListItem => ({ mark: "•", tone: m.tone, text, subPlain: true })) };
+        }),
+      ];
   }
 }
 
@@ -1155,6 +1213,7 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
     briefPrevAttempt: ai > 0 ? ss[ai - 1]?.attempt ?? 0 : 0,
     json: JSON.stringify(obj, null, 2),
     transitions,
+    ...(out?.node === "recap" ? { recap: { en: recapText(out, false), vi: recapText(out, true) } } : {}),
   };
 }
 
@@ -1196,6 +1255,9 @@ export function runSections(run: Run | null, gates: GateResult[], now: number): 
   const S: Section[] = [];
   const end = run.endedAt ?? now;
   const stateTone: Tone = run.state === "failed" ? "danger" : run.state === "succeeded" ? "success" : run.state === "waiting" ? "warning" : "accent";
+  // The recap leads: it is written to be the only thing read, so nothing above it competes for the first look.
+  const recap = recapOf(run);
+  if (recap) S.push(...outSections(recap));
   S.push(
     kv("Run", [
       ["Id", run.id, undefined, true],
@@ -1252,8 +1314,9 @@ export function statusTone(status: NodeStatus): Tone {
 /** The retry option that starts a new run from the top instead of restarting this one from a node. */
 export const FRESH_START = "fresh";
 
-// Only an implement run can be started over from here: a review or QA fix needs its pull request or QC case.
-const canStartFresh = (run: Run) => run.flow === "implement";
+// An implement run starts over from its ticket, a review fix from its pull request and findings (the harness carries
+// them over); a QA fix needs its QC case, which its own retry re-analyses.
+const canStartFresh = (run: Run) => run.flow === "implement" || run.flow === "fix-review";
 
 const ADVICE: Record<FailureClass, { title: string; text: string; tone: Tone }> = {
   transient: { title: "Transient failure", text: "Likely passes on retry.", tone: "info" },

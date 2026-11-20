@@ -68,8 +68,8 @@ function RoomyTable({ sec }: { sec: Extract<Section, { kind: "table" }> }) {
   );
 }
 
-/** A section's rows as plain text, for the dialog's translation turn — the same
- *  lines it shows, so VIE and ENG read the same content. */
+/** A section's rows as plain text — the dialog's fallback body when the roomy
+ *  table is not what it renders. */
 function tablePlainText(sec: Extract<Section, { kind: "table" }>): string {
   return sec.rows
     .map((row) => {

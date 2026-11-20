@@ -276,7 +276,7 @@ export default function WorkflowView() {
     if (!real) return;
     const start = { ticketId: real.ticket.id, ticketUrl: real.ticket.url, project: real.ticket.project, rootRepo: real.ticket.rootRepo, provider: real.ticket.provider };
     if (from === FRESH_START) {
-      startM.mutate(start);
+      startM.mutate(run?.flow === "fix-review" ? { ...start, flow: "review", restartOf: real.run.id } : start);
       return;
     }
     if (!from) {

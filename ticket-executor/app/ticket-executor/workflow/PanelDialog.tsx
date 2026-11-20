@@ -4,9 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { COLORS, FONT, codeBlock, modalOverlayStyle, modalShellStyle, ringBorder, tabStyle } from "@/lib/ui";
 import { IC } from "@/lib/workflow/meta";
 import type { Tone } from "@/lib/workflow/types";
-import { useTranslation } from "../../queries";
 import { useBoltsContext } from "../../BoltsContext";
-import LoadingRing from "../LoadingRing";
 import { Ico, IconTile } from "./parts";
 
 type Lang = "eng" | "vie";
@@ -16,8 +14,11 @@ type Props = {
   subtitle?: string;
   icon: string;
   tone: Tone;
-  /** The panel's plain text — what the VIE toggle translates, one turn per panel. */
+  /** The panel's plain text, in English. */
   source: string;
+  /** The same text in Vietnamese, written when the panel was. Omitted ⇒ no language toggle: nothing is translated
+   *  on demand, so a panel either ships both languages or shows the one it has. */
+  vie?: string;
   /** The body in English, laid out for reading. Omitted ⇒ `source` shown as prose, one block per `## ` section. */
   eng?: ReactNode;
   /** A `## ` section of `source` to scroll to on open. */
@@ -53,14 +54,12 @@ function PanelProse({ text }: { text: string }) {
 
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-/** The roomy view of one inspector panel: the whole brief, or the whole row set,
- *  with a language toggle. Translation is asked for on the first switch to VIE and
- *  kept for the session (`useTranslation`), so reopening the panel costs nothing. */
-export default function PanelDialog({ title, subtitle, icon, tone, source, eng, focus, onClose }: Props) {
+/** The roomy view of one inspector panel: the whole brief, or the whole row set. A panel that was written in both
+ *  languages (the run's recap) carries the toggle; switching is a re-render, never a request. */
+export default function PanelDialog({ title, subtitle, icon, tone, source, vie, eng, focus, onClose }: Props) {
   const [lang, setLang] = useState<Lang>("eng");
   const { fireBoltFromEvent } = useBoltsContext();
-  const translatable = !!source.trim();
-  const tr = useTranslation(source, lang === "vie" && translatable);
+  const bilingual = !!vie?.trim();
   const shell = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
 
@@ -115,23 +114,24 @@ export default function PanelDialog({ title, subtitle, icon, tone, source, eng, 
             <b style={{ display: "block", fontSize: FONT.lg, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</b>
             {subtitle ? <span style={{ display: "block", fontSize: FONT.xs, color: COLORS.textMuted }}>{subtitle}</span> : null}
           </span>
-          <div role="tablist" aria-label="Language" style={{ display: "flex", gap: 4, flex: "0 0 auto" }}>
-            {([["eng", "ENG"], ["vie", "VIE"]] as [Lang, string][]).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                role="tab"
-                aria-selected={lang === k}
-                disabled={k === "vie" && !translatable}
-                className="te-wf-tap"
-                title={k === "vie" ? "Read this in Vietnamese" : "Read this in English"}
-                onClick={() => setLang(k)}
-                style={tabStyle({ active: lang === k, enabled: k === "eng" || translatable })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {bilingual ? (
+            <div role="tablist" aria-label="Language" style={{ display: "flex", gap: 4, flex: "0 0 auto" }}>
+              {([["eng", "ENG"], ["vie", "VIE"]] as [Lang, string][]).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={lang === k}
+                  className="te-wf-tap"
+                  aria-label={k === "vie" ? "Read this in Vietnamese" : "Read this in English"}
+                  onClick={() => setLang(k)}
+                  style={tabStyle({ active: lang === k, enabled: true })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
             type="button"
             aria-label="Close"
@@ -147,17 +147,7 @@ export default function PanelDialog({ title, subtitle, icon, tone, source, eng, 
         </header>
 
         <div ref={body} className="te-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 20px calc(24px + env(safe-area-inset-bottom))" }}>
-          {lang === "eng" ? (
-            (eng ?? <PanelProse text={source} />)
-          ) : tr.isPending ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}>
-              <LoadingRing size={56} />
-            </div>
-          ) : tr.isError ? (
-            <p style={{ margin: 0, fontSize: FONT.base, color: COLORS.danger }}>{tr.error.message}</p>
-          ) : (
-            <PanelProse text={tr.data ?? ""} />
-          )}
+          {lang === "eng" || !vie ? eng ?? <PanelProse text={source} /> : <PanelProse text={vie} />}
         </div>
       </div>
     </div>

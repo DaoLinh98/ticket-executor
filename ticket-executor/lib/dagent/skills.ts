@@ -5,7 +5,7 @@ import { prisma } from "../prisma";
 import { DENIED_SKILLS } from "./cli";
 import { skillFrontMatter } from "./rules";
 
-export type SkillEntry = { name: string; description: string; file: string };
+export type SkillEntry = { name: string; description: string; file: string; baseBranch?: string };
 
 const MAX_DESCRIPTION = 400;
 
@@ -22,7 +22,9 @@ function skillsIn(dir: string): SkillEntry[] {
     try {
       const fm = skillFrontMatter(readFileSync(file, "utf8"));
       const name = fm.name || n;
-      return fm.description ? [{ name, description: fm.description.slice(0, MAX_DESCRIPTION), file }] : [];
+      return fm.description
+        ? [{ name, description: fm.description.slice(0, MAX_DESCRIPTION), file, ...(fm.baseBranch ? { baseBranch: fm.baseBranch } : {}) }]
+        : [];
     } catch {
       return [];
     }

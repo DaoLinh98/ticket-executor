@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type MouseEvent } from "react";
+import { useState, type CSSProperties, type MouseEvent } from "react";
 import type { ReviewData } from "@/lib/types";
 import { COLORS, FONT, avatar, card, ctaButtonStyle, initials, pill, statusPill, tintedCard } from "@/lib/ui";
 import { timeAgo } from "../helpers";
@@ -12,6 +12,13 @@ type Props = {
   fixReviewRunning: boolean;
   fixReviewDisabled: boolean;
   onFixReview: (e: MouseEvent, prUrl: string) => void;
+  cancelAction?: {
+    label: string;
+    spinner: boolean;
+    onClick: (e?: MouseEvent) => void;
+    style: CSSProperties;
+    title?: string;
+  };
 };
 
 // One size / one contrast level up from the original 10.5px on #5B6273 — these
@@ -19,7 +26,7 @@ type Props = {
 const cardLabel = { fontSize: FONT.sm, letterSpacing: ".12em", color: COLORS.textDim, fontWeight: 600, marginBottom: "6px" } as const;
 
 // Linked-PR overview, its review threads, and the "Fix Code Review" launcher.
-export default function ResolveReviewTab({ review, loading, fixReviewRunning, fixReviewDisabled, onFixReview }: Props) {
+export default function ResolveReviewTab({ review, loading, fixReviewRunning, fixReviewDisabled, onFixReview, cancelAction }: Props) {
   return (
     <div style={{ maxWidth: "800px", display: "flex", flexDirection: "column", gap: "22px", animation: "fadeUp .35s both" }}>
       {loading ? (
@@ -103,6 +110,24 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
                 {review.unresolvedCount > 0 ? `${review.unresolvedCount} issue(s) to fix from the code review.` : "Nothing left to fix on this PR."}
               </div>
             </div>
+            {cancelAction && (
+              <button
+                type="button"
+                onClick={cancelAction.onClick}
+                title={cancelAction.title}
+                style={{ ...cancelAction.style, height: "38px", padding: "0 18px", fontSize: FONT.base, flex: "0 0 auto" }}
+              >
+                {cancelAction.spinner && (
+                  <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}>
+                    <LoadingRing size={14} />
+                  </span>
+                )}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ position: "relative", zIndex: 1 }}>
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+                <span style={{ position: "relative", zIndex: 1 }}>{cancelAction.label}</span>
+              </button>
+            )}
             <button
               onClick={(e) => onFixReview(e, review.pr!.url)}
               disabled={fixReviewDisabled}

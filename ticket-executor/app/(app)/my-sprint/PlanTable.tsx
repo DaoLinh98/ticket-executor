@@ -31,7 +31,7 @@ const LABELS = ["Queue", "", "Pts", "Tracker", "Release", "Run", ""];
 export type PlanHandlers = {
   openExecution: (ticketId: string) => void;
   setUnblocked: (plannedId: string, unblocked: boolean) => void;
-  resolveReview: (plannedId: string, ticketId: string) => void;
+  resolveReview: (row: PlannedRow) => void;
   retry: (plannedId: string) => void;
   release: (row: PlannedRow) => void;
   analyzeQa: (plannedId: string, ticketId: string) => void;
@@ -336,12 +336,9 @@ export default function PlanTable({
                   ) : t.runId || t.reviewRunId ? (
                     <IconAction action="result" onClick={() => h.openExecution(t.ticketId)} />
                   ) : null}
-                  {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
-                    (t.reviewState === "resolved" ? (
-                      <IconAction action="waitingReviewer" onClick={() => {}} disabled />
-                    ) : (
-                      <IconAction action="fixReview" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
-                    ))}
+                  {t.id && t.prPublished && !t.prMerged && t.reviewState !== "running" && claim === "mine" && (
+                    <IconAction action="fixReview" onClick={() => h.resolveReview(t)} busy={busy.has("fixreview-" + t.id)} />
+                  )}
                   {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
                     (t.implementState === "failed" || t.implementState === "skipped") && (
                       <IconAction action={held ? "resume" : "retry"} onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />

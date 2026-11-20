@@ -145,6 +145,24 @@ export default function TicketDetailHeader({
             {action.playIcon && <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ position: "relative", zIndex: 1 }}><path d="M7 4l13 8-13 8z" /></svg>}
             <span style={{ position: "relative", zIndex: 1 }}>{action.label}</span>
           </button>
+          {action.cancelAction && (
+            <button
+              type="button"
+              onClick={action.cancelAction.onClick}
+              title={action.cancelAction.title}
+              style={action.cancelAction.style}
+            >
+              {action.cancelAction.spinner && (
+                <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}>
+                  <LoadingRing size={14} />
+                </span>
+              )}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ position: "relative", zIndex: 1 }}>
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+              <span style={{ position: "relative", zIndex: 1 }}>{action.cancelAction.label}</span>
+            </button>
+          )}
         </div>
         )}
       </div>

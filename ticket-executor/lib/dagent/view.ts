@@ -17,7 +17,7 @@ import type {
 } from "../workflow/types";
 import { flowOf, GRAPH, graphById, MAX_FIX_ATTEMPTS, outline } from "./graph";
 import { codeLeadsOf, deliveryOf, digestOf, HARD_RULES, prNumber, skillUse } from "./rules";
-import { BRIEF_PREFIX, type Graph, type LogEntry } from "./types";
+import { BRIEF_PREFIX, TERMINALS, type Graph, type LogEntry } from "./types";
 
 export type RunRow = {
   id: string;
@@ -87,7 +87,16 @@ const GATE_DEFS: FlowNodeDef[] = [
   { id: "admission", label: "Admission", phase: "pre-run", kind: "gate", effects: "pure", context: "", next: ["setup"] },
 ];
 
+/** The canvas draws what the harness does: on a graph with a recap, every exit reaches its terminal through it, so
+ *  each node's terminal targets collapse to `recap` (recap's own stay the terminals). An ending that skipped the
+ *  recap — a run that died before it had a story — is still drawn, from the transition itself. */
+function throughRecap(n: { id: string; next: string[] }, hasRecap: boolean): string[] {
+  if (!hasRecap || n.id === "recap") return n.next;
+  return [...new Set(n.next.map((t) => (TERMINALS.includes(t) ? "recap" : t)))];
+}
+
 export function flowDefs(g: Graph = GRAPH): FlowNodeDef[] {
+  const hasRecap = !!g.nodes.recap;
   return GATE_DEFS.map((d) => (d.id === "admission" ? { ...d, next: [g.entry] } : d)).concat(
     outline(g).map((n) => ({
       id: n.id,
@@ -96,7 +105,7 @@ export function flowDefs(g: Graph = GRAPH): FlowNodeDef[] {
       kind: n.kind as NodeKind,
       effects: n.effects as FlowNodeDef["effects"],
       context: n.context,
-      next: n.next,
+      next: throughRecap(n, hasRecap),
       maxVisits: n.maxVisits,
     })),
   );
@@ -119,6 +128,11 @@ function refusals(v: unknown): UiRefusal[] {
 }
 
 // The ticket digest a judging role wrote — kept on its output so /workflow shows what every later role was given.
+// The skills a judging role picked, with why — readiness, reviewTriage and qaTriage all report them.
+function skillsPart(d: Data): { name: string; reason: string }[] {
+  return arr<Data>(d.skills).map((s) => ({ name: str(s.name), reason: str(s.reason) }));
+}
+
 function digestPart(d: Data): { digest?: { summary: string; details: string[] } } {
   const g = digestOf({ channels: { readiness: d } });
   return g ? { digest: { summary: g.summary, details: g.details } } : {};
@@ -141,7 +155,7 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
         node: "readiness",
         ready: !!d.ready,
         acceptanceCriteria: arr<string>(d.acceptanceCriteria).map(String),
-        skills: arr<Data>(d.skills).map((s) => ({ name: str(s.name), reason: str(s.reason) })),
+        skills: skillsPart(d),
         baseBranch: str(d.baseBranch),
         missing: arr(d.missing),
         ambiguities: arr(d.ambiguities),
@@ -231,11 +245,25 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
     case "verifyPublish":
       return { node: "verifyPublish", passed: !!d.passed, checks: arr(d.checks) };
     case "reviewTriage":
-      return { node: "reviewTriage", threads: arr(d.threads), planMd, ...digestPart(d) };
+      return { node: "reviewTriage", threads: arr(d.threads), planMd, skills: skillsPart(d), ...digestPart(d) };
     case "qaTriage":
-      return { node: "qaTriage", outcome: d.outcome === "no-fix-needed" ? "no-fix-needed" : "fix", findings: arr(d.findings), qaReply: str(d.qaReply), planMd, ...digestPart(d) };
+      return { node: "qaTriage", outcome: d.outcome === "no-fix-needed" ? "no-fix-needed" : "fix", findings: arr(d.findings), qaReply: str(d.qaReply), planMd, skills: skillsPart(d), baseBranch: str(d.baseBranch), ...digestPart(d) };
     case "respond":
       return { node: "respond", pushed: !!d.pushed, threadsReplied: num(d.threadsReplied) };
+    case "recap":
+      return {
+        node: "recap",
+        headline: str(d.headline),
+        headlineVi: str(d.headlineVi),
+        // A section whose two languages came back uneven still renders: the toggle falls back to what is there.
+        sections: arr<Data>(d.sections).map((s) => ({
+          key: str(s.key),
+          title: str(s.title),
+          titleVi: str(s.titleVi),
+          bullets: arr<string>(s.bullets).map(String),
+          bulletsVi: arr<string>(s.bulletsVi).map(String),
+        })),
+      };
   }
   return null;
 }
@@ -304,7 +332,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
     ...transRows.filter((t) => t.toNode !== "CANCELLED").map((t) => ({ seq: t.seq, fromNode: t.fromNode, toNode: t.toNode, reason: t.reason, at: t.createdAt.getTime() })),
   ];
 
-  const costByPhase = { prepare: 0, understand: 0, build: 0, verify: 0, publish: 0 } as Record<PhaseKey, number>;
+  const costByPhase = { prepare: 0, understand: 0, build: 0, verify: 0, publish: 0, outcome: 0 } as Record<PhaseKey, number>;
   for (const s of steps) {
     const p = defs.find((d) => d.id === s.nodeId)?.phase as PhaseKey | undefined;
     if (p && p in costByPhase) costByPhase[p] += s.costUsd;

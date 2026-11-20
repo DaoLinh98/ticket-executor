@@ -182,6 +182,7 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
       pendingAction?: string;
       pendingSince?: Date | null;
       qaCommentAt?: string;
+      implementState?: string;
     } = {};
 
     let prMerged = row.prMerged;
@@ -201,6 +202,9 @@ export async function watchLifecycle(plan: WatchPlan, now = new Date()): Promise
           data.prMerged = true;
         }
       }
+    }
+    if ((data.prUrl || stage === "code-review") && row.implementState !== "implemented") {
+      data.implementState = "implemented";
     }
 
     const current = row.pendingAction as PendingAction;

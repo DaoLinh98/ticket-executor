@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { COLORS, FONT, card, chipShape, ctaButtonStyle, fieldInput, pill, tabStyle, tintedCard } from "@/lib/ui";
-import { HISTORY_FLOWS, HISTORY_SIZES, HISTORY_STATES, pageCount, type HistoryFilter, type HistoryRow } from "@/lib/dagent/historyShape";
+import { COLORS, FONT, SURFACE, card, chipShape, fieldInput, pill, tintedCard } from "@/lib/ui";
+import { HISTORY_FLOWS, HISTORY_STATES, type HistoryRow } from "@/lib/dagent/historyShape";
 import { dur, ktok, usd } from "@/lib/workflow/meta";
-import { RUN_HISTORY_PREFIX, useRunHistory } from "../../queries";
+import { RUN_HISTORY_PREFIX, useRunHistory, type RunHistoryFilter } from "../../queries";
 import { useLiveInvalidate } from "../../useLive";
 import LoadingRing from "../../ticket-executor/LoadingRing";
 import { useNow } from "../../ticket-executor/execution/useNow";
@@ -80,28 +80,24 @@ function RunRow({ row, now, onOpen }: { row: HistoryRow; now: number; onOpen: ()
   );
 }
 
+// Scrolling within this distance of the bottom loads the next page.
+const LOAD_MORE_THRESHOLD_PX = 160;
+
 function RunHistory() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const size = Number(params.get("size"));
-  const filter: HistoryFilter = {
+  const filter: RunHistoryFilter = {
     state: params.get("state") ?? "",
     flow: params.get("flow") ?? "",
     q: params.get("q") ?? "",
-    page: Math.max(1, Math.floor(Number(params.get("page"))) || 1),
-    size: (HISTORY_SIZES as readonly number[]).includes(size) ? size : HISTORY_SIZES[0],
   };
   const [search, setSearch] = useState(filter.q);
+  const mainRef = useRef<HTMLElement>(null);
 
-  // Defaults stay out of the URL; any change other than the page itself starts again at page 1.
-  const setFilter = (p: Partial<HistoryFilter>) => {
-    const next = { ...filter, page: 1, ...p };
-    const qs = new URLSearchParams(
-      Object.entries(next)
-        .filter(([k, v]) => v && !(k === "page" && v === 1) && !(k === "size" && v === HISTORY_SIZES[0]))
-        .map(([k, v]) => [k, String(v)]),
-    );
+  // Defaults stay out of the URL.
+  const setFilter = (p: Partial<RunHistoryFilter>) => {
+    const qs = new URLSearchParams(Object.entries({ ...filter, ...p }).filter(([, v]) => v));
     router.replace(qs.size ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
@@ -114,11 +110,24 @@ function RunHistory() {
 
   const historyQ = useRunHistory(filter);
   useLiveInvalidate("/api/dagent/runs/stream", RUN_HISTORY_PREFIX, false);
-  const data = historyQ.data;
-  const rows = data?.rows ?? [];
-  const pages = data ? pageCount(data.total, data.size) : 1;
-  const first = data && data.total ? (data.page - 1) * data.size + 1 : 0;
+  const total = historyQ.data?.pages[0]?.total;
+  // A run that starts between two page fetches shifts the rows down, so a row can arrive twice.
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    return (historyQ.data?.pages ?? []).flatMap((p) => p.rows).filter((r) => !seen.has(r.id) && seen.add(r.id));
+  }, [historyQ.data]);
   const now = useNow(rows.some((r) => ACTIVE.includes(r.state)));
+
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = historyQ;
+  const nearBottom = () => {
+    const el = mainRef.current;
+    return !!el && el.scrollTop + el.clientHeight >= el.scrollHeight - LOAD_MORE_THRESHOLD_PX;
+  };
+  const loadMore = () => {
+    if (hasNextPage && !isFetchingNextPage && nearBottom()) void fetchNextPage();
+  };
+  // A page that does not fill the screen leaves nothing to scroll, so keep loading until it does or the runs run out.
+  useEffect(loadMore, [rows.length, hasNextPage, isFetchingNextPage]);
 
   return (
     <>
@@ -137,15 +146,16 @@ function RunHistory() {
           <SelectMenu value={filter.flow} onChange={(v) => setFilter({ flow: v })} options={Object.values(HISTORY_FLOWS)} allLabel="Flow: All" ariaLabel="Filter by flow" />
         </div>
         <div style={{ flex: 1 }} />
-        {data ? (
+        {total !== undefined ? (
           <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
-            {data.total} run{data.total === 1 ? "" : "s"}
+            {total} run{total === 1 ? "" : "s"}
           </span>
         ) : null}
       </PageToolbar>
 
-      <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
-        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "14px" }}>
+      <main ref={mainRef} onScroll={loadMore} className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "0 28px 20px", background: "var(--te-page-veil)" }}>
+        {/* The top gap lives inside the scroll area, so the sticky header sits flush with its edge and rows never show above it. */}
+        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "14px", paddingTop: "20px" }}>
           {historyQ.isPending ? (
             <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
               <LoadingRing size={96} />
@@ -157,9 +167,9 @@ function RunHistory() {
               {filter.state || filter.flow || filter.q ? "No run matches these filters." : "No D-Agent run yet. Runs started from Flow Runner show up here live."}
             </div>
           ) : (
-            <div className="te-table-scroll" style={{ ...card({ padding: "0" }), overflowX: "hidden" }}>
+            <div className="te-table-scroll" style={{ ...card({ padding: "0" }), overflowX: "clip" }}>
               <div className="te-table-body te-plan-table">
-                <div className="te-plan-head" style={{ display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.faint }}>
+                <div className="te-plan-head" style={{ position: "sticky", top: 0, zIndex: 2, background: SURFACE.modal, display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: `1px solid ${COLORS.borderSubtle}`, fontSize: FONT.xs, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: COLORS.faint }}>
                   {COLUMNS.map((c) => (
                     <span key={c}>{c}</span>
                   ))}
@@ -170,31 +180,9 @@ function RunHistory() {
               </div>
             </div>
           )}
-          {data && data.total ? (
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: "10px 18px", fontSize: FONT.sm, color: COLORS.textDim }}>
-              <span>
-                Showing {first}–{first + rows.length - 1} of {data.total}
-              </span>
-              <div role="group" aria-label="Rows per page" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span style={{ marginRight: "4px" }}>Rows per page</span>
-                {HISTORY_SIZES.map((n) => (
-                  <button key={n} type="button" className="te-action-btn" aria-pressed={data.size === n} onClick={() => setFilter({ size: n })} style={{ ...tabStyle({ active: data.size === n }), marginBottom: 0 }}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <button type="button" className="te-icon-btn" aria-label="Previous page" disabled={data.page <= 1} onClick={() => setFilter({ page: data.page - 1 })} style={{ ...ctaButtonStyle("outline"), padding: "0 11px", opacity: data.page <= 1 ? 0.4 : 1 }}>
-                  ‹
-                </button>
-                <span style={{ minWidth: "74px", textAlign: "center", color: COLORS.textSoft, fontWeight: 600 }}>
-                  Page {data.page} / {pages}
-                </span>
-                <button type="button" className="te-icon-btn" aria-label="Next page" disabled={data.page >= pages} onClick={() => setFilter({ page: data.page + 1 })} style={{ ...ctaButtonStyle("outline"), padding: "0 11px", opacity: data.page >= pages ? 0.4 : 1 }}>
-                  ›
-                </button>
-                {historyQ.isPlaceholderData ? <LoadingRing size={16} /> : null}
-              </div>
+          {isFetchingNextPage || historyQ.isPlaceholderData ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "4px 0" }}>
+              <LoadingRing size={20} />
             </div>
           ) : null}
         </div>

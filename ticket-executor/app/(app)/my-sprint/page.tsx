@@ -38,6 +38,7 @@ import AutomationPanel from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import AskPoDialog from "./AskPoDialog";
 import RunOptionsDialog from "./RunOptionsDialog";
+import ResolveReviewDialog from "./ResolveReviewDialog";
 import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import NeedsYou, { type AttentionItem } from "./NeedsYou";
 import PlanFilters from "./PlanFilters";
@@ -113,6 +114,7 @@ export default function MySprintPage() {
   const [projectFilter, setProjectFilter] = useState("");
   const [historyFor, setHistoryFor] = useState("");
   const [optionsFor, setOptionsFor] = useState("");
+  const [reviewDialogRow, setReviewDialogRow] = useState<PlannedRow | null>(null);
 
   const setError = (m: string) => { if (m) showToast(m, "error"); };
   const setMessage = (m: string) => { if (m) showToast(m); };
@@ -443,15 +445,20 @@ export default function MySprintPage() {
       await load();
     });
 
-  const resolveReviewNow = (plannedId: string, ticketId: string) =>
-    act("fixreview-" + plannedId, async () => {
+  const askResolveReview = (row: PlannedRow) => {
+    setReviewDialogRow(row);
+  };
+
+  const resolveReviewNow = (row: PlannedRow, findings = "") =>
+    act("fixreview-" + row.id, async () => {
       try {
-        const d = await post("/api/my-sprint/plan", { resolveReview: plannedId }, "PUT");
+        const d = await post("/api/my-sprint/plan", { resolveReview: row.id, findings }, "PUT");
         if (d.plan) setStored(d.plan);
         if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The review fix did not start.");
         else setMessage("Resolving the review comments on this pull request.");
+        setReviewDialogRow(null);
       } catch (e) {
-        sendToRootRepo(e, ticketId);
+        sendToRootRepo(e, row.ticketId);
       }
     });
 
@@ -565,8 +572,8 @@ export default function MySprintPage() {
     if (t.reviewState === "failed") {
       attention.push({
         ...base, key: "rf-" + t.id, tone: "danger", text: "The review fix run failed.",
-        action: t.prPublished && !t.prMerged && t.openComments > 0
-          ? <IconAction action="fixReview" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
+        action: t.prPublished && !t.prMerged
+          ? <IconAction action="fixReview" onClick={() => askResolveReview(t)} busy={busy.has("fixreview-" + t.id)} />
           : result,
       });
     }
@@ -849,7 +856,7 @@ export default function MySprintPage() {
 
               <div
                 className="te-sprint-split"
-                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: `minmax(0, 1fr) 460px ${legendOpen ? "200px" : "40px"}`, gridTemplateRows: "minmax(0, 1fr)", gap: "20px", transition: "grid-template-columns .38s var(--te-ease-expo)" }}
+                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: `minmax(0, 1fr) 610px ${legendOpen ? "200px" : "40px"}`, gridTemplateRows: "minmax(0, 1fr)", gap: "20px", transition: "grid-template-columns .38s var(--te-ease-expo)" }}
               >
               <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
@@ -1034,7 +1041,7 @@ export default function MySprintPage() {
                   handlers={{
                     openExecution,
                     setUnblocked,
-                    resolveReview: resolveReviewNow,
+                    resolveReview: askResolveReview,
                     retry: retryNow,
                     release: askRelease,
                     analyzeQa: analyzeQaNow,
@@ -1091,6 +1098,14 @@ export default function MySprintPage() {
         <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy.has(confirm.busyKey)} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
           {confirm.body}
         </ConfirmDialog>
+      )}
+      {reviewDialogRow && (
+        <ResolveReviewDialog
+          row={reviewDialogRow}
+          busy={busy.has("fixreview-" + reviewDialogRow.id)}
+          onConfirm={(findings) => resolveReviewNow(reviewDialogRow, findings)}
+          onCancel={() => setReviewDialogRow(null)}
+        />
       )}
       {/* {reportOpen && triage?.status === "succeeded" && (
         <TriageReport
