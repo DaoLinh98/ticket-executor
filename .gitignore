@@ -38,3 +38,6 @@ Ticket-Executor project/
 
 # chromium/electron crashpad log (written by the editor host, not the app)
 debug.log
+
+# Graphity
+graphify-out

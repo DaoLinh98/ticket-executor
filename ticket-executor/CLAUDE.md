@@ -44,7 +44,7 @@ runner beyond `node --test`; ask before adding tooling.
   `public/sw.js`, `app/manifest.ts` — iOS push needs a Home-Screen install, `display: "standalone"`).
 
 ## D-Agent workflow engine (`/workflow`, `lib/dagent/`)
-`dagent-implement-v3` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
+`dagent-implement-v4` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
 --json-schema …` from `cli.ts`. **No skill runs as a step** — behaviour = `~/.claude/agents/<name>.md` + `prompts.ts` brief.
 **Ticket skills:** the first judging role (`readiness` / `qaTriage` / `reviewTriage`) picks from `skillCatalog()`
 (`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS` and the skills switched off in
@@ -67,17 +67,18 @@ A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<bra
 | `fix` | agent | `fixer` | exactly the blockers (`fixBlockersOf()`: a rebase conflict, else a hard diff violation, else the review's), commit; ≤ `MAX_FIX_ATTEMPTS` (5) — shared by harness and review blockers; a harness blocker past the budget = FAIL. A later round's brief carries the previous attempt (given / reported / left unchanged); the re-review reads its disputes as "Fixer's account". `stalledFix()`: the review re-raises the blockers the last fix was given (same count, same files, ≥ 50 % word overlap) → reflect at once, not the rest of the budget | syncBase / reflect |
 | `reflect` | agent | `reflector` | maybe a lesson in Root repo `KNOWLEDGE.md`; brief: why it stops (blocked / no progress / budget), the blockers standing (what a blocked fixer was given, else the review's), what the last fix left unchanged | FAIL |
 | `prePublish` | check | git | clean, right branch, HEAD verified, base unmoved (re-sync ≤ `MAX_PRE_PUBLISH` 3). After a re-sync, diffGuard skips the re-review when every repo's own diff hashes (`diffHashes`) to what the passing review judged (`reviewedDiffs`) | publish / syncBase / FAIL |
-| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; description = `prBody()` verbatim (summary, AC table with the review's proof, verification, decisions, manual checks, not verified); `maxVisits: 1` | verifyPublish / FAIL |
+| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; description = `prBody()` verbatim (summary, AC table with the review's proof, verification, decisions, manual checks, not verified), held under `prBodyLimit()` (ADO refuses a create past 4000 chars: compact rows first, then drops decisions → not verified → manual checks, with a note naming the run); `maxVisits: 1` | verifyPublish / FAIL |
 | `verifyPublish` | check | git + provider | remote head = HEAD, draft, ticket linked, PR targets the skill's base or the default branch (ADO read-back) | END / NEEDS_REVIEW |
+| `recap` | agent | `recapper` | the epilogue every ending passes through (see 10). Brief = the whole run from `channels` (ending + AC + plan + delivery + diff + review + what is left open); writes `headline` + up to 6 sections (`outcome`/`ask`/`work`/`review`/`watch`/`next`), **each in English and Vietnamese in the one turn**, saved as artifact `recap`. `tools: StructuredOutput` only — no files, no git, no work item; `maxVisits: MAX_RECAPS` (3) | the stashed ending |
 
 Also in `GRAPHS` (keyed by `Flow`; `Ctx.flow` / `Ctx.prUrl`):
-**`dagent-fix-review-v1`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
+**`dagent-fix-review-v2`** — `setup` on the PR source branch (`loadPullRequestBranch()`) → `reviewTriage`
 (`review-triager`) → `implement` → `diffGuard` ⇄ `evaluate` ⇄ `fix` → `prePublish` → `respond` (`responder`: push,
 one reply per thread, **never resolve**). No `syncBase` — a published PR branch is never rebased.
-**`dagent-fix-qa-v3`** — `setup` → `qaTriage` (`qa-triager`; seeded `followUp` without a `decision` → END: analysis only;
+**`dagent-fix-qa-v4`** — `setup` → `qaTriage` (`qa-triager`; seeded `followUp` without a `decision` → END: analysis only;
 `no-fix-needed` → END with `qaReply`) → `implement` …
 `verifyPublish`. `/workflow` has no start form: it shows the run in flight (else latest) for `?ticket=`, or exactly
-`?run=<id>` (Run History, `/runs`: `listRunHistory()` + `history.ts`, numbered pages of 25/50/100 with a total; `RunView.newest` gates Retry/Cancel).
+`?run=<id>` (Run History, `/runs`: `listRunHistory()` + `history.ts`, pages of 25 loaded on scroll, `useInfiniteQuery`, with a total; `RunView.newest` gates Retry/Cancel).
 
 1. **Edges route only on validated `structured_output`** (`schemas.ts`), only to the node's `next` (or a
    `retryEntries` node from `setup`). `MAX_HOPS` (60) fails a looping run.
@@ -111,6 +112,15 @@ one reply per thread, **never resolve**). No `syncBase` — a published PR branc
    them on boot and from System Check / Guide. **A prompt/contract change bumps `version:`** — older copies replaced
    on boot and refused at admission; a same-version hand edit is reported, never overwritten.
 9. **A shape change gets a new graph id**; `graphById()` keeps the old so a parked run (`rehydrate()`) finishes on it.
+10. **Every ending is recapped, and the recap decides nothing.** No node declares `recap` in `next`: `drive()` stashes the
+   ending on `ctx.outcome` and detours through the node when `recapWorth()` says so (a terminal, the graph has the node,
+   under `MAX_RECAPS`, and a judging role has run — a run that dies in `setup` has nothing to summarise). `recap`'s edge
+   replays `ctx.outcome` **ignoring its own result**, so a failed recap costs the summary, never the outcome; `drive()`
+   also leaves `currentNodeId` on the node that ended the run, so `retryNodeFor()` and the failure panel still point at
+   the work. `flowDefs()` collapses each node's terminal targets to `recap` so the canvas draws what the harness does,
+   and `layout.ts` rails them like terminal exits. **Both languages are written in that one turn** (`recapText()`):
+   nothing on `/workflow` translates on demand, and `PanelDialog` shows ENG/VIE only for a panel that ships both.
+   `/api/translate` stays for Ticket Execution's per-comment translation, which is not a run.
 
 After touching `lib/dagent/` or `lib/workflow/`:
 `node --import ./tests/register.mjs --test tests/dagent.test.ts tests/workflowLayout.test.ts`.
