@@ -319,7 +319,7 @@ function Canvas(p: Props) {
         onMoveStart={(e) => {
           if (e) p.onFollow(false);
         }}
-        aria-label="Run workflow canvas. Use Tab to move between steps, Enter to inspect."
+        aria-label="Run workflow canvas. Use Tab to move between steps, Enter to inspect, j and k to step, f to follow the live step."
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.8} />
         <Controls position="bottom-left" showInteractive={false} onFitView={() => p.onFollow(false)}>

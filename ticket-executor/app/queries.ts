@@ -7,6 +7,7 @@ import type { ClaudeModel } from "@/lib/claudeOptions";
 import type { ClaudeCredentialView } from "@/lib/claudeAccounts";
 import { HISTORY_SIZES, type HistoryFilter, type HistoryPage } from "@/lib/dagent/historyShape";
 import type { InsightsPayload, InsightsPeriod } from "@/lib/dagent/insights";
+import type { RunListItem as RunRow, RunView } from "@/lib/dagent/view";
 
 export type ConnectionRow = {
   id: string; label: string; org: string; isActive: boolean;
@@ -134,6 +135,23 @@ export const fetchDagentRuns = async (): Promise<RunsPayload> => {
   return d as RunsPayload;
 };
 
+// The run list and one run's full view as /workflow reads them (the richer view types, unlike the card above).
+export const runViewKey = (id: string | null) => ["dagent", "run", id] as const;
+
+export const fetchRunRows = async (): Promise<{ runs: RunRow[] }> => {
+  const r = await fetch("/api/dagent/runs", { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(d?.runs)) throw new Error(d?.error || "Could not read the D-Agent runs.");
+  return d as { runs: RunRow[] };
+};
+
+export const fetchRunView = async (id: string): Promise<RunView> => {
+  const r = await fetch(`/api/dagent/runs/${id}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d?.error || `Could not read run ${id}.`);
+  return d as RunView;
+};
+
 export const useDagentRuns = () =>
   useQuery({ queryKey: RUNS_KEY, queryFn: fetchDagentRuns, staleTime: 0 });
 
@@ -178,6 +196,25 @@ export const useInsights = (period: InsightsPeriod) =>
   useQuery({ queryKey: insightsKey(period), queryFn: () => fetchInsights(period), staleTime: 0, placeholderData: keepPreviousData });
 
 // A ticket's row in the active Flow Runner plan, for the Workflow page's link back. Invalidated by the run's and the plan's streams.
+// My Sprint's sprint read and the ticket search its toolbar runs. Both throw on a failed read.
+export const SPRINT_KEY = ["my-sprint"] as const;
+
+export const fetchSprint = async (): Promise<import("./(app)/my-sprint/model").MySprint> => {
+  const r = await fetch("/api/my-sprint");
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d?.error || "Could not read the sprint.");
+  return d;
+};
+
+export const ticketSearchKey = (q: string) => ["ticket-search", q] as const;
+
+export const fetchTicketSearch = async (q: string, signal?: AbortSignal): Promise<import("@/lib/types").Ticket[]> => {
+  const r = await fetch("/api/tickets/search?q=" + encodeURIComponent(q), { signal });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d?.error || "The ticket search failed.");
+  return Array.isArray(d.tickets) ? d.tickets : [];
+};
+
 export type PlanRowPayload = { planId: string; sprint: string; queuePosition: number | null; queueLength: number; row: import("./(app)/my-sprint/model").PlannedRow | null };
 
 export const planRowKey = (ticketId: string, provider: string) => ["my-sprint", "plan-row", provider, ticketId] as const;

@@ -171,6 +171,8 @@ export type TimelineRow = {
   width: number;
   title: string;
   running: boolean;
+  /** What the step spent ("" for a step that spent nothing: a harness step or one still starting). */
+  cost: string;
 };
 
 export type Timeline = { rows: TimelineRow[]; ticks: string[]; total: string };
@@ -766,7 +768,9 @@ export function nodeView(run: Run | null, gates: GateResult[], n: LayoutNode, no
     if (d.kind === "agent") {
       chips.push({ text: d.context, tone: "indigo" });
       const cost = ss.reduce((a, s) => a + s.costUsd, 0);
-      chips.push({ text: cost ? usd(cost) : "$—", tone: "muted" });
+      const tokens = ss.reduce((a, s) => a + s.inputTokens + s.outputTokens + s.cacheReadTokens, 0);
+      const turns = ss.reduce((a, s) => a + s.numTurns, 0);
+      chips.push({ text: cost ? usd(cost) : "$—", tone: "muted", title: cost ? `${tokens.toLocaleString("en-US")} tokens · ${plural(turns, "turn")}` : undefined });
     } else chips.push({ text: "0 tokens", tone: "muted" });
     if (d.effects === "external") chips.push({ text: ran.length ? "ran once" : "one-way", icon: ran.length ? IC.lock : undefined, tone: "warning" });
     const sk = skillSummaryChip(ss[ss.length - 1]?.skills, isRun);
@@ -1069,8 +1073,9 @@ export function timelineOf(run: Run | null, now: number): Timeline {
       status,
       left: ((a - t0) / span) * 100,
       width: Math.max(0.3, ((b - a) / span) * 100),
-      title: `${label} #${s.attempt} · ${STATUS[status].text} · ${dur((b - a) / 1000)}`,
+      title: `${label} #${s.attempt} · ${STATUS[status].text} · ${dur((b - a) / 1000)}${s.costUsd ? ` · ${usd(s.costUsd)}` : ""}`,
       running: s.status === "running",
+      cost: s.costUsd ? usd(s.costUsd) : "",
     };
   });
   return { rows, ticks: [0, 0.25, 0.5, 0.75, 1].map((f) => dur((span * f) / 1000)), total: dur(span / 1000) };

@@ -1,6 +1,6 @@
 "use client";
 
-import { COLORS, FONT, chipShape } from "@/lib/ui";
+import { COLORS, FONT, chipShape, fieldInput } from "@/lib/ui";
 import { STATUS, TONE, clock } from "@/lib/workflow/meta";
 import type { Timeline } from "@/lib/workflow/present";
 import type { LogLevel, LogLine } from "@/lib/workflow/types";
@@ -36,6 +36,7 @@ export function TimelineView({ timeline, selectedId, onPick }: { timeline: Timel
               </span>
               <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</span>
               <span style={{ color: COLORS.textMuted, fontFamily: MONO }}>#{r.attempt}</span>
+              {r.cost ? <span style={{ marginLeft: "auto", paddingRight: 8, color: COLORS.textMuted, fontFamily: MONO, fontSize: FONT.xs }}>{r.cost}</span> : null}
             </span>
             <span style={{ position: "relative", height: 16 }}>
               <span className={r.running ? "te-wf-blink" : undefined} title={r.title} style={{ ...chipShape(6), position: "absolute", top: 2, height: 12, left: `${r.left}%`, width: `${r.width}%`, minWidth: 3, background: TONE[st.tone].c }} />
@@ -48,9 +49,23 @@ export function TimelineView({ timeline, selectedId, onPick }: { timeline: Timel
   );
 }
 
-export function RawLog({ lines, live, withTime }: { lines: LogLine[]; live: boolean; withTime: boolean }) {
+// `lines` are the ones that match `query`; `total` is every line of the run, so the search says how much it hides.
+export function RawLog({ lines, total, query, onQuery, live, withTime }: { lines: LogLine[]; total: number; query: string; onQuery: (q: string) => void; live: boolean; withTime: boolean }) {
   return (
-    <div className="te-scroll" role="log" aria-label="Raw run log" style={{ position: "absolute", inset: 0, overflow: "auto", background: COLORS.panelBgDark, padding: "12px 16px", fontSize: FONT.sm, lineHeight: 1.6, fontFamily: MONO }}>
+    <div className="te-scroll" style={{ position: "absolute", inset: 0, overflow: "auto", background: COLORS.panelBgDark, padding: "0 16px 12px", fontSize: FONT.sm, lineHeight: 1.6, fontFamily: MONO }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", gap: 10, padding: "10px 0", background: COLORS.panelBgDark }}>
+        <input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="Search the whole run's log"
+          aria-label="Search the whole run's log"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ ...fieldInput(), flex: "1 1 auto", maxWidth: 360, boxSizing: "border-box", fontFamily: "inherit" }}
+        />
+        {query ? <span style={{ flex: "0 0 auto", fontSize: FONT.xs, color: COLORS.textMuted }}>{lines.length} of {total} lines</span> : null}
+      </div>
+      <div role="log" aria-label="Raw run log">
       {lines.map((l, i) => (
         <div key={i} style={{ display: "flex", gap: 10, whiteSpace: "pre-wrap" }}>
           {withTime ? <span style={{ flex: "0 0 auto", color: COLORS.textMuted }}>{l.ts ? clock(l.ts) : "--:--:--"}</span> : null}
@@ -64,6 +79,7 @@ export function RawLog({ lines, live, withTime }: { lines: LogLine[]; live: bool
           █
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

@@ -10,11 +10,14 @@ export type AttentionItem = {
   action?: ReactNode;
 };
 
+// The pill's colour is the only sign of urgency, so a screen reader is told the same thing in words.
+const TONE_WORD = { danger: "Urgent", warning: "Needs a decision", accent: "Action available" } as const;
+
 export default function NeedsYou({ items }: { items: AttentionItem[] }) {
   const [hidden, setHidden] = useState(false);
   if (items.length === 0 || hidden) return null;
   return (
-    <div style={{ ...tintedCard("warning", { padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
+    <section aria-label={`Needs you, ${items.length} ${items.length === 1 ? "item" : "items"}`} style={{ ...tintedCard("warning", { padding: "14px 16px" }), display: "flex", flexDirection: "column", gap: "10px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
         <span style={sectionCaption()}>NEEDS YOU · {items.length}</span>
         <button
@@ -30,9 +33,10 @@ export default function NeedsYou({ items }: { items: AttentionItem[] }) {
           </svg>
         </button>
       </div>
+      <div role="list" style={{ display: "contents" }}>
       {items.map((it) => (
-        <div key={it.key} style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          <span style={pill({ color: COLORS[it.tone], size: "xs", weight: 700 })}>#{it.ticketId}</span>
+        <div key={it.key} role="listitem" style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span aria-label={`${TONE_WORD[it.tone]}: ticket ${it.ticketId}`} style={pill({ color: COLORS[it.tone], size: "xs", weight: 700 })}>#{it.ticketId}</span>
           <span style={{ flex: "1 1 240px", minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
             <span title={it.title} style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {it.title}
@@ -42,6 +46,7 @@ export default function NeedsYou({ items }: { items: AttentionItem[] }) {
           {it.action}
         </div>
       ))}
-    </div>
+      </div>
+    </section>
   );
 }

@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import Toast, { type ToastMessage } from "../ticket-executor/Toast";
 
 type ToastKind = ToastMessage["kind"];
-type ShowToast = (msg: string, kind?: ToastKind, durationMs?: number) => void;
+type ShowToast = (msg: string, kind?: ToastKind, durationMs?: number, action?: ToastMessage["action"]) => void;
 
 const ToastContext = createContext<ShowToast | null>(null);
 
@@ -18,8 +18,8 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const seq = useRef(0);
 
-  const showToast = useCallback<ShowToast>((msg, kind = "success", durationMs = 7000) => {
-    setToast({ id: ++seq.current, msg, kind, durationMs });
+  const showToast = useCallback<ShowToast>((msg, kind = "success", durationMs = 7000, action) => {
+    setToast({ id: ++seq.current, msg, kind, durationMs, action });
   }, []);
   const close = useCallback(() => setToast(null), []);
 

@@ -2,7 +2,7 @@
 
 import SelectMenu from "../../SelectMenu";
 import { COLORS, FONT, tabStyle } from "@/lib/ui";
-import { FILTER_LABEL, type PlanFilter, type PlanSort } from "./model";
+import { FILTER_LABEL, SORT_LABEL, type PlanFilter, type PlanSort } from "./model";
 
 const ALL_PROJECTS = "All projects";
 
@@ -27,9 +27,9 @@ export default function PlanFilters({
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-      <div className="te-tabs-scroll" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+      <div role="group" aria-label="Filter the plan" className="te-tabs-scroll" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
         {(Object.keys(FILTER_LABEL) as PlanFilter[]).map((f) => (
-          <button key={f} className="te-action-btn" onClick={() => onFilter(f)} style={tabStyle({ active: filter === f })}>
+          <button key={f} className="te-action-btn" aria-pressed={filter === f} onClick={() => onFilter(f)} style={tabStyle({ active: filter === f })}>
             {FILTER_LABEL[f]} {counts[f]}
           </button>
         ))}
@@ -45,10 +45,11 @@ export default function PlanFilters({
           />
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-        <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>Sort</span>
-        <button className="te-action-btn" onClick={() => onSort("queue")} style={tabStyle({ active: sort === "queue" })}>Queue</button>
-        <button className="te-action-btn" onClick={() => onSort("release")} style={tabStyle({ active: sort === "release" })}>Release day</button>
+      <div role="group" aria-label="Sort the plan" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+        <span aria-hidden style={{ fontSize: FONT.sm, color: COLORS.textDim }}>Sort</span>
+        {(Object.keys(SORT_LABEL) as PlanSort[]).map((k) => (
+          <button key={k} className="te-action-btn" aria-pressed={sort === k} onClick={() => onSort(k)} style={tabStyle({ active: sort === k })}>{SORT_LABEL[k]}</button>
+        ))}
       </div>
     </div>
   );

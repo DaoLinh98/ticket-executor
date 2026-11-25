@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { COLORS, FONT, card, chipShape, ctaButtonStyle, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, chipShape, ctaButtonStyle, fieldInput, tintedCard } from "@/lib/ui";
 import { layoutRun } from "@/lib/workflow/layout";
 import { STAGES, STATUS } from "@/lib/workflow/meta";
 import {
@@ -24,15 +24,14 @@ import {
 } from "@/lib/workflow/present";
 import type { FlowNodeDef, GateResult, LifecycleStage } from "@/lib/workflow/types";
 import type { RunListItem, RunView } from "@/lib/dagent/view";
-import PageHeading from "../../(app)/PageHeading";
-import NotificationCenter from "../../(app)/NotificationCenter";
-import ProviderBadge from "../../(app)/ProviderBadge";
+import PageHeader from "../../(app)/PageHeader";
+import ConfirmDialog from "../../(app)/my-sprint/ConfirmDialog";
 import PageToolbar from "../../(app)/PageToolbar";
 import { useResolvedIsMobile } from "../../(app)/MobileNav";
 import { useToast } from "../../(app)/ToastProvider";
 import { copyText } from "../../(app)/report/copyText";
 import { useLiveInvalidate } from "../../useLive";
-import { planRowKey, usePlanRow } from "../../queries";
+import { RUNS_KEY, fetchRunRows, fetchRunView, planRowKey, runViewKey, usePlanRow } from "../../queries";
 import LoadingRing from "../LoadingRing";
 import { useNow } from "../execution/useNow";
 import { RefusalCard, StateBanner, WorkflowHud, type WorkflowMode } from "./Chrome";
@@ -63,6 +62,8 @@ type Ui = {
   hudOpen: boolean;
   mLcOpen: boolean;
   allPaths: boolean;
+  /** An older run of the ticket the Run tab compares this one with. */
+  compare: string | null;
 };
 
 const INITIAL: Ui = {
@@ -83,12 +84,8 @@ const INITIAL: Ui = {
   hudOpen: false,
   mLcOpen: false,
   allPaths: false,
+  compare: null,
 };
-
-type RunsPayload = { runs: RunListItem[] };
-
-const RUNS_KEY = ["dagent", "runs"] as const;
-const runKeyOf = (id: string | null) => ["dagent", "run", id] as const;
 
 const ACTIVE = ["running", "waiting"];
 
@@ -118,24 +115,44 @@ export default function WorkflowView() {
   const ticketParam = params.get("ticket");
   // A run linked directly (Run History) — shown as is, even when it is older than the run list holds.
   const runParam = params.get("run");
-  const [ui, setUi] = useState<Ui>(INITIAL);
+  // A linked node / tab (?node=&tab=) opens selected; following the live node would take it back.
+  const [ui, setUi] = useState<Ui>(() => {
+    const node = params.get("node");
+    const t = params.get("tab");
+    return { ...INITIAL, sel: node, follow: !node, tab: t === "node" || t === "run" ? t : null };
+  });
   const [refusedGates, setRefusedGates] = useState<GateResult[] | null>(null);
   // An older run the user chose to look at; null follows the ticket's live (else latest) run.
   const [pickedRun, setPickedRun] = useState<string | null>(null);
   // A ticket picked from the run dropdown overrides the one in the URL.
   const [pickedTicket, setPickedTicket] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const now = useNow(true);
 
   const patch = useCallback((p: Partial<Ui>) => setUi((u) => ({ ...u, ...p })), []);
-  const reset = useCallback((p?: Partial<Ui>) => setUi((u) => ({ ...INITIAL, lcOpen: u.lcOpen, ...p })), []);
+  // A refusal belongs to the run it refused, so every switch of run or reset drops it.
+  const reset = useCallback((p?: Partial<Ui>) => {
+    setRefusedGates(null);
+    setUi((u) => ({ ...INITIAL, lcOpen: u.lcOpen, ...p }));
+  }, []);
 
-  const runsQ = useQuery({ queryKey: RUNS_KEY, queryFn: () => readJson<RunsPayload>("/api/dagent/runs"), staleTime: 0 });
+  // The selected node and tab ride in the URL (replace, no history entry) so the view can be linked.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    for (const [k, v] of [["node", ui.sel], ["tab", ui.tab]] as const) {
+      if (v) url.searchParams.set(k, v);
+      else url.searchParams.delete(k);
+    }
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
+  }, [ui.sel, ui.tab]);
+
+  const runsQ = useQuery({ queryKey: RUNS_KEY, queryFn: fetchRunRows, staleTime: 0 });
   useLiveInvalidate("/api/dagent/runs/stream", RUNS_KEY);
   // The run on screen is derived, never stored: the ticket's run in flight (or its latest), so a run the
   // scheduler starts takes the screen over through the list stream alone.
   const runs = runsQ.data?.runs ?? [];
   const linked = pickedTicket === null ? runParam : null;
-  const linkedView = useQuery({ queryKey: runKeyOf(linked), queryFn: () => readJson<RunView>(`/api/dagent/runs/${linked}`), enabled: !!linked, staleTime: 0 });
+  const linkedView = useQuery({ queryKey: runViewKey(linked), queryFn: () => fetchRunView(linked!), enabled: !!linked, staleTime: 0 });
   const ticketKey = pickedTicket ?? ticketParam ?? (linked ? (linkedView.data?.ticket.id ?? null) : null);
   const pool = ticketKey ? runs.filter((r) => r.ticketId === ticketKey) : linked ? [] : runs;
   const runId = linked ?? pool.find((r) => r.id === pickedRun)?.id ?? (pool.find((r) => ACTIVE.includes(r.state)) ?? pool[0])?.id ?? null;
@@ -144,16 +161,25 @@ export default function WorkflowView() {
     setPickedRun(newest ? null : r.id);
     reset();
   };
-  const viewQ = useQuery({ queryKey: runKeyOf(runId), queryFn: () => readJson<RunView>(`/api/dagent/runs/${runId}`), enabled: !!runId, staleTime: 0 });
-  useLiveInvalidate(runId ? `/api/dagent/runs/${runId}/stream` : null, runKeyOf(runId));
+  // A run chip in the lifecycle panel opens that run, as the run picker does.
+  const openRun = (key: string) => {
+    const r = runs.find((x) => x.id === key);
+    if (r) pickRun(r, r.id === pool[0]?.id);
+  };
+  const viewQ = useQuery({ queryKey: runViewKey(runId), queryFn: () => fetchRunView(runId), enabled: !!runId, staleTime: 0 });
+  useLiveInvalidate(runId ? `/api/dagent/runs/${runId}/stream` : null, runViewKey(runId));
 
   const real = runId ? (viewQ.data ?? null) : null;
   const run = real?.run ?? null;
 
   // A retry is compared with the run it retried, read through the same run view.
   const prevId = real?.retryOf || null;
-  const prevQ = useQuery({ queryKey: runKeyOf(prevId), queryFn: () => readJson<RunView>(`/api/dagent/runs/${prevId}`), enabled: !!prevId, staleTime: 0 });
+  const prevQ = useQuery({ queryKey: runViewKey(prevId), queryFn: () => fetchRunView(prevId!), enabled: !!prevId, staleTime: 0 });
   const diff = useMemo(() => (real && prevQ.data ? compareRuns(prevQ.data, real) : null), [real, prevQ.data]);
+  // Any older run of the same ticket can be compared too; only older ones, so "before" and "now" stay true.
+  const cmpId = ui.compare && ui.compare !== prevId ? ui.compare : null;
+  const cmpQ = useQuery({ queryKey: runViewKey(cmpId), queryFn: () => fetchRunView(cmpId!), enabled: !!cmpId, staleTime: 0 });
+  const cmpDiff = useMemo(() => (real && cmpQ.data ? compareRuns(cmpQ.data, real) : null), [real, cmpQ.data]);
 
   // The ticket's Flow Runner row: moved by the run (state, PR) and by the plan (queue, release day), so both streams refresh it.
   const planTicket = real?.ticket.id ?? "";
@@ -190,9 +216,16 @@ export default function WorkflowView() {
   const runSecs = useMemo(() => runSections(run, gates, now).filter((s) => latest || s.kind !== "retry"), [run, gates, now, latest]);
   const advice = useMemo(() => retryAdviceOf(run), [run]);
 
+  const here = pool.find((r) => r.id === runId);
+  const older = here ? pool.filter((r) => r.startedAt < here.startedAt && r.id !== prevId) : [];
   const q = ui.query.toLowerCase();
   const attemptNo = inspector.attempts[inspector.attemptIndex]?.n;
-  const nodeLogs = allLogs.filter((l) => l.node === selected.id && (attemptNo === undefined || l.attempt === attemptNo) && (ui.logFilter === "all" || l.lvl === ui.logFilter) && (!q || l.text.toLowerCase().includes(q)));
+  // The raw log view searches every node's lines with the same query the node log uses.
+  const runLogs = useMemo(() => (q ? allLogs.filter((l) => l.text.toLowerCase().includes(q) || l.node.toLowerCase().includes(q)) : allLogs), [allLogs, q]);
+  const nodeLogs = useMemo(
+    () => allLogs.filter((l) => l.node === selected.id && (attemptNo === undefined || l.attempt === attemptNo) && (ui.logFilter === "all" || l.lvl === ui.logFilter) && (!q || l.text.toLowerCase().includes(q))),
+    [allLogs, selected.id, attemptNo, ui.logFilter, q],
+  );
 
   const steps = run
     ? run.steps.map((s, i) => `${i + 1}. ${run.defs.find((d) => d.id === s.nodeId)?.label ?? s.nodeId} attempt ${s.attempt}: ${STATUS[s.status].text}${s.output ? `, ${oneLine(s.output)}` : ""}`)
@@ -200,10 +233,26 @@ export default function WorkflowView() {
 
   const pick = useCallback((id: string) => setUi((u) => ({ ...u, sel: id, follow: false, attempt: null, tab: "node", edgePop: null, sheet: u.sheet === "closed" ? "peek" : u.sheet })), []);
   const onFollow = useCallback((on: boolean) => setUi((u) => (u.follow === on ? u : { ...u, follow: on, sel: on ? null : u.sel })), []);
+  // j / k step through the nodes, f toggles following the live node. Never while typing or with a modifier held.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      if (e.key === "f") onFollow(!ui.follow);
+      else if (e.key === "j" || e.key === "k") {
+        const at = layout.nodes.findIndex((n) => n.id === selected.id);
+        const next = layout.nodes[at + (e.key === "j" ? 1 : -1)];
+        if (next) pick(next.id);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [layout.nodes, selected.id, ui.follow, onFollow, pick]);
   const onPill = useCallback((key: string) => setUi((u) => ({ ...u, edgePop: u.edgePop === key ? null : key })), []);
 
   const refreshRun = () => {
-    qc.invalidateQueries({ queryKey: runKeyOf(runId), exact: true });
+    qc.invalidateQueries({ queryKey: runViewKey(runId), exact: true });
     qc.invalidateQueries({ queryKey: RUNS_KEY, exact: true });
   };
 
@@ -213,7 +262,7 @@ export default function WorkflowView() {
       setRefusedGates(null);
       reset();
       // Fetch the new run's view alongside the list, so the screen does not wait for the list before it can ask for the run.
-      void qc.prefetchQuery({ queryKey: runKeyOf(started), queryFn: () => readJson<RunView>(`/api/dagent/runs/${started}`), staleTime: 0 });
+      void qc.prefetchQuery({ queryKey: runViewKey(started), queryFn: () => fetchRunView(started), staleTime: 0 });
       qc.invalidateQueries({ queryKey: RUNS_KEY, exact: true });
     },
     onError: (e: Error & { body?: { gates?: GateResult[] } }) => {
@@ -242,7 +291,11 @@ export default function WorkflowView() {
   });
 
   const draftedQuestions = (): string[] => {
-    for (const s of run?.steps ?? []) if (s.output?.node === "readiness" && s.output.questions.length) return s.output.questions;
+    const steps = run?.steps ?? [];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const o = steps[i].output;
+      if (o?.node === "readiness" && o.questions.length) return o.questions;
+    }
     return [];
   };
 
@@ -287,8 +340,20 @@ export default function WorkflowView() {
     startM.mutate({ ...start, retryOf: real.run.id, from });
   };
 
+  // The run as the page holds it — view, steps with their outputs, plan and the whole log — saved as one file.
+  const onExport = () => {
+    if (!real) return;
+    const body = JSON.stringify({ exportedAt: new Date().toISOString(), view: real, log: allLogs }, null, 2);
+    const url = URL.createObjectURL(new Blob([body], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dagent-${real.ticket.id}-${real.run.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const onCancel = () => {
-    if (runId) actM.mutate({ url: `/api/dagent/runs/${runId}/cancel` });
+    if (runId) actM.mutate({ url: `/api/dagent/runs/${runId}/cancel` }, { onSettled: () => setConfirmCancel(false) });
   };
 
   const refused = gates.find((g) => g.status === "refused");
@@ -303,12 +368,7 @@ export default function WorkflowView() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <PageHeading title="Workflow" kicker="D-AGENT · LIVE RUN" icon={<path d="M5 6a2 2 0 1 0 0 .01M19 6a2 2 0 1 0 0 .01M12 19a2 2 0 1 0 0 .01M7 6h10M6.5 7.5l4.5 10M17.5 7.5L13 17.5" />} />
-        <div style={{ flex: 1 }} />
-        <NotificationCenter />
-        <ProviderBadge />
-      </header>
+      <PageHeader title="Workflow" kicker="D-AGENT · LIVE RUN" icon={<path d="M5 6a2 2 0 1 0 0 .01M19 6a2 2 0 1 0 0 .01M12 19a2 2 0 1 0 0 .01M7 6h10M6.5 7.5l4.5 10M17.5 7.5L13 17.5" />} />
 
       {waiting ? (
         <PageToolbar>
@@ -333,7 +393,7 @@ export default function WorkflowView() {
         <div style={{ ...tintedCard("danger"), margin: 16, fontSize: FONT.base }}>{(runsQ.error ?? viewQ.error)?.message}</div>
       ) : empty ? (
         <div style={{ ...card(), margin: 16, fontSize: FONT.base, color: COLORS.textMuted }}>
-          {ticketParam ? `${ticketParam} has no D-Agent run yet.` : "No D-Agent run yet."} Switch Flow Runner to the D-Agent engine and its runs show up here live.
+          {ticketParam ? `${ticketParam} has no D-Agent run yet.` : "No D-Agent run yet."} Runs started from Flow Runner or Ticket Execution show up here live.
         </div>
       ) : (
         <div className="te-wf" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 1, background: COLORS.panelBgDark }}>
@@ -356,7 +416,7 @@ export default function WorkflowView() {
             onToggle={() => patch({ lcOpen: !ui.lcOpen })}
             mobileOpen={ui.mLcOpen}
             onMobileToggle={() => patch({ mLcOpen: !ui.mLcOpen })}
-            onOpenRun={() => undefined}
+            onOpenRun={openRun}
             onAction={onStageAction}
           />
 
@@ -375,8 +435,9 @@ export default function WorkflowView() {
             onMode={(m) => patch({ mode: m })}
             canCancel={latest && !!run && (live || run.state === "waiting")}
             canRetry={latest && run?.state === "failed"}
-            onCancel={onCancel}
+            onCancel={() => setConfirmCancel(true)}
             onRetry={onRetry}
+            onExport={real ? onExport : undefined}
             mobileOpen={ui.hudOpen}
             onMobileToggle={() => patch({ hudOpen: !ui.hudOpen })}
           />
@@ -410,7 +471,7 @@ export default function WorkflowView() {
                 </div>
               ) : null}
               {ui.mode === "timeline" ? <TimelineView timeline={timeline} selectedId={selected.id} onPick={(id) => setUi((u) => ({ ...u, sel: id, mode: "flow", follow: false, tab: "node" }))} /> : null}
-              {ui.mode === "log" ? <RawLog lines={allLogs} live={live} withTime={!!run} /> : null}
+              {ui.mode === "log" ? <RawLog lines={runLogs} total={allLogs.length} query={ui.query} onQuery={(v) => patch({ query: v })} live={live} withTime={!!run} /> : null}
             </div>
 
             <NodeInspector
@@ -432,6 +493,20 @@ export default function WorkflowView() {
                       }}
                     />
                   ) : null}
+                  {older.length > 0 ? (
+                    <select
+                      aria-label="Compare this run with an older run of the ticket"
+                      value={ui.compare ?? ""}
+                      onChange={(e) => patch({ compare: e.target.value || null })}
+                      style={{ ...fieldInput({ height: "32px", fontSize: FONT.sm }), width: "100%", marginTop: 12 }}
+                    >
+                      <option value="">Compare with an older run…</option>
+                      {older.map((r) => (
+                        <option key={r.id} value={r.id}>{new Date(r.startedAt).toLocaleString()} · {r.state}</option>
+                      ))}
+                    </select>
+                  ) : null}
+                  {cmpId ? <PreviousRun prevId={cmpId} diff={cmpDiff} heading="Compared with an older run" linkLabel="Open that run →" onOpen={() => { setPickedTicket(null); setPickedRun(null); reset(); }} /> : null}
                 </>
               }
               sheet={ui.sheet}
@@ -453,6 +528,12 @@ export default function WorkflowView() {
           </div>
         </div>
       )}
+      {confirmCancel ? (
+        <ConfirmDialog title={`Cancel the run for #${ticket.id}?`} confirmLabel="Cancel run" busy={actM.isPending} onConfirm={onCancel} onCancel={() => setConfirmCancel(false)}>
+          <span>{ticket.title}</span>
+          <span>It stops the agent now. {hud.cost} is already spent on this run. The ticket can be run again afterwards.</span>
+        </ConfirmDialog>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compareRuns, FRESH_START, retryAdviceOf, runSections } from "../lib/workflow/present";
+import { compareRuns, FRESH_START, retryAdviceOf, runSections, timelineOf } from "../lib/workflow/present";
 import type { Refusal, Run, Section, Step } from "../lib/workflow/types";
 import { flowDefs } from "../lib/dagent/view";
 import { GRAPH } from "../lib/dagent/graph";
@@ -118,4 +118,13 @@ test("compareRuns: same plan, and a retry not yet reviewed", () => {
   assert.deepEqual(d.blockers, { resolved: [], standing: [], added: [], pending: true });
   assert.equal(d.delta, "+$0.25");
   assert.equal(compareRuns({ run: run({}), planMd: "" }, { run: run({}), planMd: "" }).blockers, null);
+});
+
+test("timeline rows carry what each step spent, and none for a step that spent nothing", () => {
+  const paid = { ...step("plan"), costUsd: 0.5 };
+  const free = step("setup");
+  const t = timelineOf(run({ steps: [free, paid] }), 1);
+  assert.deepEqual(t.rows.map((r) => r.cost), ["", "$0.50"]);
+  assert.match(t.rows[1].title, /\$0\.50/);
+  assert.doesNotMatch(t.rows[0].title, /\$/);
 });
