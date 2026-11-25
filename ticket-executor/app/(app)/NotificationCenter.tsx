@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { useRouter } from "next/navigation";
 import NotificationBell from "../ticket-executor/NotificationBell";
 import { useBoltsContext } from "../BoltsContext";
 import { useNotifications } from "./NotificationsProvider";
@@ -10,13 +9,12 @@ import { notificationPath, type AppNotification } from "@/lib/notifications";
 /**
  * The bell, as every page's header renders it.
  *
- * Clicking a row always lands on Ticket Execution with the ticket and the tab
+ * Clicking a row opens, in a new tab, Ticket Execution with the ticket and the tab
  * in the URL — one destination whatever page the bell was opened from, and the
  * screen honours those two parameters even for a ticket its current board does
  * not contain (a released one, or one in another project).
  */
 export default function NotificationCenter() {
-  const router = useRouter();
   const { fireBoltFromEvent } = useBoltsContext();
   const { notifications, read, degraded, titleOf, markOneRead, markEveryRead, hasMore, loadingMore, loadMore } = useNotifications();
   const [open, setOpen] = useState(false);
@@ -38,14 +36,12 @@ export default function NotificationCenter() {
     // A pull request waiting on the developer's review belongs to somebody
     // else's work item — there is no ticket of theirs to open, so the
     // provider's own page is the destination.
+    // Every row opens in a new tab, so the page the developer is on is kept.
     if (!n.ticketId) {
-      if (n.href?.startsWith("/")) router.push(n.href);
-      else if (n.href) window.open(n.href, "_blank", "noopener");
+      if (n.href) window.open(n.href, "_blank", "noopener");
       return;
     }
-    // `at` is a nonce: without it, clicking the same notification twice pushes
-    // an identical URL and the screen has nothing to react to.
-    router.push(`${notificationPath(n.ticketId, n.tab)}&at=${Date.now()}`);
+    window.open(notificationPath(n.ticketId, n.tab), "_blank", "noopener");
   };
 
   return (

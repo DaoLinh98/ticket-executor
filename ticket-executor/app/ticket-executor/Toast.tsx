@@ -15,6 +15,8 @@ export type ToastMessage = {
   kind: "success" | "error" | "warning";
   /** How long it stays up, in ms. Hovering pauses this. */
   durationMs?: number;
+  /** One button beside the message (an Undo); pressing it also dismisses the toast. */
+  action?: { label: string; onClick: () => void };
 };
 
 // Bottom-right transient notification with a draining progress bar. The toast
@@ -58,6 +60,15 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}><path d="M5 13l4 4L19 7" style={{ strokeDasharray: 26, strokeDashoffset: 26, animation: "draw .5s .1s ease forwards" }} /></svg>
       )}
       <span style={{ flex: 1, minWidth: 0, fontSize: FONT.md, fontWeight: 600, color: COLORS.text, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{toast.msg}</span>
+      {toast.action ? (
+        <button
+          type="button"
+          onClick={() => { toast.action?.onClick(); onClose?.(); }}
+          style={{ flex: "0 0 auto", minHeight: "28px", padding: "0 10px", border: `1px solid ${tone.accent}`, ...chipShape(6), background: "transparent", color: tone.accent, fontSize: FONT.sm, fontWeight: 700, cursor: "pointer" }}
+        >
+          {toast.action.label}
+        </button>
+      ) : null}
       {onClose && (
         <button
           onClick={onClose}

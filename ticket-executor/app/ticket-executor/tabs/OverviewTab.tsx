@@ -389,7 +389,25 @@ export default function OverviewTab({
           <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)", marginBottom: "3px" }}>{ctaTitle}</div>
           <div style={{ fontSize: FONT.base, color: "#9A9FAD" }}>{ctaSub}</div>
         </div>
-        <div ref={ctaRef} style={{ position: "relative", flex: "0 0 auto", display: "inline-flex" }}>
+        <div ref={ctaRef} style={{ position: "relative", flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+          {action.cancelAction && (
+            <button
+              type="button"
+              onClick={action.cancelAction.onClick}
+              title={action.cancelAction.title}
+              style={{ ...bannerCtaStyle, ...action.cancelAction.style }}
+            >
+              {action.cancelAction.spinner && (
+                <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}>
+                  <LoadingRing size={15} />
+                </span>
+              )}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ position: "relative", zIndex: 1 }}>
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+              <span style={{ position: "relative", zIndex: 1 }}>{action.cancelAction.label}</span>
+            </button>
+          )}
           <div style={{ ...bannerCtaStyle, padding: 0, gap: 0 }}>
             <button
               onClick={action.onClick}

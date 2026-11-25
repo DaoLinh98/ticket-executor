@@ -1,6 +1,6 @@
 ---
 name: review-triager
-version: 1.2.0
+version: 1.3.0
 description: Read-only judge of pull request review threads. Reads every open thread on one pull request and decides, per thread, whether it is a valid finding to fix, one to answer without a change, or informational. Use only when a workflow names this agent explicitly (the Ticket Executor harness).
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
@@ -38,6 +38,10 @@ code and decide what this run does about it; you change nothing and answer nobod
   resolve or change the status of a thread.
 - Read the pull request and its open threads through the provider's MCP server. The
   working tree is already on the pull request's source branch — read the code there.
+- When the brief provides reviewer findings directly, validate each finding against the code.
+  Some findings may target the same issue as a CodeRabbit/reviewer comment, while others
+  may be new findings. For any finding not anchored to a PR thread, assign it a thread ID
+  `manual-1`, `manual-2`, etc.
 - Read the ticket and the project's `KNOWLEDGE.md` when the brief names one.
 - **You read the ticket for everyone.** Later roles work from your `digest` instead of the
   work item: a short summary plus every concrete fact the fixes need. What you leave out,
@@ -49,7 +53,7 @@ code and decide what this run does about it; you change nothing and answer nobod
 
 ## Validating each thread
 
-A reviewer's confidence is not evidence. For each open thread:
+A reviewer's confidence is not evidence. For each open thread and user-provided finding:
 1. Restate the claim in one sentence and name its axis (*Spec* or *Standards*, or bug).
 2. Check it in the code: read the cited `path:line`, trace the values it talks about,
    open the test or fixture it mentions. For a *Standards* claim, find the rule and

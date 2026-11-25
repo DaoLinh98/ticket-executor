@@ -1,6 +1,6 @@
 export type Effects = "pure" | "local" | "external";
 
-export type Phase = "prepare" | "understand" | "build" | "verify" | "publish";
+export type Phase = "prepare" | "understand" | "build" | "verify" | "publish" | "outcome";
 
 export const END = "END";
 /** Artifact kind prefix for an agent step's brief: `brief:<stepId>`. */
@@ -61,6 +61,8 @@ export type Ctx = {
   workItem?: WorkItem;
   /** Skills switched off in Settings, read for a skill-picking role's brief — per turn, never persisted. */
   skillsOff?: string[];
+  /** Where the run was going when the harness sent it through `recap` first — the edge `recap` then returns. */
+  outcome?: { to: Target; reason: string };
 };
 
 export type WorkItem = {

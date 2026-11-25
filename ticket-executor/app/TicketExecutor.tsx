@@ -30,7 +30,8 @@ import type {
 import type { CommitFile, CommitSummary, MentionCandidate, ReactionKind, Ticket, TicketComment, ReviewData, ReviewSummaryEntry } from "@/lib/types";
 import { providerMeta, type ProviderId } from "@/lib/providers";
 import { useQueryClient } from "@tanstack/react-query";
-import { SETTINGS_KEY, fetchSettings } from "./queries";
+import { RUNS_KEY, SETTINGS_KEY, fetchSettings, useDagentRuns } from "./queries";
+import { useLiveInvalidate } from "./useLive";
 import { SCOPE_LABEL, TICKET_SCOPES, type TicketScope } from "@/lib/ticketScope";
 import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_EFFORT, resolveModelId, type ClaudeModel } from "@/lib/claudeOptions";
 import { FONT, MOTION, actionInfoFor, branchOf, ctaButtonStyle, isReviewable, tabStyle as uiTabStyle } from "@/lib/ui";
@@ -89,6 +90,10 @@ function iterationPathFor(options: IterationOption[], name: string): string {
 export default function TicketExecutor() {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const runsQ = useDagentRuns();
+  useLiveInvalidate("/api/dagent/runs/stream", RUNS_KEY, false);
+  const activeRuns = runsQ.data?.runs ?? [];
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const readJson = useCallback(
     (key: readonly unknown[], url: string, staleTime = 0) =>
       queryClient.fetchQuery({ queryKey: key, queryFn: () => fetch(url).then((r) => r.json()), staleTime }),
@@ -1410,18 +1415,70 @@ export default function TicketExecutor() {
   const tabStyle = (name: string, enabled: boolean): CSSProperties =>
     uiTabStyle({ active: tab === name, enabled });
 
-  // action button
-  const action: Action = {
-    label: actionInfo?.label ?? "Implement Ticket", spinner: starting, playIcon: !starting, onClick: startImplement,
-    style: ctaButtonStyle("primary"),
+  const activeRun = t
+    ? activeRuns.find(
+        (r) =>
+          r.ticketId === t.id &&
+          (r.state === "running" || r.state === "waiting" || r.state === "preparing"),
+      )
+    : undefined;
+
+  const cancelActiveRun = async (e?: MouseEvent) => {
+    if (e) fireBoltFromEvent(e);
+    if (!activeRun || cancellingRunId) return;
+    setCancellingRunId(activeRun.id);
+    try {
+      const r = await fetch(`/api/dagent/runs/${activeRun.id}/cancel`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || "Could not cancel the run.");
+      showToast("Run cancelled.");
+      await queryClient.invalidateQueries({ queryKey: RUNS_KEY, exact: true });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to cancel run.", 8000, "error");
+    } finally {
+      setCancellingRunId(null);
+    }
   };
+
+  const cancelAction = activeRun
+    ? {
+        label: cancellingRunId === activeRun.id ? "Cancelling..." : "Cancel Run",
+        spinner: cancellingRunId === activeRun.id,
+        onClick: cancelActiveRun,
+        style: ctaButtonStyle("danger"),
+        title: `Stop the active D-Agent run (#${activeRun.id.slice(-6)}) for this ticket`,
+      }
+    : undefined;
+
+  // action button
+  const action: Action = activeRun
+    ? {
+        label: "Watch on Workflow",
+        spinner: false,
+        playIcon: false,
+        onClick: (e) => {
+          if (e) fireBoltFromEvent(e);
+          router.push(`/workflow?ticket=${encodeURIComponent(t!.id)}`);
+        },
+        style: ctaButtonStyle("primary"),
+        title: `Run in progress (${activeRun.flow}: ${activeRun.state}). Click to watch live on Workflow.`,
+        cancelAction,
+      }
+    : {
+        label: actionInfo?.label ?? "Implement Ticket",
+        spinner: starting,
+        playIcon: !starting,
+        onClick: startImplement,
+        style: ctaButtonStyle("primary"),
+        cancelAction: undefined,
+      };
   action.style.position = "relative";
   action.style.overflow = "hidden";
   action.style.transition = "filter .18s, transform .12s, box-shadow .25s";
   action.style.animation = "spinAngle 3s linear infinite, breathe 2.8s ease-in-out infinite";
 
   // Gate: a run can only start when the effective status maps to an action.
-  const gated = !!t && !actionInfo;
+  const gated = !!t && !activeRun && !actionInfo;
   if (gated) {
     const reason = `Ticket status "${effStatus}" has no runnable action yet.`;
     action.onClick = (e) => {
@@ -1439,11 +1496,20 @@ export default function TicketExecutor() {
     };
   }
   const bannerCtaStyle: CSSProperties = { ...action.style, height: "38px", padding: "0 20px", fontSize: FONT.base, flex: "0 0 auto" };
-  const ctaTitle = gated ? "No action for this status" : actionInfo?.label === "Review Code" ? "Ready for review" : "Ready to implement";
-  const ctaSub = t
-    ? gated ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
-      : "Starts a D-Agent run in an isolated worktree and opens it on Workflow."
-    : "";
+  const ctaTitle = activeRun
+    ? `Run in progress (${activeRun.flow})`
+    : gated
+      ? "No action for this status"
+      : actionInfo?.label === "Review Code"
+        ? "Ready for review"
+        : "Ready to implement";
+  const ctaSub = activeRun
+    ? `D-Agent run #${activeRun.id.slice(-6)} is currently ${activeRun.state}. You can view the live progress on Workflow or cancel it.`
+    : t
+      ? gated
+        ? `This ticket is "${effStatus}". Move it to "Ready for Dev", "In Progress", or "Code Review" to enable a run.`
+        : "Starts a D-Agent run in an isolated worktree and opens it on Workflow."
+      : "";
 
   const kindColor: Record<string, string> = {
     cmd: ACCENT, step: "var(--te-text)", ok: "var(--te-success)", muted: "var(--te-text-muted)", file: "var(--te-indigo)",
@@ -1640,9 +1706,16 @@ export default function TicketExecutor() {
                   <ResolveReviewTab
                     review={ticketReview}
                     loading={!!(t && reviewsLoading[t.id]) && !reviews[t.id]}
-                    fixReviewRunning={starting}
-                    fixReviewDisabled={fixReviewDisabled}
-                    onFixReview={(e) => startFixReview(e)}
+                    fixReviewRunning={starting || (!!activeRun && activeRun.flow === "review")}
+                    fixReviewDisabled={fixReviewDisabled && !activeRun}
+                    onFixReview={(e) => {
+                      if (activeRun) {
+                        router.push(`/workflow?ticket=${encodeURIComponent(t.id)}`);
+                      } else {
+                        startFixReview(e);
+                      }
+                    }}
+                    cancelAction={activeRun && activeRun.flow === "review" ? cancelAction : undefined}
                   />
                 )}
 

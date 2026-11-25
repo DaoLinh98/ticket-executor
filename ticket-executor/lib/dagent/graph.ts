@@ -8,6 +8,7 @@ import {
   qaImplementPrompt,
   qaTriagePrompt,
   readinessPrompt,
+  recapPrompt,
   reflectPrompt,
   respondPrompt,
   reviewImplementPrompt,
@@ -20,20 +21,23 @@ import {
   PUBLISH_OUTPUT,
   QA_TRIAGE_OUTPUT,
   READINESS_OUTPUT,
+  RECAP_OUTPUT,
   REFLECT_OUTPUT,
   RESPOND_OUTPUT,
   REVIEW_TRIAGE_OUTPUT,
   STEP_OUTPUT,
 } from "./schemas";
-import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, type AgentNode, type Ctx, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
+import { END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, TERMINALS, type AgentNode, type Ctx, type Edge, type Flow, type Graph, type Node, type NodeResult } from "./types";
 
-export const GRAPH_ID = "dagent-implement-v3";
-export const REVIEW_GRAPH_ID = "dagent-fix-review-v1";
-export const QA_GRAPH_ID = "dagent-fix-qa-v3";
+export const GRAPH_ID = "dagent-implement-v4";
+export const REVIEW_GRAPH_ID = "dagent-fix-review-v2";
+export const QA_GRAPH_ID = "dagent-fix-qa-v4";
 export const MAX_FIX_ATTEMPTS = 5;
 export const MAX_PLAN_ATTEMPTS = 2;
 export const MAX_PRE_PUBLISH = 3;
 export const MAX_HOPS = 60;
+/** A parked run that resumes reaches an ending again; each one gets its own recap, and the newest is the one shown. */
+export const MAX_RECAPS = 3;
 
 const schema = (s: unknown) => s as Record<string, unknown>;
 
@@ -45,6 +49,14 @@ function guard(r: NodeResult): { to: string; reason: string } | null {
   if (b.is) return { to: FAIL, reason: `blocked: ${b.reason || "no reason given"}` };
   return null;
 }
+
+// The epilogue every flow shares. No node routes to it: `drive()` sends the run through it on the way to any
+// terminal (`recapWorth()`), so one turn writes the run's story — in English and Vietnamese — for the developer who
+// will read nothing else. It cannot change where the run was going; its edge replays the ending the harness stashed.
+const RECAP: Node = {
+  id: "recap", label: "Recap the run", phase: "outcome", kind: "agent", agent: "recapper", effects: "pure",
+  next: [END, NEEDS_REVIEW, NEEDS_INPUT, FAIL], output: schema(RECAP_OUTPUT), prompt: recapPrompt, maxVisits: MAX_RECAPS,
+};
 
 const NODES: Node[] = [
   { id: "setup", label: "Prepare workspace", phase: "prepare", kind: "harness", effects: "local", next: ["readiness", FAIL] },
@@ -81,6 +93,7 @@ const NODES: Node[] = [
     next: ["verifyPublish", FAIL], output: schema(PUBLISH_OUTPUT), prompt: publishPrompt, maxVisits: 1,
   },
   { id: "verifyPublish", label: "Verify PR", phase: "publish", kind: "check", effects: "pure", next: [END, NEEDS_REVIEW] },
+  RECAP,
 ];
 
 const delivered: Edge = (_c, r) => {
@@ -132,7 +145,12 @@ function toFixer(c: Ctx, r: NodeResult, what: string): { to: string; reason: str
   return { to: "fix", reason: `${n} ${what} → fix` };
 }
 
+// A recap is a report, never a verdict: whatever the turn did, the run goes where it was already going. A turn that
+// failed outright still lands on the stashed ending — the developer loses the summary, not the result.
+const recapped: Edge = (c) => c.outcome ?? { to: END, reason: "recap written" };
+
 const EDGES: Record<string, Edge> = {
+  recap: recapped,
   setup: (_c, r) => (r.ok ? { to: "readiness", reason: "workspace ready" } : { to: FAIL, reason: r.error || "workspace setup failed" }),
   readiness: (_c, r) => {
     const bad = guard(r);
@@ -241,6 +259,7 @@ const REVIEW_NODES: Node[] = [
     id: "respond", label: "Push & answer threads", phase: "publish", kind: "agent", agent: "responder", effects: "external",
     next: [END, FAIL], output: schema(RESPOND_OUTPUT), prompt: respondPrompt, maxVisits: 1,
   },
+  RECAP,
 ];
 
 const onPrBranch = (e: { to: string; reason: string }) => (e.to === "syncBase" ? { ...e, to: "diffGuard" } : e);
@@ -270,8 +289,11 @@ const REVIEW_EDGES: Record<string, Edge> = {
     if (bad) return bad;
     const changed = count(c.channels.diffGuard?.changed) > 0;
     if (changed && !r.data.pushed) return { to: FAIL, reason: "the fix was not pushed" };
+    const threads = threadsOf(c);
+    const online = threads.filter((t) => t.decision !== "informational" && !t.threadId.startsWith("manual-") && !t.threadId.startsWith("user-"));
+    const onlyManual = threads.length > 0 && online.length === 0;
     const replied = Number(r.data.threadsReplied ?? 0) || 0;
-    if (!replied) return { to: FAIL, reason: "no thread was answered" };
+    if (!replied && !onlyManual) return { to: FAIL, reason: "no thread was answered" };
     return { to: END, reason: `${replied} thread(s) answered${changed ? " · fix pushed" : ""}` };
   },
 };
@@ -324,6 +346,16 @@ export const QA_GRAPH: Graph = {
 
 export const GRAPHS: Record<Flow, Graph> = { implement: GRAPH, review: REVIEW_GRAPH, qa: QA_GRAPH };
 
+/** The roles that read the ticket. Before one of them has run there is no story to tell — a run that dies in `setup`
+ *  has its reason on the failure panel already, and a summary of nothing is not worth a turn. */
+const JUDGED = ["readiness", "qaTriage", "reviewTriage"];
+
+/** Whether `drive()` should send the run through `recap` before it lands on `to`. */
+export function recapWorth(g: Graph, c: Ctx, to: string): boolean {
+  if (!g.nodes.recap || !TERMINALS.includes(to)) return false;
+  return (c.visits.recap ?? 0) < MAX_RECAPS && JUDGED.some((k) => c.channels[k]);
+}
+
 // The shapes before implement could park a no-change result — kept so a run begun on one finishes on it.
 const beforeNoChange = (g: Graph, id: string): Graph => ({
   ...g,
@@ -332,10 +364,23 @@ const beforeNoChange = (g: Graph, id: string): Graph => ({
   edges: { ...g.edges, implement: delivered },
 });
 
+// The shapes before the recap epilogue. `drive()` only recaps a graph that has the node, so dropping it is enough.
+const beforeRecap = (g: Graph, id: string): Graph => {
+  const nodes = { ...g.nodes };
+  const edges = { ...g.edges };
+  delete nodes.recap;
+  delete edges.recap;
+  return { ...g, id, nodes, edges };
+};
+
 const LEGACY: Record<Flow, Graph[]> = {
-  implement: [beforeNoChange(GRAPH, "dagent-implement-v2")],
-  review: [],
-  qa: [beforeNoChange(QA_GRAPH, "dagent-fix-qa-v1"), { ...QA_GRAPH, id: "dagent-fix-qa-v2" }],
+  implement: [beforeRecap(GRAPH, "dagent-implement-v3"), beforeNoChange(beforeRecap(GRAPH, "x"), "dagent-implement-v2")],
+  review: [beforeRecap(REVIEW_GRAPH, "dagent-fix-review-v1")],
+  qa: [
+    beforeRecap(QA_GRAPH, "dagent-fix-qa-v3"),
+    beforeNoChange(beforeRecap(QA_GRAPH, "x"), "dagent-fix-qa-v1"),
+    beforeRecap(QA_GRAPH, "dagent-fix-qa-v2"),
+  ],
 };
 
 export function graphById(id: string): Graph | null {

@@ -40,6 +40,13 @@ export type Action = {
   onClick: (e?: MouseEvent) => void;
   style: CSSProperties;
   title?: string;
+  cancelAction?: {
+    label: string;
+    spinner: boolean;
+    onClick: (e?: MouseEvent) => void;
+    style: CSSProperties;
+    title?: string;
+  };
 };
 
 // One pre-styled terminal line for the Ask tab.

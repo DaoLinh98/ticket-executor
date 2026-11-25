@@ -24,6 +24,8 @@ type HudProps = {
   canRetry: boolean;
   onCancel: () => void;
   onRetry: () => void;
+  /** Saves the run as a file; absent while there is no run to save. */
+  onExport?: () => void;
   mobileOpen: boolean;
   onMobileToggle: () => void;
 };
@@ -90,6 +92,11 @@ export function WorkflowHud(p: HudProps) {
           </span>
           <span style={{ width: 1, height: 28, background: COLORS.border }} />
           <ViewSwitch mode={p.mode} onMode={p.onMode} />
+          {p.onExport ? (
+            <button type="button" title="Save the run — steps, outputs, plan and log — as a JSON file" onClick={p.onExport} style={ctaButtonStyle("ghost")}>
+              Export
+            </button>
+          ) : null}
           {p.canCancel ? (
             <button type="button" onClick={p.onCancel} style={ctaButtonStyle("outline")}>
               Cancel run
@@ -125,6 +132,11 @@ export function WorkflowHud(p: HudProps) {
           <span style={{ display: "block", fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 3 }}>{hud.barAria}</span>
           <div style={{ display: "flex", gap: 6, padding: "8px 0 10px", flexWrap: "wrap" }}>
             <ViewSwitch mode={p.mode} onMode={p.onMode} />
+            {p.onExport ? (
+              <button type="button" className="te-action-btn" onClick={p.onExport} style={ctaButtonStyle("ghost", { height: "40px" })}>
+                Export
+              </button>
+            ) : null}
             {p.canCancel ? (
               <button type="button" className="te-action-btn" onClick={p.onCancel} style={ctaButtonStyle("outline", { height: "40px" })}>
                 Cancel

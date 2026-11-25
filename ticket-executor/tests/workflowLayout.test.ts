@@ -88,6 +88,21 @@ test("an implicit traversed edge is drawn once", () => {
   assert.equal(e[0].implicit, true);
 });
 
+test("the recap sits in its own lane between publish and the terminals, and every exit rails into it", () => {
+  const lay = layoutRun(flowDefs(GRAPHS.implement), "LR");
+  const lane = (id: string) => lay.lanes.findIndex((l) => l.id === id);
+  assert.ok(lane("outcome") > lane("publish"), "recap's lane comes after publish");
+  assert.ok(lane("outcome") < lane("terminal"), "recap's lane comes before the terminals");
+  assert.equal(lay.nodes.find((n) => n.id === "recap")!.lane, "outcome");
+  // The last happy step draws straight into it; a side exit from anywhere else takes the shared rail.
+  assert.equal(lay.edges.find((e) => e.key === "verifyPublish>recap")!.cls, "forward");
+  assert.equal(lay.edges.find((e) => e.key === "readiness>recap")!.cls, "park");
+  assert.equal(lay.edges.find((e) => e.key === "reflect>recap")!.cls, "park");
+  // All four terminals are still drawn, now reached only through the recap.
+  assert.deepEqual(lay.nodes.filter((n) => n.kind === "terminal").map((n) => n.id), ["END", "NEEDS_REVIEW", "NEEDS_INPUT", "FAIL"]);
+  assert.equal(lay.edges.find((e) => e.key === "recap>END")!.cls, "forward");
+});
+
 test("every D-Agent graph lays out with every node and its entry on the canvas", () => {
   for (const g of Object.values(GRAPHS)) {
     const lay = layoutRun(flowDefs(g), "LR");

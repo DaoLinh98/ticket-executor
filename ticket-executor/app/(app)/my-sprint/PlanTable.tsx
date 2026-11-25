@@ -6,14 +6,12 @@ import { COLORS, FONT, card, fieldInput, pill, sectionCaption, statusPill } from
 import { isFixingQa, MAX_QA_ROUNDS, stageFrom } from "@/lib/ticketLifecycle";
 import { awaitsAnalysis, type LastClosed } from "@/lib/qaFollowUp";
 import type { QueueMove } from "@/lib/sprintPlan";
-import type { TriagedTicket } from "@/lib/execution/triage";
 import { CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelLabel, resolveModelId } from "@/lib/claudeOptions";
 import { useClaudeModels } from "../../queries";
 import { IconAction } from "./actionIcons";
 import { focusQaCase } from "./QaFollowUps";
 import {
   CLAIM,
-  READINESS,
   dayLabel,
   originLabel,
   usd,
@@ -31,7 +29,7 @@ const LABELS = ["Queue", "", "Pts", "Tracker", "Release", "Run", ""];
 export type PlanHandlers = {
   openExecution: (ticketId: string) => void;
   setUnblocked: (plannedId: string, unblocked: boolean) => void;
-  resolveReview: (plannedId: string, ticketId: string) => void;
+  resolveReview: (row: PlannedRow) => void;
   retry: (plannedId: string) => void;
   release: (row: PlannedRow) => void;
   analyzeQa: (plannedId: string, ticketId: string) => void;
@@ -71,7 +69,6 @@ export default function PlanTable({
   data,
   cases,
   closed,
-  triaged,
   busy,
   releaseDayOptions,
   costs,
@@ -79,13 +76,13 @@ export default function PlanTable({
   reorderable,
   selected,
   onSelect,
+  onSelectAll,
   handlers: h,
 }: {
   rows: PlannedRow[];
   data: MySprint | null;
   cases: QaCase[];
   closed: Record<string, LastClosed>;
-  triaged: Map<string, TriagedTicket>;
   busy: ReadonlySet<string>;
   releaseDayOptions: string[];
   costs: Record<string, number>;
@@ -93,6 +90,8 @@ export default function PlanTable({
   reorderable: boolean;
   selected: ReadonlySet<string>;
   onSelect: (plannedId: string, on: boolean) => void;
+  /** Selects (or clears) every row on screen. */
+  onSelectAll: (on: boolean) => void;
   handlers: PlanHandlers;
 }) {
   const modelOptions = useClaudeModels().data?.models ?? CLAUDE_MODELS;
@@ -100,6 +99,7 @@ export default function PlanTable({
   const [dragId, setDragId] = useState("");
   const [overId, setOverId] = useState("");
   const movable = rows.filter(isMovable).sort((a, b) => a.implementOrder - b.implementOrder);
+  const selectable = rows.filter((t) => t.id);
   const firstMovable = movable[0]?.id;
   const lastMovable = movable[movable.length - 1]?.id;
   const knownUrls = [...(data?.tickets ?? []), ...(data?.claimed?.map((c) => c.ticket) ?? [])].map((x) => x.url);
@@ -111,8 +111,19 @@ export default function PlanTable({
     <div className="te-table-scroll te-scroll" style={{ ...card({ padding: "0" }), flex: "1 1 auto", minWidth: 0, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
       <div className="te-table-body te-plan-table">
         <div className="te-plan-head" style={{ position: "sticky", top: 0, zIndex: 2, background: COLORS.panelBg, display: "grid", gridTemplateColumns: GRID, gap: "10px", padding: "10px 14px", borderBottom: "1px solid " + COLORS.borderSubtle }}>
-          {HEADERS.map((hd) => (
-            <span key={hd} style={{ ...sectionCaption(), ...(hd === "ACTIONS" ? { textAlign: "right" as const } : null) }}>{hd}</span>
+          {HEADERS.map((hd, i) => (
+            <span key={hd} style={{ ...sectionCaption(), ...(hd === "ACTIONS" ? { textAlign: "right" as const } : null), ...(i === 0 ? { display: "flex", alignItems: "center", gap: "6px" } : null) }}>
+              {i === 0 && selectable.length > 0 ? (
+                <input
+                  type="checkbox"
+                  aria-label={`Select all ${selectable.length} rows shown`}
+                  checked={selectable.every((t) => selected.has(t.id))}
+                  onChange={(e) => onSelectAll(e.target.checked)}
+                  style={{ width: "16px", height: "16px", margin: 0, accentColor: COLORS.accent, cursor: "pointer", flex: "0 0 auto" }}
+                />
+              ) : null}
+              {hd}
+            </span>
           ))}
         </div>
         {rows.length === 0 ? (
@@ -125,7 +136,6 @@ export default function PlanTable({
             const ticket = claimed?.ticket;
             const claim = t.claim ?? claimed?.claim ?? "mine";
             const assigneeNow = t.assigneeNow || claimed?.assigneeNow || "";
-            const tri = triaged.get(t.ticketId);
             const origin = originLabel(ticket?.iterationPath, data?.sprint ?? "");
             const asking = clarifications.find((c) => c.plannedTicketId === t.id);
             // A run parked on needs-input is not "Running" — it waits on the PO, asked or not yet.
@@ -165,17 +175,10 @@ export default function PlanTable({
               null,
               <span key="pts" style={{ fontSize: FONT.base, fontWeight: 700, color: t.points ? COLORS.text : COLORS.faint }}>
                 {t.points || "—"}
-                {tri && tri.suggestedPoints > tri.currentPoints && (
-                  <span style={{ fontSize: FONT.sm, color: COLORS.warning }}> ↑</span>
-                )}
               </span>,
               <span key="status" style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                 {claim !== "mine" ? (
                   <span style={pill({ color: CLAIM[claim].color, size: "xs", weight: 700 })}>{CLAIM[claim].label}</span>
-                ) : tri ? (
-                  <span title={READINESS[tri.readiness]?.means ?? ""} style={pill({ color: READINESS[tri.readiness]?.color ?? COLORS.textDim, size: "xs", weight: 700 })}>
-                    {READINESS[tri.readiness]?.label ?? tri.readiness}
-                  </span>
                 ) : (
                   ticket?.status ? (
                   <span style={statusPill(ticket.status)}>{ticket.status}</span>
@@ -275,11 +278,6 @@ export default function PlanTable({
                           {cost > 0 && <span title="Spent on all runs for this ticket" style={pill({ color: COLORS.textMuted, size: "xs", weight: 700 })}>{usd(cost)} all runs</span>}
                         </span>
                       )}
-                      {tri?.reason && (
-                        <span style={{ fontSize: FONT.sm, color: COLORS.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {tri.reason}
-                        </span>
-                      )}
                       {claim !== "mine" && (
                         <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>
                           {claim === "handed-off"
@@ -336,12 +334,9 @@ export default function PlanTable({
                   ) : t.runId || t.reviewRunId ? (
                     <IconAction action="result" onClick={() => h.openExecution(t.ticketId)} />
                   ) : null}
-                  {t.id && t.prPublished && !t.prMerged && t.openComments > 0 && t.reviewState !== "running" && claim === "mine" &&
-                    (t.reviewState === "resolved" ? (
-                      <IconAction action="waitingReviewer" onClick={() => {}} disabled />
-                    ) : (
-                      <IconAction action="fixReview" onClick={() => h.resolveReview(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
-                    ))}
+                  {t.id && t.prPublished && !t.prMerged && t.reviewState !== "running" && claim === "mine" && (
+                    <IconAction action="fixReview" onClick={() => h.resolveReview(t)} busy={busy.has("fixreview-" + t.id)} />
+                  )}
                   {t.id && claim === "mine" && !t.prUrl && t.implementOrder > 0 &&
                     (t.implementState === "failed" || t.implementState === "skipped") && (
                       <IconAction action={held ? "resume" : "retry"} onClick={() => h.retry(t.id)} busy={busy.has("retry-" + t.id)} />

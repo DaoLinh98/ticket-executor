@@ -383,6 +383,49 @@ export const QA_TRIAGE_OUTPUT = {
   additionalProperties: false,
 } as const;
 
+// The run's story, told once at the end in both languages so the developer reads one panel instead of every node —
+// and so switching to Vietnamese costs nothing later: both are written here and stored together.
+export const RECAP_OUTPUT = {
+  type: "object",
+  properties: {
+    headline: { type: "string", description: "One sentence, at most 140 characters: what this run did and how it ended. No jargon, no node names." },
+    headlineVi: { type: "string", description: "The same sentence in Vietnamese. Keep identifiers, file paths, branch names and URLs as they are." },
+    sections: {
+      type: "array",
+      description:
+        "Two to six sections, in this order where they apply: outcome, ask, work, review, watch, next. Include a section only when the brief " +
+        "gives it real content — an empty or padded section is worse than a missing one.",
+      items: {
+        type: "object",
+        properties: {
+          key: {
+            type: "string",
+            enum: ["outcome", "ask", "work", "review", "watch", "next"],
+            description:
+              "outcome: how it ended, the pull request, what is now on the branch. ask: what the ticket wanted, per acceptance criterion. " +
+              "work: how it was built, which repositories and files. review: what the independent review proved and how many fix rounds it took. " +
+              "watch: what needs the developer's eyes — unverified assumptions, after-deploy checks, deviations, blockers still standing. " +
+              "next: only when the run failed or parked — why it stopped and the one thing to do about it.",
+          },
+          title: { type: "string", description: "Two to four words, in English." },
+          titleVi: { type: "string", description: "The same title in Vietnamese." },
+          bullets: {
+            ...STRINGS,
+            description:
+              "One to five lines, at most 200 characters each, in English. One fact per line, written for a developer who read nothing else. " +
+              "Lead with the thing that matters; never restate the section title; never say a node's name.",
+          },
+          bulletsVi: { ...STRINGS, description: "The same lines in Vietnamese, one for one and in the same order. Keep identifiers, file paths, branch names, numbers and URLs as they are." },
+        },
+        required: ["key", "title", "titleVi", "bullets", "bulletsVi"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["headline", "headlineVi", "sections"],
+  additionalProperties: false,
+} as const;
+
 export const RESPOND_OUTPUT = {
   type: "object",
   properties: {

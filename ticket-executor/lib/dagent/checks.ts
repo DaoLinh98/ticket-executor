@@ -144,7 +144,29 @@ export function removeWorktrees(c: Ctx) {
   for (const [repo, cwd] of [[c.rootRepo, c.cwd], ...c.companions.map((m) => [m.path, m.cwd])]) {
     if (!repo || !cwd || repo === cwd) continue;
     git(repo, ["worktree", "remove", "--force", cwd]);
+    git(repo, ["branch", "-D", runBranch(c.runId)]);
   }
+}
+
+// The local branch a review run works on when the pull request's branch is checked out elsewhere (usually the
+// developer's own clone): git refuses one branch in two worktrees, so the run takes its own and pushes HEAD:<branch>.
+export const runBranch = (runId: string) => `te-run/${runId}`;
+
+async function checkedOutElsewhere(repo: string, branch: string): Promise<string> {
+  const list = (await gitAsync(repo, ["worktree", "list", "--porcelain"])).out;
+  let at = "";
+  for (const line of list.split(/\r?\n/)) {
+    if (line.startsWith("worktree ")) at = line.slice(9);
+    else if (line === `branch refs/heads/${branch}`) return at;
+  }
+  return "";
+}
+
+async function prLocalBranch(repo: string, branch: string, c: Ctx, L: ReturnType<typeof logger>): Promise<string> {
+  const at = await checkedOutElsewhere(repo, branch);
+  if (!at) return branch;
+  L.info(`${branch} is checked out at ${at} — the run works on ${runBranch(c.runId)} and pushes to ${branch}`);
+  return runBranch(c.runId);
 }
 
 const rootName = (c: Ctx) => path.basename(c.rootRepo);
@@ -181,7 +203,8 @@ async function setupOnCompanionPrBranch(c: Ctx, L: ReturnType<typeof logger>, en
   c.cwd = rootWt;
   c.baseSha = start.sha;
   const cwd = worktreeOf(owner.path, c.runId);
-  const added = await addWorktree(owner.path, ["-B", branch, cwd, `origin/${branch}`]);
+  const local = await prLocalBranch(owner.path, branch, c, L);
+  const added = await addWorktree(owner.path, ["-B", local, cwd, `origin/${branch}`]);
   if (!added.ok) return failure(`Could not check out ${branch} in the worktree ${cwd}: ${added.err}`, L.log);
   const head = git(cwd, ["rev-parse", "HEAD"]).out;
   c.companions = [{ name: owner.name, path: owner.path, cwd, baseSha: head, note: owner.note }];
@@ -189,6 +212,7 @@ async function setupOnCompanionPrBranch(c: Ctx, L: ReturnType<typeof logger>, en
   return result(
     {
       branch,
+      ...(local !== branch ? { localBranch: local } : {}),
       baseSha: c.baseSha,
       prRepo: owner.name,
       scope: [owner.name],
@@ -210,13 +234,20 @@ async function setupOnPrBranch(c: Ctx, L: ReturnType<typeof logger>, env: CheckE
   const fetched = await gitAsync(c.rootRepo, ["fetch", "origin", branch], 90000);
   if (!fetched.ok) return failure(`Could not fetch origin/${branch}${repo ? ` (the pull request is in repository "${repo}")` : ""}: ${fetched.err}`, L.log);
   const wt = worktreeOf(c.rootRepo, c.runId);
-  const added = await addWorktree(c.rootRepo, ["-B", branch, wt, `origin/${branch}`]);
+  const local = await prLocalBranch(c.rootRepo, branch, c, L);
+  const added = await addWorktree(c.rootRepo, ["-B", local, wt, `origin/${branch}`]);
   if (!added.ok) return failure(`Could not check out ${branch} in the worktree ${wt}: ${added.err}`, L.log);
   c.cwd = wt;
   c.baseSha = git(wt, ["rev-parse", "HEAD"]).out;
   L.info(`worktree ${wt} on ${branch} @ ${c.baseSha.slice(0, 7)} — the pull request's head`);
   return result(
-    { branch, baseSha: c.baseSha, repos: [{ name: rootName(c), path: wt, base: c.baseSha, from: "pull request head", branch }], warnings: setupWarnings(L.log) },
+    {
+      branch,
+      ...(local !== branch ? { localBranch: local } : {}),
+      baseSha: c.baseSha,
+      repos: [{ name: rootName(c), path: wt, base: c.baseSha, from: "pull request head", branch }],
+      warnings: setupWarnings(L.log),
+    },
     L.log,
   );
 }

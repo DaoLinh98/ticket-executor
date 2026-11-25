@@ -9,6 +9,7 @@ import ActionButton from "./ActionButton";
 
 export default function RunOptionsDialog({
   ticketId,
+  count = 1,
   model,
   effort,
   busy,
@@ -16,6 +17,8 @@ export default function RunOptionsDialog({
   onCancel,
 }: {
   ticketId: string;
+  /** More than one: the settings apply to that many tickets and the dialog says so. */
+  count?: number;
   model: string;
   effort: string;
   busy: boolean;
@@ -27,6 +30,7 @@ export default function RunOptionsDialog({
   const [pickedModel, setPickedModel] = useState(model || DEFAULT_PLAN_MODEL);
   const [pickedEffort, setPickedEffort] = useState(effort || DEFAULT_PLAN_EFFORT);
   const shownModel = resolveModelId(pickedModel, options);
+  const who = count > 1 ? `${count} tickets` : `#${ticketId}`;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
@@ -40,13 +44,13 @@ export default function RunOptionsDialog({
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
-        aria-label={`Run settings for #${ticketId}`}
+        aria-label={`Run settings for ${who}`}
         onClick={(e) => e.stopPropagation()}
         style={{ ...modalShellStyle(), width: "min(420px, 100%)", maxHeight: "100%", overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}
       >
-        <span style={displayText("heading")}>Run settings · #{ticketId}</span>
+        <span style={displayText("heading")}>Run settings · {who}</span>
         <span style={{ fontSize: FONT.md, color: COLORS.textMuted, lineHeight: 1.6 }}>
-          The automatic implement run for this ticket starts with this model and effort.
+          The automatic implement run for {count > 1 ? "each of these tickets" : "this ticket"} starts with this model and effort.
         </span>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <span style={sectionCaption()}>MODEL</span>

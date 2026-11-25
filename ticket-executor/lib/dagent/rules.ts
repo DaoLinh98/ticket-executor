@@ -352,8 +352,8 @@ export function skillUse(brief: string, logs: string[], picked: string[] = [], r
   return out;
 }
 
-/** `name` and `description` from a SKILL.md front matter, folded block scalars included. */
-export function skillFrontMatter(text: string): { name: string; description: string } {
+/** `name`, `description` and optional `baseBranch` from a SKILL.md front matter, folded block scalars included. */
+export function skillFrontMatter(text: string): { name: string; description: string; baseBranch?: string } {
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   const out: Record<string, string> = {};
   let key = "";
@@ -364,7 +364,12 @@ export function skillFrontMatter(text: string): { name: string; description: str
       out[key] = /^[>|][-+]?$/.test(kv[2].trim()) ? "" : kv[2].trim().replace(/^(["'])(.*)\1$/, "$2");
     } else if (key && /^\s+\S/.test(line)) out[key] = `${out[key]} ${line.trim()}`.trim();
   }
-  return { name: out.name ?? "", description: out.description ?? "" };
+  const baseBranch = out.baseBranch || out["base-branch"] || "";
+  return {
+    name: out.name ?? "",
+    description: out.description ?? "",
+    ...(baseBranch ? { baseBranch } : {}),
+  };
 }
 
 export type Thread = { threadId: string; file: string; comment: string; decision: "fix" | "reject" | "informational"; reason: string };
@@ -486,3 +491,12 @@ export function knowledgeDiff(before: string, after: string): { added: string[];
   const removed = a.filter((l) => !inB.has(l));
   return added.length || removed.length ? { added, removed } : null;
 }
+
+export type ReviewFeedback = { findings: string };
+
+export function reviewFeedbackOf(c: Pick<Ctx, "channels">): ReviewFeedback | null {
+  const rf = c.channels.reviewFeedback as Partial<ReviewFeedback> | undefined;
+  if (!rf || !rf.findings?.trim()) return null;
+  return { findings: String(rf.findings).trim() };
+}
+

@@ -602,8 +602,6 @@ async function resolveNextReview(plan: ActivePlan): Promise<boolean> {
       planId: plan.id,
       untracked: false,
       claim: "mine",
-      implementState: "implemented",
-      runId: { not: "" },
       prPublished: true,
       prMerged: false,
       NOT: { prUrl: "" },
@@ -753,7 +751,7 @@ async function pickLiveReviewPr(item: {
  */
 export async function startReviewRun(
   plannedId: string,
-  opts: { reason: string; detail: string; prUrl?: string; lastCommentAt?: string; openComments?: number }
+  opts: { reason: string; detail: string; prUrl?: string; lastCommentAt?: string; openComments?: number; findings?: string }
 ): Promise<{ ok: boolean; error: string; blocked?: string }> {
   const item = await prisma.plannedTicket.findUnique({ where: { id: plannedId }, include: { plan: true, prReviews: true } });
   if (!item) return { ok: false, error: "No such planned ticket." };
@@ -809,6 +807,7 @@ export async function startReviewRun(
     prUrl: targetPr,
     model: item.model,
     effort: item.effort,
+    ...(opts.findings?.trim() ? { seed: { reviewFeedback: { findings: opts.findings.trim() } } } : {}),
   });
   if (!result.ok) {
     await logAutomation({
@@ -961,7 +960,9 @@ async function reconcileReviews(): Promise<void> {
     const out = run.output;
     const replied = Number(out.threadsReplied ?? 0) || 0;
     const resolved = Number(out.threadsResolved ?? 0) || 0;
-    const answered = run.state === "succeeded" && replied > 0;
+    // A pushed fix writes to the pull request too: developer findings (`manual-*`) are answered by the code, not a reply.
+    const pushed = out.pushed === true;
+    const answered = run.state === "succeeded" && (replied > 0 || pushed);
     const rounds = item.reviewRounds + (answered ? 1 : 0);
     // The ceiling is applied here rather than at the next scan so the row says
     // why it stopped asking at the moment it stopped, not two minutes later.
@@ -992,7 +993,7 @@ async function reconcileReviews(): Promise<void> {
             ? "left-open"
             : "all-resolved",
       detail: answered
-        ? `Replied to ${replied} thread(s), resolved ${resolved}.` +
+        ? `${pushed ? "Pushed a code fix. " : ""}Replied to ${replied} thread(s), resolved ${resolved}.` +
           (replied > resolved
             ? ` ${replied - resolved} left open on purpose — invalid or out of scope.`
             : "") +

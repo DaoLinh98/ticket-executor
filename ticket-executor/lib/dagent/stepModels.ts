@@ -15,6 +15,9 @@ export const STEP_MODELS: Record<string, StepTurn> = {
   qaTriage: { model: "opus" },
   reviewTriage: { model: "sonnet" },
   respond: { model: "sonnet" },
+  // Writes no code and reads no file — it rewrites the brief it is handed, in two languages. The mid model, because
+  // the developer reads this instead of the run.
+  recap: { model: "sonnet", effort: "low" },
 };
 
 /** From this fix attempt on, the same blockers have survived Sonnet twice — escalate. */

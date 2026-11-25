@@ -20,25 +20,22 @@ import {
   tintedCard,
   displayText,
 } from "@/lib/ui";
-import ProviderBadge from "../ProviderBadge";
-// import TriageReport from "./TriageReport";
-import PageHeading from "../PageHeading";
-import NotificationCenter from "../NotificationCenter";
+import PageHeader from "../PageHeader";
 import PageToolbar from "../PageToolbar";
-import { useProjects } from "../../queries";
+import { SPRINT_KEY, fetchSprint, fetchTicketSearch, ticketSearchKey, useProjects } from "../../queries";
 import { useLiveInvalidate } from "../../useLive";
 import { useToast } from "../ToastProvider";
 import { releaseDays, reorderQueue, type Lane, type QueueMove } from "@/lib/sprintPlan";
-import { isFixingQa, MAX_QA_ROUNDS } from "@/lib/ticketLifecycle";
+import { planCsv } from "@/lib/sprintCsv";
+import { attentionOf, type AttentionActionKind, type AttentionEntry } from "@/lib/sprintAttention";
 import type { Ticket } from "@/lib/types";
-import type { TriagedTicket } from "@/lib/execution/triage";
 import ActionButton from "./ActionButton";
 import { ActionLegend, IconAction } from "./actionIcons";
 import AutomationPanel from "./AutomationPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import AskPoDialog from "./AskPoDialog";
 import RunOptionsDialog from "./RunOptionsDialog";
-import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
+import ResolveReviewDialog from "./ResolveReviewDialog";
 import NeedsYou, { type AttentionItem } from "./NeedsYou";
 import PlanFilters from "./PlanFilters";
 import PlanTable from "./PlanTable";
@@ -46,6 +43,8 @@ import QaFollowUps, { defaultPicks } from "./QaFollowUps";
 import RebuildPreviewDialog from "./RebuildPreviewDialog";
 import SchedulerLog from "./SchedulerLog";
 import CapacityStrip from "./CapacityStrip";
+import SpendStrip from "./SpendStrip";
+import { sprintSpend } from "@/lib/sprintSpend";
 import TicketTimeline from "./TicketTimeline";
 import {
   LANE_COLOR,
@@ -53,7 +52,6 @@ import {
   VERDICT,
   dayLabel,
   matchesFilter,
-  type MySprint,
   type PlanFilter,
   type PlanSort,
   type PlanResponse,
@@ -61,11 +59,13 @@ import {
   type QaCase,
   type RebuildPreview,
   type StoredPlan,
+  previewRow,
   PLAN_KEY,
+  isPlanFilter,
+  isPlanSort,
+  sortRows,
   fetchPlan,
-  usd,
 } from "./model";
-import { overBudget } from "@/lib/runMetrics";
 
 // The developer's own view of one iteration: what they are carrying, whether it
 // fits, what an agent thinks of it, and which day each finished ticket is handed
@@ -76,14 +76,12 @@ import { overBudget } from "@/lib/runMetrics";
 // anything on its own — that is what keeps the plan on the screen and the plan
 // the machine acts on the same plan.
 
-type Confirm = { title: string; confirmLabel: string; busyKey: string; body: ReactNode; run: () => Promise<void> };
+type Confirm = { title: string; confirmLabel: string; busyKey: string; body: ReactNode; run: () => Promise<unknown> };
 
-const SPRINT_KEY = ["my-sprint"] as const;
 const PLAN_POLL_MS = 5000;
 const PLAN_IDLE_POLL_MS = 30000;
 const SPRINT_POLL_MS = 60000;
 const SEARCH_STALE_MS = 30000;
-const TONE_RANK = { danger: 0, warning: 1, accent: 2 } as const;
 
 const planRunning = (p?: PlanResponse) =>
   (p?.plan?.items ?? []).some((t) => t.implementState === "running") || (p?.cases ?? []).some((c) => c.status === "running" || c.status === "fixing");
@@ -93,10 +91,6 @@ export default function MySprintPage() {
   const { fireBoltFromEvent } = useBoltsContext();
   const showToast = useToast();
   const queryClient = useQueryClient();
-  // Triage is switched off on this page for now.
-  // const [triage, setTriage] = useState<TriageRow | null>(null);
-  // const [reportOpen, setReportOpen] = useState(false);
-  // const triagePoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const [draftEdits, setDraftEdits] = useState<Record<string, string>>({});
   const [casePicks, setCasePicks] = useState<Record<string, number[]>>({});
   const [caseNotes, setCaseNotes] = useState<Record<string, string>>({});
@@ -105,14 +99,27 @@ export default function MySprintPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [activeHit, setActiveHit] = useState(0);
   const [settledNeedle, setSettledNeedle] = useState("");
   const [preview, setPreview] = useState<RebuildPreview | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
-  const [filter, setFilter] = useState<PlanFilter>("all");
-  const [sort, setSort] = useState<PlanSort>("queue");
-  const [projectFilter, setProjectFilter] = useState("");
+  // The view (filter, sort, project) rides in the URL so it survives a reload and can be shared.
+  const [view] = useState(() => (typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search)));
+  const [filter, setFilter] = useState<PlanFilter>(() => (isPlanFilter(view.get("filter")) ? (view.get("filter") as PlanFilter) : "all"));
+  const [sort, setSort] = useState<PlanSort>(() => (isPlanSort(view.get("sort")) ? (view.get("sort") as PlanSort) : "queue"));
+  const [projectFilter, setProjectFilter] = useState(() => view.get("project") ?? "");
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    for (const [k, v, fallback] of [["filter", filter, "all"], ["sort", sort, "queue"], ["project", projectFilter, ""]] as const) {
+      if (v && v !== fallback) url.searchParams.set(k, v);
+      else url.searchParams.delete(k);
+    }
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
+  }, [filter, sort, projectFilter]);
   const [historyFor, setHistoryFor] = useState("");
   const [optionsFor, setOptionsFor] = useState("");
+  const [bulkOptions, setBulkOptions] = useState(false);
+  const [reviewDialogRow, setReviewDialogRow] = useState<PlannedRow | null>(null);
 
   const setError = (m: string) => { if (m) showToast(m, "error"); };
   const setMessage = (m: string) => { if (m) showToast(m); };
@@ -126,7 +133,7 @@ export default function MySprintPage() {
   });
   const sprintQuery = useQuery({
     queryKey: SPRINT_KEY,
-    queryFn: (): Promise<MySprint> => fetch("/api/my-sprint").then((r) => r.json()),
+    queryFn: fetchSprint,
     refetchOnWindowFocus: true,
     refetchInterval: () => (planQuery.data?.plan?.status === "active" ? SPRINT_POLL_MS : false),
   });
@@ -151,23 +158,6 @@ export default function MySprintPage() {
   const setStored = (plan: StoredPlan | null) =>
     queryClient.setQueryData<PlanResponse>(PLAN_KEY, (old) => ({ events: [], cases: [], closed: {}, reviews: [], clarifications: [], ticketBudgetUsd: 0, costs: {}, ...old, plan }));
 
-  // A triage turn outlives the request that started it, so the row is polled
-  // rather than awaited.
-  // useEffect(() => {
-  //   if (triage?.status !== "running") {
-  //     if (triagePoll.current) { clearInterval(triagePoll.current); triagePoll.current = null; }
-  //     return;
-  //   }
-  //   triagePoll.current = setInterval(async () => {
-  //     try {
-  //       const r = await fetch("/api/my-sprint/triage?id=" + encodeURIComponent(triage.id));
-  //       const d = await r.json();
-  //       if (d.triage) setTriage(d.triage);
-  //     } catch { /* the next tick tries again */ }
-  //   }, 5000);
-  //   return () => { if (triagePoll.current) clearInterval(triagePoll.current); };
-  // }, [triage?.status, triage?.id]);
-
   useLiveInvalidate(stored?.id ? "/api/my-sprint/plan/stream?plan=" + encodeURIComponent(stored.id) : null, PLAN_KEY);
 
   const needle = query.trim().toLowerCase().replace(/^#/, "");
@@ -177,11 +167,8 @@ export default function MySprintPage() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
   const searchQuery = useQuery({
-    queryKey: ["ticket-search", settledNeedle],
-    queryFn: ({ signal }): Promise<Ticket[]> =>
-      fetch("/api/tickets/search?q=" + encodeURIComponent(settledNeedle), { signal })
-        .then((r) => r.json())
-        .then((d) => (Array.isArray(d.tickets) ? d.tickets : [])),
+    queryKey: ticketSearchKey(settledNeedle),
+    queryFn: ({ signal }) => fetchTicketSearch(settledNeedle, signal),
     enabled: !!settledNeedle,
     placeholderData: keepPreviousData,
     staleTime: SEARCH_STALE_MS,
@@ -239,8 +226,9 @@ export default function MySprintPage() {
     onSettled: (_data, _err, vars) => track(vars.label, false),
   });
 
+  // Resolves false when the action threw (its error is already toasted), so a batch can count what failed.
   const act = (label: string, fn: () => Promise<void>, optimistic?: PlanEdit) =>
-    actMutation.mutateAsync({ label, fn, optimistic }).catch(() => undefined);
+    actMutation.mutateAsync({ label, fn, optimistic }).then(() => true, () => false);
 
   const editItem = (plannedId: string, patch: Partial<PlannedRow>): PlanEdit => (plan) => ({
     ...plan,
@@ -266,12 +254,6 @@ export default function MySprintPage() {
       await post("/api/settings", { sprintAnchorProject: anchor });
       await reloadSprint();
     });
-
-  // const runTriage = () =>
-  //   act("triage", async () => {
-  //     const d = await post("/api/my-sprint/triage", {});
-  //     setTriage({ id: d.id, status: "running", result: {}, errorMessage: "", costUsd: 0 });
-  //   });
 
   const planConfig = () => ({
     pointsPerDay: stored?.pointsPerDay ?? data?.config.pointsPerDay,
@@ -351,8 +333,17 @@ export default function MySprintPage() {
     act("hold-" + plannedId, async () => {
       const d = await post("/api/my-sprint/plan", { hold: plannedId }, "PUT");
       if (d.plan) setStored(d.plan);
-      setMessage("On hold — the scheduler leaves it alone until you resume it.");
+      showToast("On hold — the scheduler leaves it alone until you resume it.", "success", 10000, { label: "Undo", onClick: () => void unholdNow(plannedId) });
     }, editItem(plannedId, { implementState: "skipped" }));
+
+  // Undo of a hold: a held ticket requeues at the position it kept.
+  const unholdNow = (plannedId: string) =>
+    act("unhold-" + plannedId, async () => {
+      const d = await post("/api/my-sprint/plan", { retry: plannedId }, "PUT");
+      if (d.plan) setStored(d.plan);
+      if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "It could not be put back in the queue.");
+      else setMessage("Back in the queue.");
+    }, editItem(plannedId, { implementState: "pending" }));
 
   const setReleaseDayNow = (plannedId: string, day: string) =>
     act("redate-" + plannedId, async () => {
@@ -443,15 +434,20 @@ export default function MySprintPage() {
       await load();
     });
 
-  const resolveReviewNow = (plannedId: string, ticketId: string) =>
-    act("fixreview-" + plannedId, async () => {
+  const askResolveReview = (row: PlannedRow) => {
+    setReviewDialogRow(row);
+  };
+
+  const resolveReviewNow = (row: PlannedRow, findings = "") =>
+    act("fixreview-" + row.id, async () => {
       try {
-        const d = await post("/api/my-sprint/plan", { resolveReview: plannedId }, "PUT");
+        const d = await post("/api/my-sprint/plan", { resolveReview: row.id, findings }, "PUT");
         if (d.plan) setStored(d.plan);
         if (d.outcome && !d.outcome.ok) setError(d.outcome.error || "The review fix did not start.");
         else setMessage("Resolving the review comments on this pull request.");
+        setReviewDialogRow(null);
       } catch (e) {
-        sendToRootRepo(e, ticketId);
+        sendToRootRepo(e, row.ticketId);
       }
     });
 
@@ -466,6 +462,50 @@ export default function MySprintPage() {
           "."
       );
       await load();
+    });
+
+  // The runs spending money right now: implement, review fix and QA runs. A run parked on the PO spends nothing.
+  const activeRunIds = () =>
+    [...new Set([
+      ...runningRows.map((t) => t.runId),
+      ...reviewingRows.map((t) => t.reviewRunId),
+      ...cases.filter((c) => c.status === "running").map((c) => c.runId),
+      ...cases.filter((c) => c.status === "fixing").map((c) => c.fixRunId),
+    ].filter(Boolean))];
+
+  // Pause first, so the scheduler cannot start anything while the runs are being cancelled.
+  const stopEverything = () =>
+    act("stop-all", async () => {
+      if (stored?.status === "active") {
+        const d = await post("/api/my-sprint/plan", { id: stored.id, status: "draft" }, "PATCH");
+        setStored(d.plan);
+      }
+      const ids = activeRunIds();
+      // 409 = the run had already ended, which is what was asked for.
+      const ok = await Promise.all(ids.map((id) => fetch(`/api/dagent/runs/${id}/cancel`, { method: "POST" }).then((r) => r.ok || r.status === 409, () => false)));
+      await reloadPlan();
+      const failed = ok.filter((x) => !x).length;
+      if (failed) throw new Error(`Automation is paused, but ${failed} of ${ids.length} runs could not be cancelled — open them on the workflow page.`);
+      setMessage(`Automation paused${ids.length ? ` and ${ids.length} run${ids.length === 1 ? "" : "s"} cancelled` : ""}.`);
+    });
+
+  const askStopEverything = () =>
+    setConfirm({
+      title: "Stop everything?",
+      confirmLabel: "Stop all",
+      busyKey: "stop-all",
+      body: (
+        <>
+          <span>
+            {[...runningRows, ...reviewingRows].map((t) => "#" + t.ticketId).filter((x, i, a) => a.indexOf(x) === i).join(", ") || "No ticket is running."}
+          </span>
+          <span>
+            The plan is set to draft, so the scheduler starts nothing more, and every run above is cancelled now. Cost already spent is not
+            refunded. Activate the plan again to resume; cancelled tickets can be retried.
+          </span>
+        </>
+      ),
+      run: stopEverything,
     });
 
   // A ticket's runs are watched on /workflow, which follows its live run.
@@ -523,25 +563,11 @@ export default function MySprintPage() {
 
   const summary = data?.plan?.summary ?? null;
   const verdict = summary ? VERDICT[summary.verdict] : null;
-  const triaged = new Map<string, TriagedTicket>();
-  // const triaged = new Map<string, TriagedTicket>(
-  //   (triage?.result?.tickets ?? []).map((t) => [String(t.id), t])
-  // );
   const projectCount = new Set((data?.tickets ?? []).map((t) => t.project).filter(Boolean)).size;
   const rows: PlannedRow[] =
     stored?.items?.length
       ? stored.items.filter((i) => !i.untracked)
-      : (data?.plan?.tickets ?? []).map((t) => ({
-          id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
-          points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
-          blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
-          prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
-          reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
-          reviewRounds: 0, reviewError: "",
-          claim: t.claim, assigneeNow: t.assigneeNow,
-          model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
-          stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
-        }));
+      : (data?.plan?.tickets ?? []).map(previewRow);
 
   // Removed from the plan by hand but still in the sprint — named so the header total matches the table.
   const untrackedCount = stored?.items?.filter((i) => i.untracked).length ?? 0;
@@ -553,127 +579,85 @@ export default function MySprintPage() {
 
   const releaseDayOptions = data?.window?.startDate && data.today ? releaseDays(data.window, data.today) : [];
 
-  const attention: AttentionItem[] = [];
-  for (const t of rows) {
-    if (!t.id || t.claim !== "mine") continue;
-    const base = { ticketId: t.ticketId, title: t.title };
-    const due = !!t.prUrl && t.implementState === "implemented" && !t.releasedAt;
-    const result = <IconAction action="result" onClick={() => openExecution(t.ticketId)} />;
-    if (t.reviewState === "needs-human") {
-      attention.push({ ...base, key: "nh-" + t.id, tone: "warning", text: `${t.reviewRounds} rounds of automatic review fixes did not close it — the rest needs a decision.`, action: result });
+  // The rules live in `lib/sprintAttention.ts`; the page only turns each entry's actions into buttons.
+  const attentionButton = (e: AttentionEntry, kind: AttentionActionKind) => {
+    const row = rows.find((r) => r.id === e.plannedId);
+    switch (kind) {
+      case "result":
+        return <IconAction key={kind} action="result" onClick={() => openExecution(e.ticketId)} />;
+      case "fixReview":
+        return row ? <IconAction key={kind} action="fixReview" onClick={() => askResolveReview(row)} busy={busy.has("fixreview-" + e.plannedId)} /> : null;
+      case "release":
+        return row ? <IconAction key={kind} action="release" onClick={() => askRelease(row)} busy={busy.has("release-" + e.plannedId)} /> : null;
+      case "retry":
+        return <IconAction key={kind} action="retry" onClick={() => retryNow(e.plannedId)} busy={busy.has("retry-" + e.plannedId)} />;
+      case "moveToQa":
+        return <IconAction key={kind} action="moveToQa" onClick={() => moveToQaNow(e.plannedId)} busy={busy.has("qa-" + e.plannedId)} />;
+      case "markReviewed":
+        return <IconAction key={kind} action="markReviewed" onClick={() => markReviewedNow(e.plannedId)} busy={busy.has("ack-" + e.plannedId)} />;
+      case "readDraft":
+        return <IconAction key={kind} action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />;
     }
-    if (t.reviewState === "failed") {
-      attention.push({
-        ...base, key: "rf-" + t.id, tone: "danger", text: "The review fix run failed.",
-        action: t.prPublished && !t.prMerged && t.openComments > 0
-          ? <IconAction action="fixReview" onClick={() => resolveReviewNow(t.id, t.ticketId)} busy={busy.has("fixreview-" + t.id)} />
-          : result,
-      });
-    }
-    if (t.releaseError) {
-      attention.push({
-        ...base, key: "re-" + t.id, tone: "danger", text: t.releaseError,
-        action: due ? <IconAction action="release" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} /> : undefined,
-      });
-    }
-    if (t.implementState === "failed") {
-      attention.push({
-        ...base, key: "if-" + t.id, tone: "danger",
-        text: t.prUrl ? "The run failed after opening a pull request — look at the result." : "The implement run failed.",
-        action: !t.prUrl && t.implementOrder > 0
-          ? <IconAction action="retry" onClick={() => retryNow(t.id)} busy={busy.has("retry-" + t.id)} />
-          : result,
-      });
-    }
-    if (t.pendingAction === "move-to-qa") {
-      attention.push({
-        ...base, key: "mq-" + t.id, tone: "accent", text: "Pull request merged — confirm to move it to In QA.",
-        action: <IconAction action="moveToQa" onClick={() => moveToQaNow(t.id)} busy={busy.has("qa-" + t.id)} />,
-      });
-    }
-    if (t.pendingAction === "fix-qa" && !isFixingQa(t) && t.qaRounds >= MAX_QA_ROUNDS) {
-      attention.push({ ...base, key: "qx-" + t.id, tone: "danger", text: `${t.qaRounds} QA fixes did not close this ticket — it needs you.`, action: result });
-    }
-    if (due && !stored?.autoRelease && data?.today && t.releaseDay && t.releaseDay <= data.today && !t.releaseError) {
-      attention.push({
-        ...base, key: "rd-" + t.id, tone: "accent", text: "Its release day has come and auto-release is off.",
-        action: <IconAction action="release" onClick={() => askRelease(t)} busy={busy.has("release-" + t.id)} />,
-      });
-    }
-  }
-  // A run the harness ended on NEEDS_REVIEW: decided already, flagged until the developer has looked.
-  for (const r of reviews) {
-    const row = rows.find((t) => t.id === r.plannedTicketId);
-    attention.push({
-      key: "nr-" + r.runId, ticketId: r.ticketId, title: row?.title ?? "", tone: "warning",
-      text: row?.implementState === "no-fix-needed"
-        ? "Needs review — the run found nothing to change and ended. Check its summary."
-        : `Needs review — ${r.reason}.`,
-      action: (
-        <span style={{ display: "inline-flex", gap: "6px" }}>
-          <IconAction action="result" onClick={() => openExecution(r.ticketId)} />
-          <IconAction action="markReviewed" onClick={() => markReviewedNow(r.plannedTicketId)} busy={busy.has("ack-" + r.plannedTicketId)} />
-        </span>
-      ),
-    });
-  }
-  // Over the soft budget: automation stops retrying and fixing review on its own; anything by hand still works.
-  const budget = planQuery.data?.ticketBudgetUsd ?? 0;
-  for (const ticketId of overBudget(costs, budget)) {
-    const row = rows.find((t) => t.ticketId === ticketId && t.claim === "mine");
-    if (!row) continue;
-    attention.push({
-      key: "ob-" + ticketId, ticketId, title: row.title, tone: "warning",
-      text: `Spent ${usd(costs[ticketId])} of its ${usd(budget)} budget — automation no longer retries or fixes review on it by itself.`,
-      action: <IconAction action="result" onClick={() => openExecution(ticketId)} />,
-    });
-  }
-  // Every QA follow-up case waiting on the developer — whoever holds the ticket now.
-  const toCases = <IconAction action="readDraft" onClick={() => document.getElementById("qa-follow-ups")?.scrollIntoView({ behavior: "smooth" })} />;
-  for (const c of cases) {
-    if (c.status !== "ready" && c.status !== "failed" && c.status !== "fixed" && !(c.status === "pending" && !stored?.autoDraftQaReply)) continue;
-    const row = rows.find((r) => r.id === c.plannedTicketId);
-    attention.push({
-      key: "qa-" + c.id, ticketId: c.ticketId, title: row?.title ?? "",
-      tone: c.status === "failed" || c.recommendation === "fix" ? "danger" : c.status === "fixed" ? "accent" : "warning",
-      text:
-        c.status === "pending"
-          ? "QC gave feedback — analyse it (auto-analysis is off)."
-          : c.status === "failed"
-            ? "The analysis of QC's feedback failed."
-            : c.status === "fixed"
-              ? "The QA fix has a pull request — post the reply to QC."
-              : c.recommendation === "fix"
-                ? "QC found a real defect — approve the fix."
-                : c.recommendation === "decide"
-                  ? "QC's feedback needs your call."
-                  : c.recommendation === "none"
-                    ? "QC only confirmed — nothing to reply, close it."
-                    : "A reply to QC is ready — review and post it.",
-      action: toCases,
-    });
-  }
-  attention.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+  };
+  const attention: AttentionItem[] = attentionOf({
+    rows,
+    reviews,
+    cases,
+    costs,
+    budgetUsd: planQuery.data?.ticketBudgetUsd ?? 0,
+    today: data?.today ?? "",
+    autoRelease: !!stored?.autoRelease,
+    autoDraftQaReply: !!stored?.autoDraftQaReply,
+  }).map((e): AttentionItem => {
+    const buttons = e.actions.map((k) => attentionButton(e, k));
+    return {
+      key: e.key, ticketId: e.ticketId, title: e.title, tone: e.tone, text: e.text,
+      action: buttons.length === 0 ? undefined : buttons.length === 1 ? buttons[0] : <span style={{ display: "inline-flex", gap: "6px" }}>{buttons}</span>,
+    };
+  });
 
   const attentionIds = new Set(attention.map((a) => a.ticketId));
   const filterCounts = Object.fromEntries(
     (["all", "attention", "queued", "running", "review", "done"] as PlanFilter[]).map((f) => [f, rows.filter((t) => matchesFilter(t, f, attentionIds)).length])
   ) as Record<PlanFilter, number>;
   const rowProjects = [...new Set(rows.map((t) => t.project).filter(Boolean))].sort();
-  const shownRows = rows
-    .filter((t) => matchesFilter(t, filter, attentionIds) && (!projectFilter || t.project === projectFilter))
-    .sort((a, b) => (sort === "release" ? (a.releaseDay || "9999").localeCompare(b.releaseDay || "9999") : 0));
+  const shownRows = sortRows(rows.filter((t) => matchesFilter(t, filter, attentionIds) && (!projectFilter || t.project === projectFilter)), sort, costs);
   const reorderable = filter === "all" && sort === "queue" && !projectFilter;
 
   // Bulk actions reuse the per-row writes one after another, each only on the rows its row button would show on.
-  const chosen = rows.filter((t) => t.id && selected.has(t.id));
+  // Only the rows on screen: a batch never reaches a row the current filter hides.
+  const chosen = shownRows.filter((t) => t.id && selected.has(t.id));
+  // A row that left the plan drops out of the selection, so it is not pre-selected if it comes back.
+  const rowIds = rows.map((t) => t.id).join(",");
+  useEffect(() => {
+    const live = new Set(rowIds.split(","));
+    setSelected((cur) => {
+      const kept = [...cur].filter((id) => live.has(id));
+      return kept.length === cur.size ? cur : new Set(kept);
+    });
+  }, [rowIds]);
   const bulkHold = chosen.filter(queued);
   const bulkRetry = chosen.filter((t) => t.claim === "mine" && !t.prUrl && t.implementOrder > 0 && (t.implementState === "failed" || t.implementState === "skipped"));
+  // Run settings only matter to a ticket the scheduler has yet to run.
+  const bulkSettings = chosen.filter((t) => t.claim === "mine" && !t.prUrl && ["pending", "failed", "skipped"].includes(t.implementState));
   const bulkRemove = chosen.filter((t) => t.implementState !== "running" && t.reviewState !== "running");
   const clearSelection = () => setSelected(new Set());
+  const saveBulkOptions = async (model: string, effort: string) => {
+    const list = bulkSettings;
+    await bulk(list, (t) =>
+      act("options-" + t.id, async () => {
+        const d = await post("/api/my-sprint/plan", { setRunOptions: { id: t.id, model, effort } }, "PUT");
+        if (d.plan) setStored(d.plan);
+      }, editItem(t.id, { model, effort }))
+    );
+    setBulkOptions(false);
+    setMessage(`Run settings saved on ${list.length} ticket${list.length === 1 ? "" : "s"}.`);
+  };
   const bulk = async (list: PlannedRow[], fn: (t: PlannedRow) => Promise<unknown>) => {
-    for (const t of list) await fn(t);
+    let failed = 0;
+    for (const t of list) if ((await fn(t)) === false) failed++;
     clearSelection();
+    if (failed) showToast(`${failed} of ${list.length} did not complete — the errors are above.`, "warning");
   };
   // Activating hands the plan to the unattended scheduler, so say what it will do before it does it.
   const askActivate = () => {
@@ -711,6 +695,31 @@ export default function MySprintPage() {
     });
   };
 
+  // A leading BOM makes Excel read the file as UTF-8, so Vietnamese titles keep their accents.
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob(["\ufeff" + planCsv(shownRows, costs)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `plan-${(data?.sprint || "sprint").replace(/[^\w.-]+/g, "-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Each retry starts a run that spends money, so a batch of them is confirmed like a single release is.
+  const askBulkRetry = () =>
+    setConfirm({
+      title: `Retry ${bulkRetry.length} tickets?`,
+      confirmLabel: "Retry",
+      busyKey: "retry-" + (bulkRetry[0]?.id ?? ""),
+      body: (
+        <>
+          <span>{bulkRetry.map((t) => "#" + t.ticketId).join(", ")}</span>
+          <span>Each one starts a new run now, one after another, and every run is billed.</span>
+        </>
+      ),
+      run: () => bulk(bulkRetry, (t) => retryNow(t.id)),
+    });
+
   const askBulkRemove = () =>
     setConfirm({
       title: `Stop tracking ${bulkRemove.length} tickets?`,
@@ -730,12 +739,7 @@ export default function MySprintPage() {
 
   return (
     <div style={{ position: "relative", height: "var(--te-app-h)", overflow: "hidden", display: "flex", flexDirection: "column", color: COLORS.text, ["--accent" as string]: COLORS.accent }}>
-      <header className="te-page-header" style={{ position: "relative", zIndex: 30, height: "60px", flex: "0 0 auto", display: "flex", alignItems: "center", gap: "14px", padding: "0 28px", borderBottom: "1px solid rgba(255,255,255,.06)", background: "var(--te-header-bg)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
-        <PageHeading title="Flow Runner"kicker="D-AGENT · AUTOMATION" icon={<><path d="M8 2v4M16 2v4M3 10h18" /><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>} />
-        <div style={{ flex: 1 }} />
-        <NotificationCenter />
-        <ProviderBadge />
-      </header>
+      <PageHeader title="Flow Runner" kicker="D-AGENT · AUTOMATION" icon={<><path d="M8 2v4M16 2v4M3 10h18" /><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>} />
 
       <PageToolbar>
         <span style={fieldLabel()}>SPRINT CALENDAR</span>
@@ -751,11 +755,27 @@ export default function MySprintPage() {
         <div style={{ position: "relative", flex: "1 1 200px", maxWidth: "340px", minWidth: "150px" }}>
           <input
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+            onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); setActiveHit(0); }}
             onFocus={() => setSearchOpen(true)}
             onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setSearchOpen(false); return; }
+              if (!addable.length) return;
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setSearchOpen(true);
+                setActiveHit((i) => (i + (e.key === "ArrowDown" ? 1 : addable.length - 1)) % addable.length);
+              } else if (e.key === "Enter" && searchOpen) {
+                const t = addable[Math.min(activeHit, addable.length - 1)];
+                if (t && !busy.has("add-" + t.id)) { e.preventDefault(); fireBoltFromEvent(); addToPlan(t); }
+              }
+            }}
             placeholder="Search ticket by ID or title"
             aria-label="Search tickets by ID or title"
+            role="combobox"
+            aria-expanded={searchOpen && addable.length > 0}
+            aria-controls="sprint-search-hits"
+            aria-activedescendant={searchOpen && addable.length > 0 ? "sprint-hit-" + Math.min(activeHit, addable.length - 1) : undefined}
             autoComplete="off"
             spellCheck={false}
             style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
@@ -768,9 +788,16 @@ export default function MySprintPage() {
             </div>
           )}
           {searchOpen && addable.length > 0 && (
-            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
-              {addable.map((t) => (
-                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 6px 0 10px" }}>
+            <div id="sprint-search-hits" role="listbox" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+              {addable.map((t, i) => (
+                <div
+                  key={t.id}
+                  id={"sprint-hit-" + i}
+                  role="option"
+                  aria-selected={i === Math.min(activeHit, addable.length - 1)}
+                  onMouseEnter={() => setActiveHit(i)}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 6px 0 10px", background: i === Math.min(activeHit, addable.length - 1) ? "var(--te-accent-soft)" : "transparent" }}
+                >
                   <span title={`#${t.id} · ${t.title}`} style={{ flex: 1, minWidth: 0, fontSize: FONT.sm, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     #{t.id} · {t.title}
                   </span>
@@ -849,7 +876,7 @@ export default function MySprintPage() {
 
               <div
                 className="te-sprint-split"
-                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: `minmax(0, 1fr) 460px ${legendOpen ? "200px" : "40px"}`, gridTemplateRows: "minmax(0, 1fr)", gap: "20px", transition: "grid-template-columns .38s var(--te-ease-expo)" }}
+                style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: `minmax(0, 1fr) 610px ${legendOpen ? "200px" : "40px"}`, gridTemplateRows: "minmax(0, 1fr)", gap: "20px", transition: "grid-template-columns .38s var(--te-ease-expo)" }}
               >
               <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
@@ -875,6 +902,8 @@ export default function MySprintPage() {
                       <ActionButton label="Watch run" variant="outline" onClick={() => openExecution(t.ticketId)} />
                     </span>
                   ))}
+                  <div style={{ flex: 1 }} />
+                  <ActionButton label="Stop all" variant="warning" onClick={askStopEverything} busy={busy.has("stop-all")} />
                 </div>
               )}
 
@@ -891,69 +920,7 @@ export default function MySprintPage() {
                 ))}
               </div>
 
-              {/* ---- triage (switched off for now) ---- */}
-              {/*
-              <div style={{ ...card({ padding: "16px" }), display: "flex", flexDirection: "column", gap: "12px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <span style={sectionCaption()}>TRIAGE</span>
-                  {triage?.status === "running" && <LoadingRing size={14} />}
-                  {triage?.status === "succeeded" && (
-                    <span style={pill({ color: COLORS.textMuted, size: "xs", weight: 600 })}>
-                      ${triage.costUsd.toFixed(2)}
-                    </span>
-                  )}
-                  {!rootRepo.trim() && (
-                    <span
-                      title="Fill in the root repo below and re-run to get verdicts the code actually backs."
-                      style={pill({ color: COLORS.warning, size: "xs", weight: 700 })}
-                    >
-                      No repo — work items only
-                    </span>
-                  )}
-                  <div style={{ flex: 1 }} />
-                  {button(triage ? "Re-run triage" : "Triage sprint", "outline", runTriage, "triage", triage?.status === "running")}
-                </div>
-                <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-                  An agent reads your tickets and judges readiness, sizing and work order. It writes nothing — no
-                  comment, no story point, no state. You apply what you accept.
-                </span>
-                <label style={{ display: "flex", flexDirection: "column", gap: "8px", maxWidth: "520px" }}>
-                  <span style={fieldLabel()}>ROOT REPO FOR THIS PROJECT (OPTIONAL)</span>
-                  <input
-                    value={rootRepo}
-                    onChange={(e) => setRootRepo(e.target.value)}
-                    onBlur={saveRootRepo}
-                    placeholder="C:\repos\my-project"
-                    autoComplete="off"
-                    spellCheck={false}
-                    style={fieldInput()}
-                  />
-                  <span style={{ fontSize: FONT.sm, color: COLORS.textDim, lineHeight: 1.6 }}>
-                    {rootRepo.trim()
-                      ? "Triage reads this clone's own conventions, and scheduled runs work in it."
-                      : "Without one, triage judges from the work item text alone — it cannot tell a requirement the "
-                        + "codebase already answers from one that is genuinely ambiguous, and its sizing is directional. "
-                        + "Automatic runs cannot start at all."}
-                  </span>
-                </label>
-                {triage?.status === "failed" && (
-                  <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{triage.errorMessage}</span>
-                )}
-                {triage?.result?.summary && (
-                  <span style={{ fontSize: FONT.base, color: COLORS.textMuted, lineHeight: 1.6 }}>{triage.result.summary}</span>
-                )}
-                {triage?.status === "succeeded" && (triage.result?.tickets?.length ?? 0) > 0 && (
-                  <div style={{ display: "flex" }}>
-                    {button(
-                      `View full report · ${triage.result?.tickets?.length ?? 0} tickets`,
-                      "primary",
-                      () => setReportOpen(true),
-                      "report"
-                    )}
-                  </div>
-                )}
-              </div>
-              */}
+              <SpendStrip spend={sprintSpend(rows, costs, planQuery.data?.ticketBudgetUsd ?? 0, releaseDayOptions.length, Number(stored?.pointsPerDay ?? data?.config.pointsPerDay) || 0)} budgetUsd={planQuery.data?.ticketBudgetUsd ?? 0} />
 
               <CapacityStrip days={releaseDayOptions} rows={rows} pointsPerDay={Number(stored?.pointsPerDay ?? data?.config.pointsPerDay) || 0} today={data?.today ?? ""} />
 
@@ -994,8 +961,12 @@ export default function MySprintPage() {
                   onToggle={(field, on) => patchPlan({ [field]: on }, field)}
                   onTick={tickNow}
                 />
-                <span style={sectionCaption()}>
-                  RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
+                <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={sectionCaption()}>
+                    RELEASE PLAN · {stored?.pointsPerDay ?? data?.config.pointsPerDay} POINTS PER WORKING DAY
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button type="button" className="te-action-btn" disabled={!shownRows.length} title="Save the rows shown, in the order shown, as a CSV file" onClick={exportCsv} style={ctaButtonStyle("ghost")}>Export CSV</button>
                 </span>
                 <PlanFilters
                   filter={filter}
@@ -1012,7 +983,8 @@ export default function MySprintPage() {
                     <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.text }}>{chosen.length} selected</span>
                     <div style={{ flex: 1 }} />
                     <button type="button" className="te-action-btn" disabled={!bulkHold.length} onClick={() => bulk(bulkHold, (t) => holdNow(t.id))} style={{ ...ctaButtonStyle("ghost"), opacity: bulkHold.length ? 1 : 0.4 }}>Hold {bulkHold.length}</button>
-                    <button type="button" className="te-action-btn" disabled={!bulkRetry.length} onClick={() => bulk(bulkRetry, (t) => retryNow(t.id))} style={{ ...ctaButtonStyle("warning"), opacity: bulkRetry.length ? 1 : 0.4 }}>Retry / resume {bulkRetry.length}</button>
+                    <button type="button" className="te-action-btn" disabled={!bulkSettings.length} onClick={() => setBulkOptions(true)} style={{ ...ctaButtonStyle("ghost"), opacity: bulkSettings.length ? 1 : 0.4 }}>Settings {bulkSettings.length}</button>
+                    <button type="button" className="te-action-btn" disabled={!bulkRetry.length} onClick={askBulkRetry} style={{ ...ctaButtonStyle("warning"), opacity: bulkRetry.length ? 1 : 0.4 }}>Retry / resume {bulkRetry.length}</button>
                     <button type="button" className="te-action-btn" disabled={!bulkRemove.length} onClick={askBulkRemove} style={{ ...ctaButtonStyle("outline"), opacity: bulkRemove.length ? 1 : 0.4 }}>Remove {bulkRemove.length}</button>
                     <button type="button" className="te-action-btn" onClick={clearSelection} style={ctaButtonStyle("ghost")}>Clear</button>
                   </div>
@@ -1023,7 +995,6 @@ export default function MySprintPage() {
                   data={data}
                   cases={cases}
                   closed={closedCases}
-                  triaged={triaged}
                   busy={busy}
                   releaseDayOptions={releaseDayOptions}
                   costs={costs}
@@ -1031,10 +1002,11 @@ export default function MySprintPage() {
                   reorderable={reorderable}
                   selected={selected}
                   onSelect={(id, on) => setSelected((cur) => { const next = new Set(cur); if (on) next.add(id); else next.delete(id); return next; })}
+                  onSelectAll={(on) => setSelected(on ? new Set(shownRows.filter((t) => t.id).map((t) => t.id)) : new Set())}
                   handlers={{
                     openExecution,
                     setUnblocked,
-                    resolveReview: resolveReviewNow,
+                    resolveReview: askResolveReview,
                     retry: retryNow,
                     release: askRelease,
                     analyzeQa: analyzeQaNow,
@@ -1059,6 +1031,17 @@ export default function MySprintPage() {
         </div>
       </main>
       {preview && <RebuildPreviewDialog preview={preview} busy={busy.has("plan")} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
+      {bulkOptions && bulkSettings.length > 0 && (
+        <RunOptionsDialog
+          ticketId=""
+          count={bulkSettings.length}
+          model={bulkSettings[0].model}
+          effort={bulkSettings[0].effort}
+          busy={bulkSettings.some((t) => busy.has("options-" + t.id))}
+          onSave={saveBulkOptions}
+          onCancel={() => setBulkOptions(false)}
+        />
+      )}
       {historyFor && (
         <TicketTimeline ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
       )}
@@ -1092,14 +1075,14 @@ export default function MySprintPage() {
           {confirm.body}
         </ConfirmDialog>
       )}
-      {/* {reportOpen && triage?.status === "succeeded" && (
-        <TriageReport
-          data={triage.result}
-          sprint={data?.sprint ?? ""}
-          costUsd={triage.costUsd}
-          onClose={() => setReportOpen(false)}
+      {reviewDialogRow && (
+        <ResolveReviewDialog
+          row={reviewDialogRow}
+          busy={busy.has("fixreview-" + reviewDialogRow.id)}
+          onConfirm={(findings) => resolveReviewNow(reviewDialogRow, findings)}
+          onCancel={() => setReviewDialogRow(null)}
         />
-      )} */}
+      )}
     </div>
   );
 }

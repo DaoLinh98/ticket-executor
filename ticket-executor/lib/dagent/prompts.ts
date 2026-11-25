@@ -1,5 +1,5 @@
 import path from "path";
-import { acRows, basesOf, bundleOf, codeLeadsOf, deliveryOf, digestOf, findingsOf, fixBlockersOf, lastFixInputOf, stalledFix, followUpOf, lastDelivery, LOCAL_INSTRUCTIONS, manualChecksOf, renderPlan, reviewAssumptionsOf, reviewedHeadsOf, scopeOf, skillsOf, threadsOf, warningsOf } from "./rules";
+import { acRows, basesOf, bundleOf, codeLeadsOf, deliveryOf, digestOf, findingsOf, fixBlockersOf, lastFixInputOf, stalledFix, followUpOf, lastDelivery, LOCAL_INSTRUCTIONS, manualChecksOf, renderPlan, reviewAssumptionsOf, reviewedHeadsOf, reviewFeedbackOf, scopeOf, skillsOf, threadsOf, warningsOf } from "./rules";
 import { skillCatalog } from "./skills";
 import type { Ctx, Refusal } from "./types";
 
@@ -88,7 +88,7 @@ function skillMenu(c: Ctx, withBase: boolean): string {
         ]
       : []),
     "",
-    ...catalog.map((s) => `- ${s.name} — ${skillSummary(s.description)} (${s.file})`),
+    ...catalog.map((s) => `- ${s.name}${s.baseBranch ? ` (base branch: ${s.baseBranch})` : ""} — ${skillSummary(s.description)} (${s.file})`),
   ]);
 }
 
@@ -334,7 +334,8 @@ export function planPrompt(c: Ctx): string {
         "Map every acceptance criterion above in `acMap`, once each, by its number `n`. A criterion that needs no file change " +
           "(already delivered, or met outside the code — a branch, a pipeline, a deployment, a manual check) is `change: none`, with how it is verified.",
         `Write the prose in \`planMd\` — Goal, Data assumptions, Steps, Standards that apply. The harness adds the AC map, risks and ` +
-          `decisions from your fields and writes it all to \`${PLAN_FILE}\`; do not repeat them.`,
+          `decisions from your fields and writes it all to \`${PLAN_FILE}\`; do not repeat them. ` +
+          `In 'Standards that apply', list project code standards only — do not copy session or harness git restrictions (such as 'never commit') into the plan.`,
         "Do not write files.",
       ]),
     ),
@@ -344,6 +345,8 @@ export function planPrompt(c: Ctx): string {
 export function implementPrompt(c: Ctx): string {
   const branch = String(c.channels.plan?.branch ?? "").trim();
   const steps = String(c.channels.plan?.planMd ?? "").trim();
+  const bases = basesOf(c);
+  const baseName = bases[rootName(c)] || "";
   return brief(
     header(c),
     acceptance(c),
@@ -355,9 +358,17 @@ export function implementPrompt(c: Ctx): string {
       bullets([
         `Implement the approved plan above on branch \`${branch}\` in every repository you change — create it where it does not exist yet, ` +
           `and when the working tree is already on it, build on the commits it carries.${steps ? ` The same plan is in \`${PLAN_FILE}\`; you need not read it.` : ""}`,
+        ...(baseName
+          ? [
+              `The base branch required by the skill is \`${baseName}\`. The harness already checked out the working tree at \`origin/${baseName}\`. ` +
+                `Ensure \`${branch}\` is created from this current HEAD (e.g. \`git checkout -B ${branch}\`), never branched off \`main\` or a stale pre-existing branch.`,
+            ]
+          : []),
         "A criterion the plan marks no code change that only a person can confirm after publish or deploy goes in `manualChecks` — " +
           "it is not a deviation and does not make the criteria partial.",
-        "Commit locally. Do not push.",
+        "When code changes are made, you MUST stage and commit them locally (`git commit`) on the branch with an informative English message before reporting results. " +
+          "This brief explicitly authorizes and requires a local commit on the feature branch for your changes (overriding any generic 'do not commit' rules from global instructions, skills, or plan standards). Do not push.",
+        "If genuinely no code changes were needed (the base already delivers the ticket): keep the worktree clean, do not create empty commits, and report `committed: false` with 0 uncommitted and 0 filesChanged.",
       ]),
     ),
   );
@@ -453,7 +464,8 @@ export function fixPrompt(c: Ctx): string {
       "Your job",
       bullets([
         `Branch: ${branchOf(c)}. The plan is \`${PLAN_FILE}\`.`,
-        `Fix exactly the ${harness ? "" : "review "}blockers above, then commit locally on the same branch.`,
+        `Fix exactly the ${harness ? "" : "review "}blockers above, then stage and commit them locally on the same branch with an informative English message ` +
+          `(explicitly authorized; overrides generic 'do not commit' rules). Do not push.`,
         harness
           ? "These need git work on this branch's own unpushed commits — a rebase onto the base, or rewriting the commits to drop a file or line. " +
             "Do that and nothing else; never touch the base's commits."
@@ -488,16 +500,43 @@ export function reflectPrompt(c: Ctx): string {
 
 // The worktree on the pull request's branch — a related repo's when the pull request lives there.
 const prTree = (c: Ctx) => c.companions.find((m) => m.name === c.channels.setup?.prRepo)?.cwd ?? c.cwd;
+// The pull request's source branch, and the branch the worktree is on: a run-local one when the developer's clone has
+// the PR branch checked out (git allows a branch in one worktree only).
+const prBranch = (c: Ctx) => String(c.channels.setup?.branch ?? branchOf(c)).trim();
+const prCheckout = (c: Ctx) => {
+  const local = String(c.channels.setup?.localBranch ?? "").trim();
+  return local
+    ? `local branch \`${local}\` — a run-local copy of the pull request's source branch \`${prBranch(c)}\`, which is checked out in the developer's clone`
+    : `the pull request's source branch \`${prBranch(c)}\``;
+};
 
 export function reviewTriagePrompt(c: Ctx): string {
+  const feedback = reviewFeedbackOf(c);
   return brief(
     header(c, ["ticket"]),
+    ...(feedback
+      ? [
+          section("Reviewer findings provided by developer", [
+            "The developer provided the following reviewer findings / review comments to resolve on this pull request:",
+            "",
+            feedback.findings,
+            "",
+            "Instructions for user-provided findings:",
+            "- Read each finding carefully and check it against the code on the pull request branch and the ticket scope.",
+            "- Some findings may describe the same problem as an open PR comment (from CodeRabbit or a reviewer); some may be new findings.",
+            "- For any finding that can be resolved by changing code, include it in your Thread Decisions & Fix Plan in `planMd` so the implementer and fixer resolve it completely.",
+            "- If a finding does not correspond to an existing online PR thread, record it in `threads` with an id like `manual-1`, `manual-2`, etc. with `decision: 'fix'` (or `'reject'` if invalid) so it is tracked and resolved.",
+            "- Your goal is to clear all valid findings through code fixes.",
+          ]),
+        ]
+      : []),
     section(
       "Your job",
       bullets([
-        `The working tree \`${prTree(c)}\` is on the pull request's source branch \`${branchOf(c)}\`.`,
-        "Read every open review thread on the pull request above and judge each one against the code and the ticket.",
-        `Return one \`threads\` entry per open thread and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`.`,
+        `The working tree \`${prTree(c)}\` is on ${prCheckout(c)}.`,
+        "Read every open review thread on the pull request above and judge each one against the code and the ticket." +
+          (feedback ? " Also evaluate all reviewer findings provided above." : ""),
+        `Return one \`threads\` entry per open thread (and user finding) and the Thread Decisions table in \`planMd\`; the harness writes it to \`${PLAN_FILE}\`.`,
         DIGEST_JOB,
         "Do not write files and do not reply to any thread.",
       ]),
@@ -507,14 +546,24 @@ export function reviewTriagePrompt(c: Ctx): string {
 }
 
 export function reviewImplementPrompt(c: Ctx): string {
+  const feedback = reviewFeedbackOf(c);
   return brief(
     header(c),
     acceptance(c),
+    ...(feedback
+      ? [
+          section("Reviewer findings provided by developer", [
+            "The developer provided these reviewer findings to resolve:",
+            "",
+            feedback.findings,
+          ]),
+        ]
+      : []),
     section(
       "Your job",
       bullets([
-        `The decisions are in \`${PLAN_FILE}\`. Fix exactly these threads on the current branch \`${branchOf(c)}\` of \`${prTree(c)}\`.`,
-        "Do not create or switch branches, do not rebase.",
+        `The decisions are in \`${PLAN_FILE}\`. Fix exactly these threads and findings in \`${prTree(c)}\`, on ${prCheckout(c)}.`,
+        "Clear all valid findings through code changes. Do not create or switch branches, do not rebase.",
         "Commit locally. Do not push and do not reply to any thread.",
       ]),
     ),
@@ -524,14 +573,31 @@ export function reviewImplementPrompt(c: Ctx): string {
 export function respondPrompt(c: Ctx): string {
   const changed = Array.isArray(c.channels.diffGuard?.changed) && c.channels.diffGuard.changed.length > 0;
   const answer = threadsOf(c).filter((t) => t.decision !== "informational");
+  const online = answer.filter((t) => !t.threadId.startsWith("manual-") && !t.threadId.startsWith("user-"));
+  const manual = answer.filter((t) => t.threadId.startsWith("manual-") || t.threadId.startsWith("user-"));
   return brief(
     header(c, ["ticket", "knowledge"]),
-    section("Threads to answer", answer.map((t, i) => `${i + 1}. thread ${t.threadId} (${t.decision})${t.file ? ` ${t.file}` : ""} — ${t.reason}`)),
+    section(
+      "Threads to answer",
+      online.length
+        ? online.map((t, i) => `${i + 1}. thread ${t.threadId} (${t.decision})${t.file ? ` ${t.file}` : ""} — ${t.reason}`)
+        : ["No online PR threads to answer."],
+    ),
+    ...(manual.length
+      ? [
+          section(
+            "Developer findings resolved by code",
+            manual.map((t, i) => `${i + 1}. ${t.threadId} (${t.decision}) — ${t.reason}`),
+          ),
+        ]
+      : []),
     section(
       "Your job",
       bullets([
-        changed ? `Push branch \`${branchOf(c)}\` from \`${prTree(c)}\` to origin (never force-push).` : "Nothing was committed — push nothing.",
-        "Answer the threads above on the pull request, one reply each.",
+        changed
+          ? `Push the pull request branch from \`${prTree(c)}\`: \`git push origin HEAD:${prBranch(c)}\` (never force-push).`
+          : "Nothing was committed — push nothing.",
+        online.length ? "Answer the online PR threads above on the pull request, one reply each." : "No online PR threads need replies.",
         "Never resolve a thread or change its status.",
         "Skip a thread that already carries your reply — this step may be retried after a crash.",
       ]),
@@ -622,12 +688,31 @@ function reviewRowFor(rows: Check[], n: number, ac: string): Check | undefined {
   return rows.find((r) => new RegExp(`\\bAC\\s*${n}(?![0-9])`, "i").test(r.subject ?? "") || (head.length > 8 && (r.subject ?? "").toLowerCase().includes(head)));
 }
 
-/**
- * The pull request description, built by the harness from what the run recorded — so every PR reads the same and its
- * evidence is the run's, not the publisher's reconstruction: summary, AC table with the review's proof, verification,
- * decisions, after-deploy checks and what the review left unverified.
- */
-export function prBody(c: Ctx): string {
+/** Longest description a provider accepts when the pull request is created; a provider not listed has room to spare
+ *  (GitHub: 65,536). Azure DevOps refuses the create call outright past its limit — the branch is pushed, no PR opens. */
+const PR_BODY_LIMIT: Record<string, number> = { "azure-devops": 4000 };
+
+/** What the publisher appends to the description when it opens several pull requests, per companion link. */
+const COMPANION_RESERVE = 160;
+
+/** The room `prBody()` may fill for this run: the provider's limit, less what the publisher adds after it. */
+export function prBodyLimit(c: Ctx): number {
+  const limit = PR_BODY_LIMIT[c.provider];
+  if (!limit) return Infinity;
+  const extra = Math.max(0, publishTargets(c).length - 1);
+  return limit - (extra ? 40 + extra * COMPANION_RESERVE : 0);
+}
+
+const clip = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`);
+
+type BodyPart = { key: "summary" | "ac" | "verification" | "decisions" | "manual" | "unverified"; title: string; lines: string[] };
+
+// Compact is the same record, shorter: the review's proof cut to its opening, each decision to what was decided, each
+// open point to one line. Every acceptance criterion, check and decision still has its row.
+const PROOF_MAX = 120;
+const LINE_MAX = 160;
+
+function prParts(c: Ctx, compact: boolean): BodyPart[] {
   const impl = c.channels.implement ?? {};
   const last = lastDelivery(c);
   const v = (last.verification ?? {}) as { tests?: string; build?: string; acceptanceCriteria?: string };
@@ -635,39 +720,159 @@ export function prBody(c: Ctx): string {
   const count = (r: string) => checked.filter((x) => x.result === r).length;
   const acs = strings(c.channels.readiness?.acceptanceCriteria);
   const rows = acRows(c.channels.plan);
-  const decided = decisionsOf(c);
+  const line = (s: string) => (compact ? clip(s, LINE_MAX) : s);
+  const decided = compact
+    ? (Array.isArray(c.channels.plan?.decisions) ? (c.channels.plan.decisions as { point?: string; decision?: string }[]) : []).map((d, i) =>
+        line(`${i + 1}. ${d.point ?? ""} → ${d.decision ?? ""}`),
+      )
+    : decisionsOf(c);
   const manual = manualChecksOf(c);
   const unverified = reviewAssumptionsOf(c);
-  const out: string[] = [];
   const summary = [goalOf(c), String(impl.summary ?? "").trim()].filter(Boolean);
-  out.push("## Summary", summary.length ? summary.join("\n\n") : `Ticket ${c.ticketId}.`);
+  const parts: BodyPart[] = [{ key: "summary", title: "Summary", lines: [summary.length ? summary.join("\n\n") : `Ticket ${c.ticketId}.`] }];
   if (rows.length) {
-    out.push(
-      "",
-      "## Acceptance criteria",
-      "| # | Acceptance criterion | Change | Proven by |",
-      "|---|---|---|---|",
-      ...rows.map((a, i) => {
-        const n = a.n ?? i + 1;
-        const ac = acs[n - 1] ?? a.ac ?? "";
-        const row = reviewRowFor(checked, n, ac);
-        const proof = row ? `review: ${row.result ?? ""} — ${row.evidence ?? ""}` : a.test ? `planned: ${a.test}` : "—";
-        return `| ${n} | ${cellOf(ac)} | ${a.change === "none" ? "no change" : cellOf((a.files ?? []).join(", "))} | ${cellOf(proof)} |`;
-      }),
-    );
+    parts.push({
+      key: "ac",
+      title: "Acceptance criteria",
+      lines: [
+        "| # | Acceptance criterion | Change | Proven by |",
+        "|---|---|---|---|",
+        ...rows.map((a, i) => {
+          const n = a.n ?? i + 1;
+          const ac = acs[n - 1] ?? a.ac ?? "";
+          const row = reviewRowFor(checked, n, ac);
+          const proof = row ? `review: ${row.result ?? ""} — ${row.evidence ?? ""}` : a.test ? `planned: ${a.test}` : "—";
+          return `| ${n} | ${cellOf(ac)} | ${a.change === "none" ? "no change" : cellOf((a.files ?? []).join(", "))} | ${compact ? clip(cellOf(proof), PROOF_MAX) : cellOf(proof)} |`;
+        }),
+      ],
+    });
   }
-  out.push(
-    "",
-    "## Verification",
-    `- Implementer: tests ${v.tests ?? "not reported"}, build ${v.build ?? "not reported"}, acceptance criteria ${v.acceptanceCriteria ?? "not reported"}.`,
-    checked.length
-      ? `- Independent review: ${c.channels.evaluate?.verdict ?? ""} — ${count("ok")} checks ok, ${count("issue")} issue, ${count("unverified")} unverified.`
-      : "- Independent review: no checks recorded.",
+  parts.push({
+    key: "verification",
+    title: "Verification",
+    lines: [
+      `- Implementer: tests ${v.tests ?? "not reported"}, build ${v.build ?? "not reported"}, acceptance criteria ${v.acceptanceCriteria ?? "not reported"}.`,
+      checked.length
+        ? `- Independent review: ${c.channels.evaluate?.verdict ?? ""} — ${count("ok")} checks ok, ${count("issue")} issue, ${count("unverified")} unverified.`
+        : "- Independent review: no checks recorded.",
+    ],
+  });
+  if (decided.length) parts.push({ key: "decisions", title: "Decisions", lines: decided });
+  if (manual.length) parts.push({ key: "manual", title: "Manual checks after deploy", lines: manual.map((m) => line(`- [ ] AC ${m.n}: ${m.check}`)) });
+  if (unverified.length) parts.push({ key: "unverified", title: "Not verified by the automated review", lines: unverified.map((a) => line(`- ${a}`)) });
+  return parts;
+}
+
+const renderParts = (parts: BodyPart[]) => parts.map((p) => [`## ${p.title}`, ...p.lines].join("\n")).join("\n\n");
+
+// Left out first when compact is still too long: the decisions the reviewer already built against, then what the
+// review could not verify. Summary, the AC table and verification always stay; manual checks are QA's to-do list.
+const DROP_ORDER: BodyPart["key"][] = ["decisions", "unverified", "manual"];
+
+/**
+ * The pull request description, built by the harness from what the run recorded — so every PR reads the same and its
+ * evidence is the run's, not the publisher's reconstruction: summary, AC table with the review's proof, verification,
+ * decisions, after-deploy checks and what the review left unverified. Past the provider's limit it shortens itself —
+ * compact rows first, then whole sections in `DROP_ORDER` — and says so, rather than leave the publisher a description
+ * the provider will refuse.
+ */
+export function prBody(c: Ctx, max = prBodyLimit(c)): string {
+  const full = renderParts(prParts(c, false));
+  if (full.length <= max) return full;
+  let parts = prParts(c, true);
+  const dropped: string[] = [];
+  const note = () =>
+    `_Shortened to fit the ${max.toLocaleString("en-US")}-character limit for a pull request description${dropped.length ? ` — left out: ${dropped.join(", ")}` : ""}. ` +
+    `The full record is on Ticket Executor run ${c.runId}._`;
+  const body = () => `${renderParts(parts)}\n\n${note()}`;
+  for (const key of DROP_ORDER) {
+    if (body().length <= max) break;
+    const p = parts.find((x) => x.key === key);
+    if (!p) continue;
+    parts = parts.filter((x) => x !== p);
+    dropped.push(p.title);
+  }
+  const out = body();
+  if (out.length <= max) return out;
+  // Still too long with only the core left (a very long summary or AC list): cut on a line, never mid-row.
+  const tail = `\n…\n\n${note()}`;
+  const head = renderParts(parts).slice(0, Math.max(0, max - tail.length));
+  return `${head.slice(0, Math.max(head.lastIndexOf("\n"), 0))}${tail}`;
+}
+
+// How the ending reads to a developer, so the recap opens on the fact and not on a terminal's name.
+const ENDING: Record<string, string> = {
+  END: "the run finished its work",
+  NEEDS_REVIEW: "the run ended and wants a person to look",
+  NEEDS_INPUT: "the run is parked waiting for the Product Owner",
+  FAIL: "the run stopped without delivering",
+};
+
+type CheckRow = { subject?: string; how?: string; evidence?: string; result?: string };
+
+// Everything the run recorded, laid out as the recapper's source material. It reads nothing else: no files, no git,
+// no work item — every later panel on /workflow is built from these same channels.
+function runStory(c: Ctx): string {
+  const impl = c.channels.implement ?? {};
+  const last = lastDelivery(c);
+  const ev = c.channels.evaluate ?? {};
+  const v = (last.verification ?? {}) as { tests?: string; build?: string; acceptanceCriteria?: string };
+  const checked = Array.isArray(ev.checked) ? (ev.checked as CheckRow[]) : [];
+  const deviations = Array.isArray(last.deviations) ? (last.deviations as { what?: string; why?: string }[]) : [];
+  const diff = (c.channels.diffGuard?.summary ?? {}) as { changed?: number; planned?: number; unplanned?: string[] };
+  const prs = Array.isArray(c.channels.publish?.prs) ? (c.channels.publish.prs as { repo?: string; prUrl?: string; isDraft?: boolean }[]) : [];
+  const standing = bundleOf(c);
+  const questions = strings(c.channels.readiness?.questions);
+  const lesson = String(c.channels.reflect?.lesson ?? "").trim();
+  const rounds = c.visits.fix ?? 0;
+  return brief(
+    section("How it ended", [
+      `${ENDING[String(c.outcome?.to ?? "")] ?? "the run ended"} — the harness recorded: ${c.outcome?.reason ?? "no reason given"}.`,
+      ...(branchOf(c) ? [`Branch: ${branchOf(c)}`] : []),
+      ...(prs.length ? prs.map((p) => `Pull request (${p.isDraft === false ? "open" : "draft"}) in ${p.repo ?? "the repository"}: ${p.prUrl ?? ""}`) : []),
+    ]),
+    acceptance(c),
+    planContract(c),
+    section("What was built", [
+      ...(String(impl.summary ?? "").trim() ? [`The implementer reported: ${String(impl.summary).trim()}`] : []),
+      ...(typeof diff.changed === "number" ? [`Files changed: ${diff.changed}${typeof diff.planned === "number" ? ` of ${diff.planned} planned` : ""}${diff.unplanned?.length ? `; outside the plan: ${diff.unplanned.join(", ")}` : ""}`] : []),
+      `Implementer's own verification: tests ${v.tests ?? "not reported"}, build ${v.build ?? "not reported"}, acceptance criteria ${v.acceptanceCriteria ?? "not reported"}.`,
+      ...(deviations.length ? ["Diverged from the plan:", ...deviations.map((x) => `- ${x.what ?? ""} — ${x.why ?? ""}`)] : []),
+    ]),
+    section("What the review proved", [
+      ...(ev.verdict ? [`Verdict: ${String(ev.verdict)}${rounds ? ` after ${rounds} fix round(s)` : " on the first pass"}.`] : []),
+      ...(checked.length ? ["Checks it ran:", ...checked.map((x) => `- [${x.result ?? ""}] ${x.subject ?? ""} — ${x.evidence ?? ""}`)] : []),
+    ]),
+    section("Left open", [
+      ...(reviewAssumptionsOf(c).length ? ["The review could not verify:", ...reviewAssumptionsOf(c).map((a) => `- ${a}`)] : []),
+      ...(manualChecksOf(c).length ? ["Only a person can confirm these after deploy:", ...manualChecksOf(c).map((m) => `- AC ${m.n}: ${m.check}`)] : []),
+      ...(standing.length ? ["Blockers still standing:", numbered(standing)] : []),
+      ...(questions.length ? ["Questions waiting on the Product Owner:", ...questions.map((q, i) => `${i + 1}. ${q}`)] : []),
+      ...(lesson ? [`Lesson recorded in KNOWLEDGE.md: ${lesson}`] : []),
+    ]),
   );
-  if (decided.length) out.push("", "## Decisions", ...decided);
-  if (manual.length) out.push("", "## Manual checks after deploy", ...manual.map((m) => `- [ ] AC ${m.n}: ${m.check}`));
-  if (unverified.length) out.push("", "## Not verified by the automated review", ...unverified.map((a) => `- ${a}`));
-  return out.join("\n");
+}
+
+export function recapPrompt(c: Ctx): string {
+  return brief(
+    header(c, ["knowledge"]),
+    runStory(c),
+    section("Your job", [
+      "Write the one thing the developer reads about this run. They will not open any other panel, so what you leave out, they never learn — " +
+        "and what you pad it with, they stop reading. Everything you need is above; you have no tools and nothing else to consult.",
+      "",
+      bullets([
+        "`headline`: one sentence that answers \"what happened?\" — the result, not the process.",
+        "Then the sections that have real content, in the order the schema lists. Skip any the material above does not support.",
+        "Write what a fact means, not where it came from: \"the import now skips Historical agreements\", never \"the evaluate node returned pass\". " +
+          "Never name a node, an agent or this brief's headings.",
+        "Keep every acceptance criterion's fate visible in the `ask` section: met, already on the base, or not done — with the one piece of proof that settles it.",
+        "A bullet a developer cannot act on or check is noise. Cut it rather than round the section up to five.",
+        "Write `bulletsVi` as natural Vietnamese a developer would say out loud — not a word-for-word rendering of the English. " +
+          "Same facts, same order, one Vietnamese line per English line. Leave identifiers, paths, branch names, numbers and URLs untranslated.",
+      ]),
+    ]),
+  );
 }
 
 export function publishPrompt(c: Ctx): string {

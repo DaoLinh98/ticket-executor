@@ -11,7 +11,7 @@ import { loadTicket, loadTicketComments, loadTicketDetail, normalizeProvider } f
 import { checkAgents } from "./agents";
 import { runAgentTurn } from "./cli";
 import { CHECKS, companionDirs, deliveryFacts, refreshBase, removeWorktrees, seatBase, type CheckEnv, type RetrySeed } from "./checks";
-import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS } from "./graph";
+import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS, recapWorth } from "./graph";
 import { PLAN_FILE } from "./prompts";
 import { checkReadiness, checkReview, deliveryOf, knowledgeDiff, renderPlan, richToText } from "./rules";
 import { skillCatalog, skillsOff } from "./skills";
@@ -190,14 +190,21 @@ async function applySkills(live: Live, data: Record<string, unknown>): Promise<s
   // A pick of a skill switched off in Settings is dropped like one that is not installed.
   const catalog = skillCatalog(live.ctx.rootRepo, await skillsOff());
   const picked = Array.isArray(data.skills) ? (data.skills as { name?: string; reason?: string }[]) : [];
-  data.skills = picked.flatMap((p) => {
+  const resolved = picked.flatMap((p) => {
     const s = catalog.find((x) => x.name === p.name);
     live.logs.push({ t: Date.now(), lvl: s ? "INFO" : "WARN", text: s ? `skill ${s.name}: ${p.reason ?? ""}` : `skill "${p.name}" is not installed — ignored` });
-    return s ? [{ name: s.name, file: s.file, reason: p.reason ?? "" }] : [];
+    return s ? [{ name: s.name, file: s.file, reason: p.reason ?? "", baseBranch: s.baseBranch }] : [];
   });
-  const branch = String(data.baseBranch ?? "").trim();
+  data.skills = resolved;
+  const skillBase = resolved.find((s) => s.baseBranch)?.baseBranch;
+  let branch = String(data.baseBranch ?? "").trim();
+  if (!branch && skillBase) {
+    branch = skillBase;
+    data.baseBranch = branch;
+    live.logs.push({ t: Date.now(), lvl: "INFO", text: `base branch ${branch} applied from picked skill` });
+  }
   if (!branch || live.ctx.flow === "review") return "";
-  if (!(data.skills as unknown[]).length) {
+  if (!resolved.length) {
     live.logs.push({ t: Date.now(), lvl: "WARN", text: `base branch ${branch} ignored — no installed skill was picked to require it` });
     return "";
   }
@@ -291,7 +298,10 @@ async function drive(live: Live, from: string) {
       if (live.cancelled) return await abort(live, node.id);
 
       live.ctx.visits[node.id] = (live.ctx.visits[node.id] ?? 0) + 1;
-      await saveRun(live.id, live.ctx, { state: "running", waitReason: "", currentNodeId: node.id, hops: live.hops });
+      // Recap is an epilogue, not where the run got to: leaving `currentNodeId` on the node that ended the run keeps
+      // the failure panel and `retryNodeFor()` pointing at the work, not at the summary of it.
+      const where = node.id === "recap" ? {} : { currentNodeId: node.id };
+      await saveRun(live.id, live.ctx, { state: "running", waitReason: "", ...where, hops: live.hops });
       const input = node.kind === "agent" && node.input ? node.input(live.ctx) : null;
       const step = await openStep(live.id, node.id, node.label, node.kind === "agent" ? node.agent : "", input);
       live.stepId = step.id;
@@ -303,6 +313,9 @@ async function drive(live: Live, from: string) {
       if (live.cancelled) return await abort(live, node.id);
 
       if (r.ok && typeof r.data.planMd === "string" && r.data.planMd.trim()) await capturePlan(live, node.id, r.data);
+      // Both languages are written in the one turn and stored together, so reading the recap in Vietnamese later
+      // costs nothing. The newest artifact wins — a resumed run recaps its new ending.
+      if (node.id === "recap" && r.ok) await saveArtifact(live.id, "recap", JSON.stringify(r.data)).catch(() => null);
       live.ctx.channels[node.id] = input ? { ...r.data, input } : r.data;
 
       let next = live.graph.edges[node.id](live.ctx, r);
@@ -310,6 +323,12 @@ async function drive(live: Live, from: string) {
       const allowed = node.next.includes(next.to) || (node.id === "setup" && live.graph.retryEntries.includes(next.to));
       if (!allowed) next = { to: FAIL, reason: `routed "${node.id}" to undeclared "${next.to}"` };
       if (node.id === "readiness" && next.to === END) await saveArtifact(live.id, "delivery", JSON.stringify(deliveryOf(live.ctx)));
+      // Every ending is routed through the recap first — whatever the run did, the developer gets one panel that tells
+      // the whole story. The ending itself is stashed on the context and replayed by `recap`'s own edge.
+      if (node.id !== "recap" && recapWorth(live.graph, live.ctx, next.to)) {
+        live.ctx.outcome = next;
+        next = { to: "recap", reason: next.reason };
+      }
       await transition(live, node.id, next.to, next.reason);
       await saveRun(live.id, live.ctx, { hops: live.hops, ...promote(live, node, r.data) });
       if (next.to === FAIL) return await finish(live, "failed", next.reason);
@@ -338,6 +357,8 @@ export type StartInput = {
   effort?: string;
   retryOf?: string;
   from?: string;
+  /** A failed or cancelled review run to start over from the top: its pull request and developer findings carry over. */
+  restartOf?: string;
   /** Channels the run starts with — how a caller hands a flow its input (Flow Runner's QA follow-up window and decision). */
   seed?: Record<string, Record<string, unknown>>;
 };
@@ -375,7 +396,21 @@ async function retrySeed(graph: Graph, retryOf: string, from: string): Promise<{
   return { seed: { baseSha: prev.baseSha, branches, companionBases, planMd: plan?.body ?? "" }, channels };
 }
 
+// A review fix has no node to restart from (it ends before a plan exists), so its retry is a new run on the same pull
+// request with the same developer findings.
+async function restartInput(runId: string): Promise<{ prUrl: string; seed: Record<string, Record<string, unknown>> } | string> {
+  const prev = await prisma.dagentRun.findUnique({ where: { id: runId }, select: { state: true, graphId: true, prUrl: true, channels: true } });
+  if (!prev) return `Run ${runId} does not exist.`;
+  if (!["failed", "cancelled"].includes(prev.state)) return `Only a failed or cancelled run can be started again (this one is ${prev.state}).`;
+  if (flowOf(prev.graphId) !== "review") return "Only a review fix run can be started again this way.";
+  const feedback = ((prev.channels ?? {}) as Record<string, Record<string, unknown>>).reviewFeedback;
+  return { prUrl: prev.prUrl, seed: feedback ? { reviewFeedback: feedback } : {} };
+}
+
 export async function startRun(input: StartInput): Promise<StartResult> {
+  const restart = input.restartOf ? await restartInput(input.restartOf) : null;
+  if (typeof restart === "string") return { ok: false, error: restart, status: 400, gates: [] };
+  if (restart) input = { ...input, flow: "review", prUrl: input.prUrl || restart.prUrl, seed: { ...restart.seed, ...input.seed } };
   const ticketId = input.ticketId.trim();
   const rootRepo = input.rootRepo.trim();
   const provider = (input.provider || "azure-devops").trim();
@@ -437,7 +472,7 @@ export async function startRun(input: StartInput): Promise<StartResult> {
           currentNodeId: graph.entry,
           model: (input.model ?? "").trim(),
           effort: (input.effort ?? "").trim(),
-          retryOfId: input.retryOf ?? "",
+          retryOfId: input.retryOf ?? input.restartOf ?? "",
           entryNode: from,
           knowledgeAtStart: readKnowledge(rootRepo),
           channels: (seeded?.channels ?? input.seed ?? {}) as Prisma.InputJsonValue,

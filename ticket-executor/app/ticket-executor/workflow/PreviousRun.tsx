@@ -47,15 +47,15 @@ function Items({ mark, tone, items }: { mark: string; tone: Tone; items: string[
   );
 }
 
-/** "Since the previous run": how a retry compares with the run it retried. */
-export default function PreviousRun({ prevId, diff, onOpen }: { prevId: string; diff: RunDiff | null; onOpen: () => void }) {
+/** "Since the previous run": how a retry compares with the run it retried — or with any older run of the ticket the developer picks. */
+export default function PreviousRun({ prevId, diff, onOpen, heading = "Since the previous run", linkLabel = "Previous run →" }: { prevId: string; diff: RunDiff | null; onOpen: () => void; heading?: string; linkLabel?: string }) {
   const b = diff?.blockers;
   return (
-    <section aria-label="Since the previous run" style={{ ...card({ padding: "10px 12px" }), marginTop: 12 }}>
+    <section aria-label={heading} style={{ ...card({ padding: "10px 12px" }), marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <b style={{ ...sectionCaption(), flex: 1, fontSize: FONT.xs }}>Since the previous run</b>
+        <b style={{ ...sectionCaption(), flex: 1, fontSize: FONT.xs }}>{heading}</b>
         <Link href={`/workflow?run=${prevId}`} onClick={onOpen} className="te-run-pr te-wf-tap" style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 999, fontSize: FONT.xs, color: COLORS.text, textDecoration: "none" }}>
-          Previous run →
+          {linkLabel}
         </Link>
       </div>
       {!diff ? (

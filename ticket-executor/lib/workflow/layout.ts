@@ -166,7 +166,6 @@ export function layoutRun(defs: FlowNodeDef[], dir: Dir, extraPairs: [string, st
   });
 
   const nmap = new Map(nodes.map((n) => [n.id, n]));
-  const lastHappy = happy[happy.length - 1];
 
   const bez = (p0: number[], c1: number[], c2: number[], p3: number[]): string => {
     const a = toXY(p0[0], p0[1]);
@@ -199,9 +198,11 @@ export function layoutRun(defs: FlowNodeDef[], dir: Dir, extraPairs: [string, st
   };
 
   const edges: LayoutEdge[] = [];
-  // Side exits to a terminal share one rail per (side, terminal): a node drops a short
-  // stub onto its rail instead of drawing its own track across the canvas.
-  const isPark = (A: LayoutNode, B: LayoutNode, pr: Pair) => B.kind === "terminal" && !(pr.from === lastHappy && pr.to === A.def.next[0]);
+  // Side exits share one rail per (side, target): a node drops a short stub onto its rail instead of drawing its own
+  // track across the canvas. An exit is a terminal or the recap that every ending passes through — both sit at the
+  // far end, and every node can reach them. A node on the happy path still draws its own primary exit straight.
+  const isExit = (B: LayoutNode) => B.kind === "terminal" || B.lane === "outcome";
+  const isPark = (A: LayoutNode, B: LayoutNode, pr: Pair) => isExit(B) && !(hIdx.has(pr.from) && pr.to === A.def.next[0]);
   const rails = new Map<string, { c: number; g: number }>();
   let nOver = 0;
   let nBelow = 0;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compareRuns, FRESH_START, retryAdviceOf, runSections } from "../lib/workflow/present";
+import { compareRuns, FRESH_START, retryAdviceOf, runSections, timelineOf } from "../lib/workflow/present";
 import type { Refusal, Run, Section, Step } from "../lib/workflow/types";
 import { flowDefs } from "../lib/dagent/view";
 import { GRAPH } from "../lib/dagent/graph";
@@ -43,7 +43,7 @@ function run(p: Partial<Run> & { reason?: string }): Run {
     outputTokens: 0,
     startedAt: 0,
     endedAt: 1,
-    costByPhase: { prepare: 0, understand: 0, build: 0, verify: 0, publish: 0 },
+    costByPhase: { prepare: 0, understand: 0, build: 0, verify: 0, publish: 0, outcome: 0 },
     failure: reason === undefined ? undefined : { reason, refusals: [], lesson: "", retryableFrom: ENTRIES },
     defs: flowDefs(GRAPH),
     steps: [],
@@ -85,10 +85,16 @@ test("retry advice: a failure before plan suggests a fresh start, offered as an 
   assert.equal(retryAdviceOf(run({ state: "succeeded" })), null);
 });
 
-test("retry advice: a non-implement run is never offered a fresh start", () => {
-  const r = run({ reason: "blocked", currentNodeId: "readiness", flow: "fix-review" });
+test("retry advice: a QA fix run is never offered a fresh start", () => {
+  const r = run({ reason: "blocked", currentNodeId: "readiness", flow: "fix-qa" });
   assert.notEqual(retryAdviceOf(r)!.defaultId, FRESH_START);
   assert.ok(!retryOf(r).options.some((o) => o.id === FRESH_START));
+});
+
+test("retry advice: a review fix that failed in setup defaults to a fresh start", () => {
+  const r = run({ reason: "Could not check out feature/1-x in the worktree", currentNodeId: "setup", flow: "fix-review", failure: { reason: "Could not check out feature/1-x in the worktree", refusals: [], lesson: "", retryableFrom: [] } });
+  assert.equal(retryAdviceOf(r)!.defaultId, FRESH_START);
+  assert.ok(retryOf(r).options.some((o) => o.id === FRESH_START && o.enabled));
 });
 
 test("compareRuns: end states, plan, blockers by text and the cost delta", () => {
@@ -112,4 +118,13 @@ test("compareRuns: same plan, and a retry not yet reviewed", () => {
   assert.deepEqual(d.blockers, { resolved: [], standing: [], added: [], pending: true });
   assert.equal(d.delta, "+$0.25");
   assert.equal(compareRuns({ run: run({}), planMd: "" }, { run: run({}), planMd: "" }).blockers, null);
+});
+
+test("timeline rows carry what each step spent, and none for a step that spent nothing", () => {
+  const paid = { ...step("plan"), costUsd: 0.5 };
+  const free = step("setup");
+  const t = timelineOf(run({ steps: [free, paid] }), 1);
+  assert.deepEqual(t.rows.map((r) => r.cost), ["", "$0.50"]);
+  assert.match(t.rows[1].title, /\$0\.50/);
+  assert.doesNotMatch(t.rows[0].title, /\$/);
 });

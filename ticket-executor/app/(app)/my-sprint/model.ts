@@ -1,6 +1,7 @@
 import { COLORS } from "@/lib/ui";
 import type { Claim } from "@/lib/sprintClaim";
-import type { Lane, PlanConfig, SprintPlanResult } from "@/lib/sprintPlan";
+import type { Lane, PlanConfig, PlannedTicket, SprintPlanResult } from "@/lib/sprintPlan";
+import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import type { CaseStatus, Finding, LastClosed, Recommendation, Trigger } from "@/lib/qaFollowUp";
 import { isQueueable, STAGE_LABEL, stageFrom } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
@@ -69,6 +70,19 @@ export type PlannedRow = {
   /** Stopped tracking by the developer — kept as a record, never shown. */
   untracked?: boolean;
 };
+
+/** A row for a ticket the plan has not stored yet: the computed plan's numbers, every run field at rest. */
+export const previewRow = (t: PlannedTicket): PlannedRow => ({
+  id: "", ticketId: t.ticketId, title: t.title, project: t.project, implementOrder: t.implementOrder,
+  points: t.points, estimateHours: t.estimateHours, releaseDay: t.releaseDay,
+  blocked: t.blocked, unblockedByUser: false, implementState: "pending", runId: "", prUrl: "",
+  prPublished: false, reviewersSet: false, statusMoved: false, releasedAt: null, releaseError: "",
+  reviewState: "idle", reviewRunId: "", openComments: 0, threadsReplied: 0, threadsResolved: 0,
+  reviewRounds: 0, reviewError: "",
+  claim: t.claim, assigneeNow: t.assigneeNow,
+  model: DEFAULT_PLAN_MODEL, effort: DEFAULT_PLAN_EFFORT,
+  stage: "", prMerged: false, pendingAction: "", qaRounds: 0,
+});
 
 export type StoredPlan = {
   id: string;
@@ -296,7 +310,38 @@ export type RebuildPreview = {
 export const usd = (n: number) => "$" + n.toFixed(2);
 
 export type PlanFilter = "all" | "attention" | "queued" | "running" | "review" | "done";
-export type PlanSort = "queue" | "release";
+export type PlanSort = "queue" | "release" | "cost" | "points" | "state";
+
+export const SORT_LABEL: Record<PlanSort, string> = {
+  queue: "Queue",
+  release: "Release day",
+  cost: "Cost",
+  points: "Points",
+  state: "State",
+};
+
+// Failed first, then what is running, then what waits, then what is finished.
+const STATE_RANK: Record<string, number> = { failed: 0, running: 1, pending: 2, skipped: 3, implemented: 4, "no-fix-needed": 5 };
+
+/** The plan in the order asked for. `queue` keeps the stored order; every other sort is stable, so ties keep it. */
+export function sortRows(rows: PlannedRow[], sort: PlanSort, costs: Record<string, number>): PlannedRow[] {
+  const by = (key: (t: PlannedRow) => number | string) => [...rows].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  switch (sort) {
+    case "release":
+      return by((t) => t.releaseDay || "9999");
+    case "cost":
+      return by((t) => -(costs[t.ticketId] ?? 0));
+    case "points":
+      return by((t) => -t.points);
+    case "state":
+      return by((t) => STATE_RANK[t.implementState] ?? 6);
+    default:
+      return rows;
+  }
+}
+
+export const isPlanFilter = (v: string | null): v is PlanFilter => !!v && Object.hasOwn(FILTER_LABEL, v);
+export const isPlanSort = (v: string | null): v is PlanSort => !!v && Object.hasOwn(SORT_LABEL, v);
 
 export const FILTER_LABEL: Record<PlanFilter, string> = {
   all: "All",
