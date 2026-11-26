@@ -298,16 +298,16 @@ test("the fixer works on the newest refusal: a rebase conflict, then a hard diff
   assert.match(fixPrompt(ctx(review)), /## Review blockers/);
 });
 
-test("checkReview flags an unproven pass; the PR and the reviewer get the review's open points and manual checks", () => {
+test("checkReview flags an unproven pass; the reviewer gets the manual checks, the PR carries neither them nor the open points", () => {
   assert.deepEqual(checkReview({ verdict: "pass", checked: [{ result: "ok" }], blockers: [] }), []);
   assert.equal(checkReview({ verdict: "pass", checked: [], blockers: [] }).length, 1);
   assert.match(checkReview({ verdict: "pass", checked: [{ result: "issue" }], blockers: [] })[0], /1 check\(s\) marked issue/);
   const c = ctx({ implement: { manualChecks: [{ n: 5, check: "login on Dev" }] }, evaluate: { assumptions: ["AC5 not run locally"] }, diffGuard: { changed: [{ repo: "billing-api", branch: "b" }] } });
   assert.match(evaluatePrompt(c), /- AC 5: login on Dev/);
-  assert.match(publishPrompt(c), /## Not verified by the automated review\n- AC5 not run locally/);
+  assert.doesNotMatch(publishPrompt(c), /Not verified|AC5 not run locally/);
 });
 
-test("the PR description carries the review's proof per criterion; a re-sync that moved only the base skips the re-review", () => {
+test("the PR description says what was done and the review's result per criterion; a re-sync that moved only the base skips the re-review", () => {
   const c = ctx({
     readiness: { ...DIGESTED, acceptanceCriteria: ["Historical rows import", "Approve still checks"] },
     plan: { branch: "b", planMd: "## Goal\nExempt Historical imports.\n\n## Steps\n1. x", acMap: [{ n: 1, ac: "a", change: "code", files: ["F.cs"], test: "T1" }, { n: 2, ac: "b", change: "none", files: [], test: "untouched" }] },
@@ -315,9 +315,10 @@ test("the PR description carries the review's proof per criterion; a re-sync tha
     evaluate: { verdict: "pass", blockers: [], checked: [{ subject: "AC1 — Historical rows import", evidence: "F.cs:90 passes false", result: "ok" }], reviewedDiffs: { api: "h1" } },
   });
   const body = prBody(c);
-  assert.match(body, /^## Summary\nExempt Historical imports\.\n\nAdded a flag\./);
-  assert.match(body, /\| 1 \| Historical rows import \| F\.cs \| review: ok — F\.cs:90 passes false \|/);
-  assert.match(body, /\| 2 \| Approve still checks \| no change \| planned: untouched \|/);
+  assert.match(body, /^## Summary\nAdded a flag\.\n\n## Acceptance criteria/);
+  assert.match(body, /\| 1 \| Historical rows import \| F\.cs \| ok \|/);
+  assert.match(body, /\| 2 \| Approve still checks \| no change \| — \|/);
+  assert.doesNotMatch(body, /Decisions|Manual checks|Not verified/);
   assert.match(body, /Independent review: pass — 1 checks ok/);
   assert.equal(edge("diffGuard", c, ok({ blockers: [], warnings: [], diffHashes: { api: "h1" } })).to, "prePublish");
   assert.equal(edge("diffGuard", c, ok({ blockers: [], warnings: [], diffHashes: { api: "h2" } })).to, "evaluate");
@@ -325,7 +326,7 @@ test("the PR description carries the review's proof per criterion; a re-sync tha
 
 test("the PR description fits Azure DevOps' limit: unchanged when it fits, compact then trimmed when it does not", () => {
   const long = (s: string, n: number) => `${s} ${"x".repeat(n)}`;
-  const acs = Array.from({ length: 12 }, (_, i) => `Criterion ${i + 1} ${"y".repeat(60)}`);
+  const acs = Array.from({ length: 12 }, (_, i) => `Criterion ${i + 1} ${"y".repeat(400)}`);
   const big = (provider: string) => ({
     ...ctx({
       readiness: { ...DIGESTED, acceptanceCriteria: acs },
@@ -350,7 +351,7 @@ test("the PR description fits Azure DevOps' limit: unchanged when it fits, compa
   assert.match(body, /Shortened to fit the 4,000-character limit/);
   assert.match(body, /The full record is on Ticket Executor run r1\./);
   // The core always stays, every criterion keeps its row.
-  assert.match(body, /^## Summary\nUpgrade pipelines\./);
+  assert.match(body, /^## Summary\nMoved to \.NET 10\./);
   for (let i = 1; i <= 12; i++) assert.match(body, new RegExp(`\\| ${i} \\| Criterion ${i} `));
   assert.match(body, /## Verification\n/);
   // A tiny limit still yields a description under it, cut on a line.
@@ -573,15 +574,14 @@ test("a re-plan gets the refused plan to amend, not just the issues", () => {
   assert.doesNotMatch(planPrompt(ctx({ readiness: DIGESTED })), /Previous plan refused/);
 });
 
-test("the implement brief carries the plan steps and asks for manual checks; the PR description lists them", () => {
+test("the implement brief carries the plan steps and asks for manual checks; the PR description does not list them", () => {
   const plan = { branch: "b", planMd: "## Steps\n1. Edit Foo.cs" };
   const brief = implementPrompt(ctx({ plan }));
   assert.match(brief, /## Plan steps\n## Steps\n1\. Edit Foo\.cs/);
   assert.match(brief, /you need not read it/);
   assert.match(brief, /`manualChecks`/);
   const c = ctx({ plan, implement: { manualChecks: [{ n: 4, check: "Dev URL shows the login page" }] }, fix: { manualChecks: [] }, diffGuard: { changed: [{ repo: "billing-api", branch: "b" }] } });
-  assert.match(publishPrompt(c), /## Manual checks after deploy\n- \[ \] AC 4: Dev URL shows the login page/);
-  assert.doesNotMatch(publishPrompt(ctx({ plan, diffGuard: c.channels.diffGuard })), /Manual checks/);
+  assert.doesNotMatch(publishPrompt(c), /Manual checks|Dev URL shows the login page/);
 });
 
 test("a code change with no tests run warns the reviewer; no change with no tests does not", () => {
@@ -846,8 +846,8 @@ test("the plan's decisions reach implement, fix, evaluate and the PR description
     assert.match(brief, line);
   }
   assert.match(evaluatePrompt(c), /never for preferring another reasonable reading/);
-  assert.match(publishPrompt(c), /## Decisions\n/);
-  assert.match(publishPrompt(c), line);
+  // Built to, not shown: the PR description leaves decisions out.
+  assert.doesNotMatch(publishPrompt(c), /Decisions|They are static text boxes/);
   // No decisions: no extra lines anywhere.
   const bare = ctx({ plan: { branch: "feature/x" }, diffGuard: c.channels.diffGuard });
   assert.doesNotMatch(evaluatePrompt(bare), /judgement calls/);

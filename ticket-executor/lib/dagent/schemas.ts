@@ -175,7 +175,12 @@ export const STEP_OUTPUT = {
   properties: {
     committed: { type: "boolean", description: "True only if the work is committed locally. Do NOT push. False with a clean, unchanged worktree only when the base already does everything asked — say why in summary; a person confirms it." },
     branch: { type: "string", description: "The branch you committed on." },
-    summary: { type: "string", description: "One or two sentences: what changed." },
+    summary: {
+      type: "string",
+      description:
+        "Goes verbatim into the pull request description. Two to four short sentences, past tense, naming what changed in the code or docs and why it covers the ticket. " +
+        "No git state (committed, pushed, branch), no process or publish steps, no acceptance-criterion verdicts, no test results — those have their own fields.",
+    },
     verification: {
       type: "object",
       description: "Report only what you actually ran.",

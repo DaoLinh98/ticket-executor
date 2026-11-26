@@ -1,6 +1,6 @@
 ---
 name: implementer
-version: 1.2.1
+version: 1.2.2
 description: Implements an approved plan with surgical, minimal code changes and verifies them with the project's own build and tests. Commits only when the caller says so; never pushes. Use only when a workflow names this agent explicitly (the dev-team skill or the Ticket Executor harness).
 disallowedTools: Agent
 ---
@@ -73,8 +73,9 @@ The reviewer will check these; a miss costs a fix round:
 ## Output
 
 `acceptanceCriteria: met` only when every AC has evidence or is a manual check; otherwise
-`partial` with each gap as a deviation. Put the evidence table in `summary` when the contract has no other
-field for it — briefly.
+`partial` with each gap as a deviation. `summary` becomes the pull request's description: a few plain
+sentences on what changed and why, past tense — no git state ("committed", "not pushed"), no later publish steps,
+no evidence table (tests and gaps have their own fields).
 
 ```
 ## Summary

@@ -705,11 +705,9 @@ export function prBodyLimit(c: Ctx): number {
 
 const clip = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`);
 
-type BodyPart = { key: "summary" | "ac" | "verification" | "decisions" | "manual" | "unverified"; title: string; lines: string[] };
+type BodyPart = { key: "summary" | "ac" | "verification"; title: string; lines: string[] };
 
-// Compact is the same record, shorter: the review's proof cut to its opening, each decision to what was decided, each
-// open point to one line. Every acceptance criterion, check and decision still has its row.
-const PROOF_MAX = 120;
+// Compact is the same record, shorter: each criterion and file list cut to its opening. Every criterion still has its row.
 const LINE_MAX = 160;
 
 function prParts(c: Ctx, compact: boolean): BodyPart[] {
@@ -720,29 +718,21 @@ function prParts(c: Ctx, compact: boolean): BodyPart[] {
   const count = (r: string) => checked.filter((x) => x.result === r).length;
   const acs = strings(c.channels.readiness?.acceptanceCriteria);
   const rows = acRows(c.channels.plan);
-  const line = (s: string) => (compact ? clip(s, LINE_MAX) : s);
-  const decided = compact
-    ? (Array.isArray(c.channels.plan?.decisions) ? (c.channels.plan.decisions as { point?: string; decision?: string }[]) : []).map((d, i) =>
-        line(`${i + 1}. ${d.point ?? ""} → ${d.decision ?? ""}`),
-      )
-    : decisionsOf(c);
-  const manual = manualChecksOf(c);
-  const unverified = reviewAssumptionsOf(c);
-  const summary = [goalOf(c), String(impl.summary ?? "").trim()].filter(Boolean);
-  const parts: BodyPart[] = [{ key: "summary", title: "Summary", lines: [summary.length ? summary.join("\n\n") : `Ticket ${c.ticketId}.`] }];
+  const cell = (s: string) => (compact ? clip(cellOf(s), LINE_MAX) : cellOf(s));
+  const done = String(impl.summary ?? "").trim() || goalOf(c);
+  const parts: BodyPart[] = [{ key: "summary", title: "Summary", lines: [done || `Ticket ${c.ticketId}.`] }];
   if (rows.length) {
     parts.push({
       key: "ac",
       title: "Acceptance criteria",
       lines: [
-        "| # | Acceptance criterion | Change | Proven by |",
+        "| # | Acceptance criterion | Change | Review |",
         "|---|---|---|---|",
         ...rows.map((a, i) => {
           const n = a.n ?? i + 1;
           const ac = acs[n - 1] ?? a.ac ?? "";
           const row = reviewRowFor(checked, n, ac);
-          const proof = row ? `review: ${row.result ?? ""} — ${row.evidence ?? ""}` : a.test ? `planned: ${a.test}` : "—";
-          return `| ${n} | ${cellOf(ac)} | ${a.change === "none" ? "no change" : cellOf((a.files ?? []).join(", "))} | ${compact ? clip(cellOf(proof), PROOF_MAX) : cellOf(proof)} |`;
+          return `| ${n} | ${cell(ac)} | ${a.change === "none" ? "no change" : cell((a.files ?? []).join(", "))} | ${row?.result ?? "—"} |`;
         }),
       ],
     });
@@ -757,41 +747,26 @@ function prParts(c: Ctx, compact: boolean): BodyPart[] {
         : "- Independent review: no checks recorded.",
     ],
   });
-  if (decided.length) parts.push({ key: "decisions", title: "Decisions", lines: decided });
-  if (manual.length) parts.push({ key: "manual", title: "Manual checks after deploy", lines: manual.map((m) => line(`- [ ] AC ${m.n}: ${m.check}`)) });
-  if (unverified.length) parts.push({ key: "unverified", title: "Not verified by the automated review", lines: unverified.map((a) => line(`- ${a}`)) });
   return parts;
 }
 
 const renderParts = (parts: BodyPart[]) => parts.map((p) => [`## ${p.title}`, ...p.lines].join("\n")).join("\n\n");
 
-// Left out first when compact is still too long: the decisions the reviewer already built against, then what the
-// review could not verify. Summary, the AC table and verification always stay; manual checks are QA's to-do list.
-const DROP_ORDER: BodyPart["key"][] = ["decisions", "unverified", "manual"];
-
 /**
- * The pull request description, built by the harness from what the run recorded — so every PR reads the same and its
- * evidence is the run's, not the publisher's reconstruction: summary, AC table with the review's proof, verification,
- * decisions, after-deploy checks and what the review left unverified. Past the provider's limit it shortens itself —
- * compact rows first, then whole sections in `DROP_ORDER` — and says so, rather than leave the publisher a description
- * the provider will refuse.
+ * The pull request description, built by the harness from what the run recorded — so every PR reads the same: what was
+ * done (summary), what each acceptance criterion changed and whether the review confirmed it, and the verification
+ * result. Decisions, after-deploy checks and the review's open points stay on the run, not in the PR. Past the
+ * provider's limit it shortens itself — compact rows first, then cut on a line — and says so, rather than leave the
+ * publisher a description the provider will refuse.
  */
 export function prBody(c: Ctx, max = prBodyLimit(c)): string {
   const full = renderParts(prParts(c, false));
   if (full.length <= max) return full;
-  let parts = prParts(c, true);
-  const dropped: string[] = [];
+  const parts = prParts(c, true);
   const note = () =>
-    `_Shortened to fit the ${max.toLocaleString("en-US")}-character limit for a pull request description${dropped.length ? ` — left out: ${dropped.join(", ")}` : ""}. ` +
+    `_Shortened to fit the ${max.toLocaleString("en-US")}-character limit for a pull request description. ` +
     `The full record is on Ticket Executor run ${c.runId}._`;
   const body = () => `${renderParts(parts)}\n\n${note()}`;
-  for (const key of DROP_ORDER) {
-    if (body().length <= max) break;
-    const p = parts.find((x) => x.key === key);
-    if (!p) continue;
-    parts = parts.filter((x) => x !== p);
-    dropped.push(p.title);
-  }
   const out = body();
   if (out.length <= max) return out;
   // Still too long with only the core left (a very long summary or AC list): cut on a line, never mid-row.
