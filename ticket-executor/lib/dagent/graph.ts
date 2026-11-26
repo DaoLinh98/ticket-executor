@@ -350,6 +350,11 @@ export const GRAPHS: Record<Flow, Graph> = { implement: GRAPH, review: REVIEW_GR
  *  has its reason on the failure panel already, and a summary of nothing is not worth a turn. */
 const JUDGED = ["readiness", "qaTriage", "reviewTriage"];
 
+/** A node entered past its declared `maxVisits`. The edges already stop every loop at its budget (`planCheck`,
+ *  `toFixer`, `evaluate`, `recapWorth`); this is the engine's backstop for an edge that ever stops doing so. `visits`
+ *  already counts the visit being entered. */
+export const overVisits = (n: Pick<Node, "maxVisits">, visits: number): boolean => !!n.maxVisits && visits > n.maxVisits;
+
 /** Whether `drive()` should send the run through `recap` before it lands on `to`. */
 export function recapWorth(g: Graph, c: Ctx, to: string): boolean {
   if (!g.nodes.recap || !TERMINALS.includes(to)) return false;

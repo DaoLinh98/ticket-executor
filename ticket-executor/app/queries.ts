@@ -5,6 +5,7 @@ import type { ProviderId } from "@/lib/providers";
 import type { PreflightResult } from "@/lib/preflight";
 import type { ClaudeModel } from "@/lib/claudeOptions";
 import type { ClaudeCredentialView } from "@/lib/claudeAccounts";
+import type { Quota } from "@/lib/claudeQuota";
 import { HISTORY_SIZES, type HistoryFilter, type HistoryPage } from "@/lib/dagent/historyShape";
 import type { InsightsPayload, InsightsPeriod } from "@/lib/dagent/insights";
 import type { RunListItem as RunRow, RunView } from "@/lib/dagent/view";
@@ -64,6 +65,24 @@ export const fetchSettings = async (): Promise<SettingsPayload> => {
   const r = await fetch("/api/settings", { cache: "no-store" });
   return (await r.json()) as SettingsPayload;
 };
+
+/** The Claude account's session / weekly usage (`/api/claude/usage`); `quota` is null when it cannot be read. */
+export type ClaudeUsagePayload = { account: string; quota: Quota | null };
+
+export const CLAUDE_USAGE_KEY = ["claude-usage"] as const;
+
+// Anthropic's meter, not our DB — nothing pushes it, so it is polled; focus refetches too (the default).
+export const useClaudeUsage = () =>
+  useQuery({
+    queryKey: CLAUDE_USAGE_KEY,
+    queryFn: async (): Promise<ClaudeUsagePayload> => {
+      const r = await fetch("/api/claude/usage", { cache: "no-store" });
+      if (!r.ok) throw new Error("Could not read the Claude usage.");
+      return (await r.json()) as ClaudeUsagePayload;
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
 /** One machine skill and whether D-Agent runs are offered it (`/api/dagent/skills`). */
 export type DagentSkill = { name: string; description: string; enabled: boolean };
@@ -203,6 +222,35 @@ export const fetchSprint = async (): Promise<import("./(app)/my-sprint/model").M
   const r = await fetch("/api/my-sprint");
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d?.error || "Could not read the sprint.");
+  return d;
+};
+
+// The commits of a ticket's PR and one commit's per-file diffs — the same routes the Commits tab reads. A commit's own
+// diff cannot change, so its files are never stale; the list is refreshed by the run's stream.
+export const ticketCommitsKey = (ticketId: string, provider: string) => ["ticket-commits", ticketId, provider] as const;
+export const commitFilesKey = (ticketId: string, provider: string, sha: string) => ["commit-files", ticketId, provider, sha] as const;
+
+export const fetchTicketCommits = async (ticketId: string, provider: string): Promise<import("@/lib/types").CommitSummary[]> => {
+  const r = await fetch(`/api/tickets/${ticketId}/commits?provider=${provider}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d?.error || !Array.isArray(d?.commits)) throw new Error(d?.error || "Could not read the commits.");
+  return d.commits;
+};
+
+export const fetchCommitFiles = async (ticketId: string, provider: string, sha: string): Promise<import("@/lib/types").CommitFile[]> => {
+  const r = await fetch(`/api/tickets/${ticketId}/commits/${sha}?provider=${provider}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d?.error || !Array.isArray(d?.files)) throw new Error(d?.error || "Could not read the commit's files.");
+  return d.files;
+};
+
+// What the scheduler's next tick would do for a plan. Refreshed by the plan's stream (any row or event change).
+export const tickPreviewKey = (planId: string) => ["my-sprint", "tick-preview", planId] as const;
+
+export const fetchTickPreview = async (planId: string): Promise<import("@/lib/execution/tickPreview").TickPreviewResult> => {
+  const r = await fetch(`/api/my-sprint/plan/preview?plan=${encodeURIComponent(planId)}`, { cache: "no-store" });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(d?.steps)) throw new Error(d?.error || "Could not read the scheduler preview.");
   return d;
 };
 

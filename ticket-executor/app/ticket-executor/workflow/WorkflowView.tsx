@@ -31,7 +31,7 @@ import { useResolvedIsMobile } from "../../(app)/MobileNav";
 import { useToast } from "../../(app)/ToastProvider";
 import { copyText } from "../../(app)/report/copyText";
 import { useLiveInvalidate } from "../../useLive";
-import { RUNS_KEY, fetchRunRows, fetchRunView, planRowKey, runViewKey, usePlanRow } from "../../queries";
+import { RUNS_KEY, fetchRunRows, fetchRunView, planRowKey, runViewKey, ticketCommitsKey, usePlanRow } from "../../queries";
 import LoadingRing from "../LoadingRing";
 import { useNow } from "../execution/useNow";
 import { RefusalCard, StateBanner, WorkflowHud, type WorkflowMode } from "./Chrome";
@@ -39,6 +39,7 @@ import NodeInspector, { type InspectorTab, type LogFilter, type SheetState } fro
 import { MONO } from "./parts";
 import PlanRowCard, { PlanRowChip } from "./PlanRowCard";
 import PreviousRun from "./PreviousRun";
+import RunCommits from "./RunCommits";
 import TicketLifecycle from "./TicketLifecycle";
 import { RawLog, TimelineView } from "./Views";
 import RunPicker from "./RunPicker";
@@ -186,6 +187,10 @@ export default function WorkflowView() {
   const planProvider = real?.ticket.provider ?? "";
   const planQ = usePlanRow(planTicket, planProvider);
   const planId = planQ.data?.planId || null;
+  // The ticket's PR has this run's commits once publish (or a review fix's respond) pushed them. Only the newest run:
+  // the provider read resolves the ticket's latest PR, which an older run may not be.
+  const pushed = !!real?.newest && !!run?.steps.some((s) => (s.nodeId === "publish" || s.nodeId === "respond") && s.status === "succeeded");
+  useLiveInvalidate(runId && pushed ? `/api/dagent/runs/${runId}/stream` : null, ticketCommitsKey(planTicket, planProvider));
   useLiveInvalidate(runId && planTicket ? `/api/dagent/runs/${runId}/stream` : null, planRowKey(planTicket, planProvider));
   useLiveInvalidate(planId ? `/api/my-sprint/plan/stream?plan=${planId}` : null, planRowKey(planTicket, planProvider));
   const gates = refusedGates ?? real?.gates ?? [];
@@ -201,6 +206,12 @@ export default function WorkflowView() {
   const curId = run?.currentNodeId ?? "admission";
   const selected = layout.nodes.find((n) => n.id === (ui.sel ?? curId)) ?? layout.nodes.find((n) => n.id === curId) ?? layout.nodes[0];
   const tab: InspectorTab = ui.tab ?? (run && (run.state === "failed" || run.state === "succeeded") && !ui.sel ? "run" : "node");
+
+  // A linked ?node= that is not a node of this run (a stale link, a flow without it) would leave the page unfollowing and
+  // showing the live node anyway: drop it and follow again.
+  useEffect(() => {
+    if (ui.sel && run && !layout.nodes.some((n) => n.id === ui.sel)) patch({ sel: null, follow: true });
+  }, [ui.sel, run, layout.nodes, patch]);
 
   const nodeViews = useMemo(() => layout.nodes.map((n) => nodeView(run, gates, n, now, layout, selected.id)), [run, gates, layout, now, selected.id]);
   const edges = useMemo(() => edgeViews(run, layout, selected.id, ui.allPaths), [run, layout, selected.id, ui.allPaths]);
@@ -233,12 +244,14 @@ export default function WorkflowView() {
 
   const pick = useCallback((id: string) => setUi((u) => ({ ...u, sel: id, follow: false, attempt: null, tab: "node", edgePop: null, sheet: u.sheet === "closed" ? "peek" : u.sheet })), []);
   const onFollow = useCallback((on: boolean) => setUi((u) => (u.follow === on ? u : { ...u, follow: on, sel: on ? null : u.sel })), []);
-  // j / k step through the nodes, f toggles following the live node. Never while typing or with a modifier held.
+  // j / k step through the nodes, f toggles following the live node. Never while typing, with a modifier held, held
+  // down, or with a dialog open (the confirm and panel dialogs, and the commit popup, all sit over the canvas).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"], .te-modal-overlay')) return;
       if (e.key === "f") onFollow(!ui.follow);
       else if (e.key === "j" || e.key === "k") {
         const at = layout.nodes.findIndex((n) => n.id === selected.id);
@@ -482,6 +495,7 @@ export default function WorkflowView() {
               runTop={
                 <>
                   {planQ.data ? <PlanRowCard plan={planQ.data} /> : null}
+                  {pushed ? <RunCommits ticketId={planTicket} provider={planProvider} /> : null}
                   {prevId && !prevQ.isError ? (
                     <PreviousRun
                       prevId={prevId}

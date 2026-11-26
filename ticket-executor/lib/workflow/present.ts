@@ -1,3 +1,4 @@
+import { pctText } from "../claudeQuota";
 import { classifyFailure, retryNodeFor, type FailureClass } from "../dagent/retryPolicy";
 import type { Layout, LayoutKind, LayoutNode } from "./layout";
 import {
@@ -128,6 +129,9 @@ export type Hud = {
   elapsed: string;
   cost: string;
   tokens: string;
+  /** Share of the account's 5-hour session the run used ("≈ 7.4%"), "—" when unread; `quotaTitle` carries the weekly share. */
+  quota: string;
+  quotaTitle: string;
   fix: string;
   fixColor: string;
   bar: { phase: (typeof PHASES)[number]; pct: number }[];
@@ -710,6 +714,8 @@ export function nodeStatus(run: Run | null, gates: GateResult[], n: NodeLike): N
   if (run.state === "cancelled" && last.status === "running") return "abandoned";
   if (run.state === "waiting" && last.status === "running") return "parked";
   const max = n.def.maxVisits;
+  // Legacy: graphs before the fix budget was routed to `reflect` recorded a `skipped` step once it ran out. The current
+  // engine never writes one, but runs stored with it still read as exhausted.
   if (last.status === "skipped" && max && ss.filter((s) => s.status !== "skipped").length >= max) return "exhausted";
   return last.status;
 }
@@ -991,7 +997,7 @@ export function bannerOf(run: Run | null, now: number, retried: string | null): 
 
 export function hudOf(run: Run | null, now: number): Hud {
   if (!run) {
-    return { stateText: "Refused", tone: "danger", icon: IC.ban, node: "Admission said no — no run exists", flow: "implement", elapsed: "$0.00 · 0 tokens", cost: "$0.00", tokens: "0 / 0", fix: "—", fixColor: "var(--te-text-muted)", bar: [], barAria: "No cost — gates run without tokens" };
+    return { stateText: "Refused", tone: "danger", icon: IC.ban, node: "Admission said no — no run exists", flow: "implement", elapsed: "$0.00 · 0 tokens", cost: "$0.00", tokens: "0 / 0", quota: "—", quotaTitle: "No run, no usage.", fix: "—", fixColor: "var(--te-text-muted)", bar: [], barAria: "No cost — gates run without tokens" };
   }
   const map: Record<string, [string, Tone, string]> = {
     preparing: ["Preparing", "info", IC.running],
@@ -1017,6 +1023,10 @@ export function hudOf(run: Run | null, now: number): Hud {
     elapsed: `${dur((end - run.startedAt) / 1000)}${run.endedAt ? " total" : " elapsed"}`,
     cost: usd(run.costUsd),
     tokens: `${ktok(run.inputTokens)} / ${ktok(run.outputTokens)}`,
+    quota: run.quota?.session != null ? `≈ ${pctText(run.quota.session)}` : "—",
+    quotaTitle: run.quota
+      ? `Estimated from this run's cost at the rate the account's meter has recently charged: ${[run.quota.session != null ? `${pctText(run.quota.session)} of the 5-hour session` : "", run.quota.week != null ? `${pctText(run.quota.week)} of the week` : ""].filter(Boolean).join(" · ")}. Other use of the account does not change it.`
+      : "Not enough measured runs yet to estimate this run's share of the account's usage.",
     fix: `${run.fixAttempts} / ${run.maxFixAttempts}`,
     fixColor: run.fixAttempts >= run.maxFixAttempts ? "var(--te-danger)" : run.fixAttempts ? "var(--te-warning)" : "var(--te-text)",
     bar: PHASES.map((p) => ({ phase: p, pct: (run.costByPhase[p] / total) * 100 })),
@@ -1083,6 +1093,10 @@ export function timelineOf(run: Run | null, now: number): Timeline {
 
 /** Share of the prompt served from the prompt cache ("—" before any token is counted). The CLI reports fresh input
  *  and cache reads apart, so the prompt is their sum. */
+/** "7.4% session · 0.9% week" — what a step's cost is expected to take off the account's meters. */
+const quotaText = (q: { session: number | null; week: number | null }) =>
+  [q.session != null ? `${pctText(q.session)} session` : "", q.week != null ? `${pctText(q.week)} week` : ""].filter(Boolean).join(" · ") || "—";
+
 export function cacheHit(inputTokens: number, cacheReadTokens: number): string {
   const total = inputTokens + cacheReadTokens;
   return total > 0 ? `${Math.round((cacheReadTokens / total) * 100)}%` : "—";
@@ -1170,7 +1184,7 @@ export function inspectNode(run: Run | null, gates: GateResult[], n: LayoutNode,
   const isAgent = d.kind === "agent";
   const pairs = (list: [string, string][]) => list.map(([k, v]) => ({ k, v }));
   const metrics = step
-    ? pairs([["Duration", dur((end - step.startedAt) / 1000)], ...(isAgent ? ([["Cost", usd(step.costUsd)], ["Turns", String(step.numTurns || "—")]] as [string, string][]) : [])])
+    ? pairs([["Duration", dur((end - step.startedAt) / 1000)], ...(isAgent ? ([["Cost", usd(step.costUsd)], ["Turns", String(step.numTurns || "—")], ...(step.quota ? [["Quota", quotaText(step.quota)]] : [])] as [string, string][]) : [])])
     : [];
   const metricsMore = step
     ? pairs([

@@ -136,6 +136,10 @@ After touching `lib/dagent/` or `lib/workflow/`:
   `classifyFailure()` (`lib/claudeAuth.ts`, pure) says limit (→ `limitedUntil`) or auth (→ `invalidAt`, bell asks to
   replace it, as for a known expiry). D-Agent turns + Flow Runner `runTurn()` fall back; Ask takes the first ready
   account; Slack and the terminal stay on the machine login. The PAT reaches agents
+  **Usage** (5h session / weekly %) = `lib/claudeUsage.ts` reads Anthropic's `/api/oauth/usage` for the account a turn would
+  run as (null on any failure, never throws); `lib/claudeQuota.ts` (pure) parses it and sums a run's moved points from the
+  readings each agent step saves (`DagentStep.quotaStart/quotaEnd`) — shown in the header (`UsageMeter`, via `NotificationCenter`)
+  and as "Session used" on `/workflow`. The PAT reaches agents
   via `lib/mcp.ts`: one file per run in `tmpdir()/te-mcp`, deleted after the turn, outside the repo.
 
 ## Sprint plan and automation

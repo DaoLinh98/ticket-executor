@@ -91,6 +91,7 @@ export type NodeOutput =
       /** Per repo; empty on runs before it was recorded. */
       repos: { name: string; upstream: string; behind: number; status: string; base: string }[];
     }
+  // Legacy: a node of earlier graph shapes. No current graph has it; stored runs do, and `engine.ts › retrySeed` still reads it.
   | {
       node: "testGate";
       passed: boolean;
@@ -148,6 +149,8 @@ export type Step = {
   outputTokens: number;
   cacheReadTokens: number;
   numTurns: number;
+  /** Points of the account's session / weekly quota the meter moved while this agent step ran; absent when unread. */
+  quota?: { session: number | null; week: number | null };
   errorMessage: string;
   output: NodeOutput | null;
   logFrom: number;
@@ -186,6 +189,8 @@ export type Run = {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /** Sum of the steps' `quota`; absent when no step was measured. */
+  quota?: { session: number | null; week: number | null };
   startedAt: number;
   endedAt: number | null;
   costByPhase: Record<PhaseKey, number>;

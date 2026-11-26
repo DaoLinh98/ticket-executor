@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import PageHeading from "./PageHeading";
 import NotificationCenter from "./NotificationCenter";
 import ProviderBadge from "./ProviderBadge";
-
 // The 60px header every page opens with: identity block on the left, the bell and
 // the provider on the right. Pages pass only what is theirs — title, kicker, glyph.
 export default function PageHeader({ title, kicker, icon }: { title: string; kicker: string; icon: ReactNode }) {

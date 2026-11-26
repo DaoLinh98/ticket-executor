@@ -614,6 +614,9 @@ model DagentStep {
   outputTokens    Int       @default(0)
   cacheReadTokens Int       @default(0)
   numTurns        Int       @default(0)
+  // The account's quota (lib/claudeQuota.ts `Quota`) as the turn began and as it ended; null = unread or not an agent step.
+  quotaStart      Json?
+  quotaEnd        Json?
   startedAt       DateTime  @default(now())
   endedAt         DateTime?
 

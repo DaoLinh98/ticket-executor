@@ -83,6 +83,9 @@ export function WorkflowHud(p: HudProps) {
           <Metric label="Tokens in / out">
             <span style={{ fontSize: FONT.sm, fontFamily: MONO }}>{hud.tokens}</span>
           </Metric>
+          <Metric label="Session used">
+            <span title={hud.quotaTitle} style={{ fontSize: FONT.sm, fontFamily: MONO }}>{hud.quota}</span>
+          </Metric>
           <Metric label="Fix round">
             <span style={{ fontSize: FONT.sm, fontFamily: MONO, color: hud.fixColor }}>{hud.fix}</span>
           </Metric>
@@ -123,6 +126,9 @@ export function WorkflowHud(p: HudProps) {
             </Metric>
             <Metric label="Tokens in/out">
               <span style={{ fontSize: FONT.sm, fontFamily: MONO }}>{hud.tokens}</span>
+            </Metric>
+            <Metric label="Session used">
+              <span title={hud.quotaTitle} style={{ fontSize: FONT.sm, fontFamily: MONO }}>{hud.quota}</span>
             </Metric>
             <Metric label="Fix round">
               <span style={{ fontSize: FONT.sm, fontFamily: MONO, color: hud.fixColor }}>{hud.fix}</span>

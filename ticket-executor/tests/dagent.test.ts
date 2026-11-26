@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { agentProblem, parseAgent } from "../lib/dagent/agents";
 import { DENIED_SKILLS, turnArgs } from "../lib/dagent/cli";
-import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, MAX_RECAPS, QA_GRAPH, recapWorth, REVIEW_GRAPH } from "../lib/dagent/graph";
+import { agentsOf, allAgents, flowOf, GRAPH, GRAPHS, graphById, MAX_FIX_ATTEMPTS, MAX_PLAN_ATTEMPTS, MAX_RECAPS, overVisits, QA_GRAPH, recapWorth, REVIEW_GRAPH } from "../lib/dagent/graph";
 import {
   evaluatePrompt,
   fixPrompt,
@@ -421,6 +421,17 @@ test("an exhausted fix loop goes to reflect, and reflect always fails", () => {
   assert.equal(edge("reflect", c, ok({ recorded: true, lesson: "x" })).to, FAIL);
 });
 
+test("a node entered past its maxVisits is refused, and every declared budget is the one its edge enforces", () => {
+  const budgets = Object.fromEntries(Object.values(GRAPH.nodes).filter((n) => n.maxVisits).map((n) => [n.id, n.maxVisits]));
+  assert.deepEqual(budgets, { plan: MAX_PLAN_ATTEMPTS, fix: MAX_FIX_ATTEMPTS, publish: 1, recap: MAX_RECAPS });
+  for (const n of Object.values(GRAPH.nodes)) {
+    if (!n.maxVisits) continue;
+    assert.equal(overVisits(n, n.maxVisits), false, `${n.id} may use its whole budget`);
+    assert.equal(overVisits(n, n.maxVisits + 1), true, `${n.id} may not exceed it`);
+  }
+  assert.equal(overVisits(GRAPH.nodes.setup, 99), false, "a node with no budget is never refused");
+});
+
 test("a blocked fixer records a lesson before failing; a turn error never reaches reflect", () => {
   const blocked = { blocked: { is: true, reason: "needs a repo" }, committed: false };
   assert.equal(edge("fix", ctx(), ok(blocked)).to, "reflect");
@@ -736,7 +747,10 @@ test("a skill is summarised by what it does and when to use it, each cut on a wo
 });
 
 test("the view maps engine outputs onto the workflow UI shapes", () => {
-  const ev = outputOf("evaluate", { verdict: "changes-required", blockers: [{ file: "a.ts", issue: "x" }] }, 2, "");
+  const ev = outputOf("evaluate", { verdict: "changes-required", blockers: [{ file: "a.ts", issue: "x" }], reviewedHeads: { api: "h1" } }, 2, "");
+  // A re-review with no recorded heads (a run from before they were kept) had nothing to diff from: a full diff.
+  assert.equal((outputOf("evaluate", { verdict: "pass" }, 2, "") as { reviewedDelta: boolean }).reviewedDelta, false);
+  assert.equal((outputOf("evaluate", { verdict: "pass", reviewedHeads: { api: "h1" } }, 1, "") as { reviewedDelta: boolean }).reviewedDelta, false);
   assert.deepEqual(ev, { node: "evaluate", verdict: "changes-required", blockers: [{ source: "evaluate", file: "a.ts", issue: "x" }], reviewedDelta: true, checked: [], assumptions: [], reviewNotes: [] });
   const pub = outputOf("publish", { prs: [{ repo: "api", prUrl: "https://x/pullrequest/7", isDraft: true, reusedExisting: false }] }, 1, "");
   assert.deepEqual(pub, { node: "publish", prs: [{ repo: "api", number: 7, url: "https://x/pullrequest/7", draft: true, reusedExisting: false }] });

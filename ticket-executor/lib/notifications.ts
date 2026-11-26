@@ -143,7 +143,18 @@ export function unreadCount(list: AppNotification[], read: ReadMap): number {
  * actionable half — the ordering does not need to say it a second time.
  */
 export function sortNotifications(list: AppNotification[]): AppNotification[] {
-  return [...list].sort((a, b) => b.at.localeCompare(a.at));
+  // By instant, not by string: sources write `at` in different shapes
+  // ("…:00Z", "….123Z", "+00:00"), which do not order correctly as text. A row
+  // with no usable time (a standing condition) sorts last.
+  const instant = (at: string) => {
+    const t = Date.parse(at);
+    return Number.isNaN(t) ? -Infinity : t;
+  };
+  return [...list].sort((a, b) => {
+    const ta = instant(a.at);
+    const tb = instant(b.at);
+    return ta === tb ? 0 : tb > ta ? 1 : -1;
+  });
 }
 
 // ---- sources ----

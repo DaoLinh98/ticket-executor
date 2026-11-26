@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import NotificationBell from "../ticket-executor/NotificationBell";
 import { useBoltsContext } from "../BoltsContext";
 import { useNotifications } from "./NotificationsProvider";
+import UsageMeter from "./UsageMeter";
 import { notificationPath, type AppNotification } from "@/lib/notifications";
 
 /**
@@ -44,7 +45,11 @@ export default function NotificationCenter() {
     window.open(notificationPath(n.ticketId, n.tab), "_blank", "noopener");
   };
 
+  // Every header renders the bell (most pages directly, not through PageHeader), so the account's usage
+  // meter rides along: one place puts it beside the bell on every page.
   return (
+    <>
+    <UsageMeter />
     <NotificationBell
       bellRef={bellRef}
       open={open}
@@ -59,5 +64,6 @@ export default function NotificationCenter() {
       loadingMore={loadingMore}
       onLoadMore={loadMore}
     />
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
+import type { Quota } from "../claudeQuota";
 import type { Ctx, LogEntry, NodeResult, Refusal } from "./types";
 
 export type RunPatch = {
@@ -38,10 +39,12 @@ export async function openStep(runId: string, nodeId: string, label: string, age
   });
 }
 
-export async function closeStep(id: string, status: string, r: NodeResult, logs: LogEntry[]) {
+export async function closeStep(id: string, status: string, r: NodeResult, logs: LogEntry[], quota?: { start: Quota | null; end: Quota | null }) {
   await prisma.dagentStep.update({
     where: { id },
     data: {
+      ...(quota?.start ? { quotaStart: json(quota.start) } : {}),
+      ...(quota?.end ? { quotaEnd: json(quota.end) } : {}),
       status,
       output: json(r.data),
       errorMessage: r.error,

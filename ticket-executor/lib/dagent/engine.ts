@@ -7,11 +7,13 @@ import { validateAgentAccess, validateRootRepo } from "../preflight";
 import { prisma } from "../prisma";
 import { resolveCredential } from "../providerCredentials";
 import { runWithClaudeAccounts } from "../claudeAccounts";
+import type { Quota } from "../claudeQuota";
+import { currentQuota } from "../claudeUsage";
 import { loadTicket, loadTicketComments, loadTicketDetail, normalizeProvider } from "../tickets";
 import { checkAgents } from "./agents";
 import { runAgentTurn } from "./cli";
 import { CHECKS, companionDirs, deliveryFacts, refreshBase, removeWorktrees, seatBase, type CheckEnv, type RetrySeed } from "./checks";
-import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS, recapWorth } from "./graph";
+import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS, overVisits, recapWorth } from "./graph";
 import { PLAN_FILE } from "./prompts";
 import { checkReadiness, checkReview, deliveryOf, knowledgeDiff, renderPlan, richToText } from "./rules";
 import { skillCatalog, skillsOff } from "./skills";
@@ -31,6 +33,8 @@ type Live = {
   cancelled: boolean;
   logs: LogEntry[];
   stepId: string;
+  /** The account's quota as the open agent step's turn began / ended; saved with the step by `closeStep`. */
+  quota?: { start: Quota | null; end: Quota | null };
   hops: number;
   knowledgeAtStart: string | null;
 };
@@ -99,6 +103,8 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   await saveArtifact(live.id, `${BRIEF_PREFIX}${live.stepId}`, prompt).catch(() => null);
   const pick = turnFor(node.id, live.ctx.visits, live);
   live.logs.push({ t: Date.now(), lvl: "INFO", text: `model ${pick.model}${pick.effort ? ` · effort ${pick.effort}` : ""}` });
+  // The meter before the turn: asked now, awaited after the turn, so the read never delays the spawn.
+  const quotaStart = currentQuota().then((q) => q.quota, () => null);
   // Out of quota or token rejected → the same turn again on the next Claude account (lib/claudeAccounts.ts).
   const turn = await runWithClaudeAccounts(
     async (account) => {
@@ -119,8 +125,9 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
     },
     (text, warn) => live.logs.push({ t: Date.now(), lvl: warn ? "WARN" : "INFO", text }),
     (abandoned, last) => ({ ...last, usage: abandoned.reduce((u, a) => addUsage(u, a.usage), last.usage) }),
-  );
-  removeRunMcpConfig(mcpConfigPath);
+    // The file holds the provider token: removed whether the turn returned or threw.
+  ).finally(() => removeRunMcpConfig(mcpConfigPath));
+  live.quota = { start: await quotaStart, end: (await currentQuota().catch(() => null))?.quota ?? null };
   if (!turn.ok) return { ok: false, data: {}, error: turn.error || "the agent's turn failed", usage: turn.usage };
   if (!turn.structured) {
     return { ok: false, data: {}, error: `${node.agent} finished without its structured output — the run cannot route on free text.`, usage: turn.usage };
@@ -298,6 +305,7 @@ async function drive(live: Live, from: string) {
       if (live.cancelled) return await abort(live, node.id);
 
       live.ctx.visits[node.id] = (live.ctx.visits[node.id] ?? 0) + 1;
+      if (overVisits(node, live.ctx.visits[node.id])) return await finish(live, "failed", `"${node.id}" was entered a ${live.ctx.visits[node.id]}th time — its limit is ${node.maxVisits}.`);
       // Recap is an epilogue, not where the run got to: leaving `currentNodeId` on the node that ended the run keeps
       // the failure panel and `retryNodeFor()` pointing at the work, not at the summary of it.
       const where = node.id === "recap" ? {} : { currentNodeId: node.id };
@@ -305,11 +313,12 @@ async function drive(live: Live, from: string) {
       const input = node.kind === "agent" && node.input ? node.input(live.ctx) : null;
       const step = await openStep(live.id, node.id, node.label, node.kind === "agent" ? node.agent : "", input);
       live.stepId = step.id;
+      live.quota = undefined;
       live.logs = [{ t: Date.now(), lvl: "INFO", text: `▶ start #${step.attempt}${node.kind === "agent" ? "" : " · 0 tokens"}` }];
 
       const r = await execNode(live, node);
       if (!r.ok) live.logs.push({ t: Date.now(), lvl: "ERROR", text: r.error });
-      await closeStep(step.id, live.cancelled ? "abandoned" : stepStatus(node, r), r, live.logs);
+      await closeStep(step.id, live.cancelled ? "abandoned" : stepStatus(node, r), r, live.logs, live.quota);
       if (live.cancelled) return await abort(live, node.id);
 
       if (r.ok && typeof r.data.planMd === "string" && r.data.planMd.trim()) await capturePlan(live, node.id, r.data);

@@ -21,6 +21,7 @@
 //      An automation whose refusals are invisible cannot be debugged the morning
 //      after — see `AutomationEvent`.
 
+import type { Prisma } from "@prisma/client";
 import { hasIdentity, isSamePerson } from "../identity";
 import { claimSprint } from "../sprintClaim";
 import { deliverablesOnly, isoDay } from "../sprintPlan";
@@ -33,6 +34,7 @@ import { reconcileQaCases, startDueAnalyses } from "./qaFollowUp";
 import { recheckAnswered } from "./clarify";
 import { overBudgetTickets } from "./budget";
 import { dueForRelease, releasePlannedTicket } from "./release";
+import { previewTick, type TickPreviewResult } from "./tickPreview";
 import { reviewVerdict } from "./reviewTrigger";
 import { localRepoForPr, openCommentsTotal, pickReviewPr, repoNameFromPrUrl, reviewRoundLimit, reviewTargets } from "./reviewTargets";
 import { discoverCompanionRepos } from "../preflight";
@@ -371,6 +373,25 @@ async function refreshClaims(plan: ClaimPlan): Promise<number> {
  * has to hold an opinion about how many are free — it just tries the next
  * ticket, and a refusal is a recorded fact rather than an error.
  */
+// The queue the scheduler starts from, shared with the tick preview so the two cannot drift apart.
+const implementQueueWhere = (planId: string): Prisma.PlannedTicketWhereInput => ({
+  planId,
+  untracked: false,
+  implementState: "pending",
+  claim: "mine",
+  implementOrder: { gt: 0 },
+  // Triage's verdict, unless the developer has overridden it. The override
+  // is a deliberate human act recorded on the row (`unblockedByUser`), which
+  // is the only thing that may outrank a blocker triage found.
+  OR: [{ blocked: false }, { unblockedByUser: true }],
+});
+const blockedWaitingWhere = (planId: string): Prisma.PlannedTicketWhereInput => ({
+  planId, untracked: false, implementState: "pending", blocked: true, unblockedByUser: false,
+});
+const failedImplementWhere = (planId: string): Prisma.PlannedTicketWhereInput => ({
+  planId, untracked: false, claim: "mine", implementState: "failed", prUrl: "", runId: { not: "" },
+});
+
 async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean> {
   // `claim: "mine"` is a safety condition, not a filter for tidiness: a ticket
   // that has changed hands is somebody else's work, and starting a run on it
@@ -379,17 +400,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // lock on the same door, because the row is written by one process and read by
   // another two minutes at a time.
   const queue = await prisma.plannedTicket.findMany({
-    where: {
-      planId: plan.id,
-      untracked: false,
-      implementState: "pending",
-      claim: "mine",
-      implementOrder: { gt: 0 },
-      // Triage's verdict, unless the developer has overridden it. The override
-      // is a deliberate human act recorded on the row (`unblockedByUser`), which
-      // is the only thing that may outrank a blocker triage found.
-      OR: [{ blocked: false }, { unblockedByUser: true }],
-    },
+    where: implementQueueWhere(plan.id),
     orderBy: { implementOrder: "asc" },
   });
   if (!queue.length) return false;
@@ -397,9 +408,7 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
   // A blocked ticket is skipped by the query above; say so once a day rather
   // than every two minutes, which is what the `today` marker in the detail is
   // for — a log nobody can read is not evidence.
-  const blockedCount = await prisma.plannedTicket.count({
-    where: { planId: plan.id, untracked: false, implementState: "pending", blocked: true, unblockedByUser: false },
-  });
+  const blockedCount = await prisma.plannedTicket.count({ where: blockedWaitingWhere(plan.id) });
 
   // The root repo the project was last run with. The scheduler must not invent
   // one: `startRun()` re-validates it, and a wrong value would be a refusal
@@ -458,6 +467,18 @@ async function startNextTicket(plan: ActivePlan, today: string): Promise<boolean
 const AUTO_RETRY = "auto-retry";
 const AUTO_RETRY_SPENT = "auto-retry-exhausted";
 
+/** Automatic retries in a row since the last start that was not one (the count resets with a human's start). */
+async function autoRetriesUsed(planId: string, ticketId: string): Promise<number> {
+  const lastStart = await prisma.automationEvent.findFirst({
+    where: { planId, ticketId, action: "implement", outcome: "started", reason: { not: AUTO_RETRY } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  return prisma.automationEvent.count({
+    where: { planId, ticketId, reason: AUTO_RETRY, ...(lastStart ? { createdAt: { gt: lastStart.createdAt } } : {}) },
+  });
+}
+
 /**
  * Retry one implement run that failed on a transient cause (network, quota, a server restart).
  *
@@ -469,7 +490,7 @@ const AUTO_RETRY_SPENT = "auto-retry-exhausted";
  */
 async function retryTransientFailure(plan: ActivePlan): Promise<boolean> {
   const failed = await prisma.plannedTicket.findMany({
-    where: { planId: plan.id, untracked: false, claim: "mine", implementState: "failed", prUrl: "", runId: { not: "" } },
+    where: failedImplementWhere(plan.id),
     orderBy: { implementOrder: "asc" },
   });
   if (!failed.length) return false;
@@ -481,14 +502,7 @@ async function retryTransientFailure(plan: ActivePlan): Promise<boolean> {
     if (!run || run.state !== "failed" || run.flow !== "implement" || classifyFailure(run.endReason) !== "transient") continue;
     if (spent.has(item.ticketId)) continue;
 
-    const lastStart = await prisma.automationEvent.findFirst({
-      where: { planId: plan.id, ticketId: item.ticketId, action: "implement", outcome: "started", reason: { not: AUTO_RETRY } },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true },
-    });
-    const used = await prisma.automationEvent.count({
-      where: { planId: plan.id, ticketId: item.ticketId, reason: AUTO_RETRY, ...(lastStart ? { createdAt: { gt: lastStart.createdAt } } : {}) },
-    });
+    const used = await autoRetriesUsed(plan.id, item.ticketId);
     if (used >= MAX_AUTO_RETRIES) {
       const told = await prisma.automationEvent.findFirst({ where: { planId: plan.id, reason: AUTO_RETRY_SPENT, detail: { startsWith: run.id } }, select: { id: true } });
       if (!told) {
@@ -1068,4 +1082,54 @@ export function startScheduler() {
 export async function tickNow(): Promise<TickReport> {
   await reconcile();
   return tick();
+}
+
+/**
+ * What the next tick would do for one plan, read-only: the same queries as `runTick()`, ordered by `previewTick()`.
+ * Database reads only — no provider call, no run, no event — so it is cheap enough to refresh on every plan change.
+ */
+export async function loadTickPreview(planId: string, now = new Date()): Promise<TickPreviewResult | null> {
+  const plan = await prisma.sprintPlan.findUnique({ where: { id: planId } });
+  if (!plan) return null;
+  const at = now.toISOString();
+  if (plan.status !== "active") {
+    return { active: false, at, steps: [], held: [], notes: ["The plan is a draft: the scheduler does not act on it until it is activated."] };
+  }
+
+  const [due, queue, blockedWaiting, failed, repoMap] = await Promise.all([
+    dueForRelease(plan.id, isoDay(now)),
+    prisma.plannedTicket.findMany({ where: implementQueueWhere(plan.id), orderBy: { implementOrder: "asc" } }),
+    prisma.plannedTicket.count({ where: blockedWaitingWhere(plan.id) }),
+    prisma.plannedTicket.findMany({ where: failedImplementWhere(plan.id), orderBy: { implementOrder: "asc" } }),
+    prisma.rootRepoProjectMap.findMany({ where: { provider: plan.provider, org: plan.org }, select: { project: true, rootRepo: true } }),
+  ]);
+  const roots = new Set(repoMap.filter((r) => r.rootRepo).map((r) => r.project));
+
+  const releaseFailures = due.length
+    ? await prisma.automationEvent.groupBy({ by: ["ticketId"], where: { planId: plan.id, action: "release", outcome: "failed", ticketId: { in: due.map((d) => d.ticketId) } }, _count: true })
+    : [];
+  const releaseExhausted = new Set(releaseFailures.filter((f) => f._count >= MAX_RELEASE_ATTEMPTS).map((f) => f.ticketId));
+
+  const outcomes = new Map((await runOutcomes(failed.map((r) => r.runId))).map((o) => [o.id, o] as const));
+  const spent = failed.length ? await overBudgetTickets(failed.map((r) => r.ticketId)) : new Set<string>();
+  const failedRows = await Promise.all(
+    failed.map(async (r) => {
+      const run = outcomes.get(r.runId);
+      const transient = !!run && run.state === "failed" && run.flow === "implement" && classifyFailure(run.endReason) === "transient";
+      return { ticketId: r.ticketId, project: r.project, transient, retriesUsed: transient ? await autoRetriesUsed(plan.id, r.ticketId) : 0, overBudget: spent.has(r.ticketId) };
+    })
+  );
+
+  const preview = previewTick({
+    autoImplement: plan.autoImplement,
+    autoRelease: plan.autoRelease,
+    due: due.map((d) => ({ ticketId: d.ticketId, releaseDay: d.releaseDay })),
+    releaseExhausted,
+    failed: failedRows,
+    queue: queue.map((q) => ({ ticketId: q.ticketId, project: q.project || plan.project, implementOrder: q.implementOrder, releaseDay: q.releaseDay, overridden: q.blocked && q.unblockedByUser })),
+    blockedWaiting,
+    hasRootRepo: (project) => !!(project || plan.project) && roots.has(project || plan.project),
+    maxRetries: MAX_AUTO_RETRIES,
+  });
+  return { active: true, at, ...preview };
 }

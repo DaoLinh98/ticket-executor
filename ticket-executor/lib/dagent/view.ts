@@ -1,3 +1,4 @@
+import { estimateQuota, type QuotaRate } from "../claudeQuota";
 import { trackerStages, type TrackerFacts } from "../ticketLifecycle";
 import { STAGES } from "../workflow/meta";
 import type {
@@ -54,6 +55,9 @@ export type StepRow = {
   outputTokens: number;
   cacheReadTokens: number;
   numTurns: number;
+  /** The account's quota as the turn began / ended (`lib/claudeQuota.ts`); absent on a step that never read it. */
+  quotaStart?: unknown;
+  quotaEnd?: unknown;
   startedAt: Date;
   endedAt: Date | null;
 };
@@ -212,6 +216,7 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
         conflicts: arr(d.conflicts),
         repos: arr<Data>(d.repos).map((r) => ({ name: str(r.name), upstream: str(r.upstream), behind: num(r.behind), status: str(r.status), base: str(r.base) })),
       };
+    // Legacy: no current graph has this node, but runs stored on an earlier shape still carry it.
     case "testGate":
       return { node: "testGate", passed: !!d.passed, results: arr(d.results) };
     case "diffGuard":
@@ -229,7 +234,8 @@ export function outputOf(nodeId: string, raw: unknown, attempt: number, planMd: 
         node: "evaluate",
         verdict: d.verdict === "pass" ? "pass" : "changes-required",
         blockers: refusals(arr<Data>(d.blockers).map((b) => ({ ...b, source: "evaluate" }))),
-        reviewedDelta: attempt > 1,
+        // A re-review is briefed on a delta only when heads were recorded to diff from (reviews before that show a full diff).
+        reviewedDelta: attempt > 1 && Object.keys((d.reviewedHeads ?? {}) as object).length > 0,
         checked: arr<Data>(d.checked).map((x) => ({ subject: str(x.subject), how: str(x.how), evidence: str(x.evidence), result: str(x.result) })),
         assumptions: arr<string>(d.assumptions).map(String),
         // Absent on reviews before the harness checked them — those show no badge rather than a guessed one.
@@ -282,7 +288,7 @@ const last = <T>(list: T[]) => list[list.length - 1];
 // The judging roles that pick a run's skills; their output names the picks.
 const PICKERS = ["readiness", "qaTriage", "reviewTriage"];
 
-export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live, tracker: TrackerFacts | null = null): Omit<RunView, "newest"> {
+export function buildView(row: RunRow, stepRows: StepRow[], transRows: TransitionRow[], artifacts: ArtifactRow[], live: Live, tracker: TrackerFacts | null = null, rate: QuotaRate | null = null): Omit<RunView, "newest"> {
   const graph = graphById(row.graphId) ?? GRAPH;
   const flow = FLOW_LABEL[flowOf(graph.id)];
   const defs = flowDefs(graph);
@@ -300,6 +306,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
     const brief = briefs.get(s.id) ?? "";
     const picks = PICKERS.includes(s.nodeId) ? arr<{ name?: unknown }>((s.output as Data | null)?.skills).map((x) => str(x.name)).filter(Boolean) : [];
     const isPicker = PICKERS.includes(s.nodeId);
+    const quota = estimateQuota(s.costUsd, rate);
     const isAgent = defs.find((d) => d.id === s.nodeId)?.kind === "agent";
     const skills = isAgent && (brief || picks.length || runSkills.length) ? skillUse(brief, entries.map((e) => e.text), picks, isPicker ? [] : runSkills) : [];
     return {
@@ -314,6 +321,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
       outputTokens: s.outputTokens,
       cacheReadTokens: s.cacheReadTokens,
       numTurns: s.numTurns,
+      ...(quota ? { quota } : {}),
       errorMessage: s.errorMessage || (s.status === "abandoned" ? "Abandoned — the run was stopped mid-step." : ""),
       output: s.status === "running" ? null : outputOf(s.nodeId, s.output, s.attempt, planMd),
       logFrom: from,
@@ -337,6 +345,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
     const p = defs.find((d) => d.id === s.nodeId)?.phase as PhaseKey | undefined;
     if (p && p in costByPhase) costByPhase[p] += s.costUsd;
   }
+  const runQuotaOf = estimateQuota(steps.reduce((n, s) => n + s.costUsd, 0), rate);
   const fixSteps = steps.filter((s) => s.nodeId === "fix");
   const lastFix = last(fixSteps);
   const lastEval = last(stepRows.filter((s) => s.nodeId === "evaluate"));
@@ -356,6 +365,7 @@ export function buildView(row: RunRow, stepRows: StepRow[], transRows: Transitio
     costUsd: steps.reduce((n, s) => n + s.costUsd, 0),
     inputTokens: steps.reduce((n, s) => n + s.inputTokens, 0),
     outputTokens: steps.reduce((n, s) => n + s.outputTokens, 0),
+    ...(runQuotaOf ? { quota: runQuotaOf } : {}),
     startedAt: row.startedAt.getTime(),
     endedAt: row.endedAt ? row.endedAt.getTime() : null,
     costByPhase,

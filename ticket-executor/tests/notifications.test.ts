@@ -234,6 +234,20 @@ test("newest first, whatever the severity", () => {
   );
 });
 
+test("ordering compares instants, not strings, and puts undated rows last", () => {
+  const list = sortNotifications([
+    ...fromAutomation([
+      automation({ id: "a", ticketId: "1", createdAt: "2026-09-06T12:00:00Z" }),
+      automation({ id: "b", ticketId: "2", createdAt: "2026-09-06T12:00:00.500Z" }),
+      automation({ id: "c", ticketId: "3", createdAt: "2026-09-06T20:00:00+07:00" }),
+    ]),
+    ...fromPullRequests([prSource({ mine: false, myVote: 0 })]),
+  ]);
+  // c is 13:00Z; b is 12:00:00.500Z; a is 12:00:00Z; the pull request has no time.
+  assert.deepEqual(list.map((n) => n.kind), ["scheduler.started", "scheduler.started", "scheduler.started", "pr.awaiting-my-vote"]);
+  assert.deepEqual(list.slice(0, 3).map((n) => n.refId), ["c", "b", "a"]);
+});
+
 test("sortNotifications does not mutate its input", () => {
   const input: AppNotification[] = fromAutomation([
     automation({ id: "ev1", ticketId: "1", createdAt: "2026-09-06T08:00:00Z" }),

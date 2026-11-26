@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+import { quotaRate } from "../claudeQuota";
 import { prisma } from "../prisma";
 import { cached, DB_CACHE_PREFIX } from "../redis";
 import { isDriving, liveLogs, reconcileOrphans } from "./engine";
@@ -35,7 +37,25 @@ export async function getRunView(id: string): Promise<RunView | null> {
   if (row.state === "running" && !isDriving(id)) await reconcileOrphans();
   // Only the ticket's newest run may be retried or cancelled; told here so a run linked directly is judged right.
   const newer = await prisma.dagentRun.count({ where: { ticketId: row.ticketId, startedAt: { gt: row.startedAt } } });
-  return { ...buildView(row, row.steps, row.transitions, row.artifacts, liveLogs(id), await trackerFacts(row)), newest: newer === 0 };
+  return { ...buildView(row, row.steps, row.transitions, row.artifacts, liveLogs(id), await trackerFacts(row), await quotaRateNow()), newest: newer === 0 };
+}
+
+/** What a dollar of turns has cost the account's meter lately (`quotaRate()`), from the last steps whose usage was
+ *  read around the turn. Short-cached: it moves slowly and every open run view asks. Null on any failure. */
+async function quotaRateNow() {
+  try {
+    return await cached(`${DB_CACHE_PREFIX}quota-rate`, 300, async () => {
+      const rows = await prisma.dagentStep.findMany({
+        where: { costUsd: { gte: 0.2 }, quotaStart: { not: Prisma.DbNull }, quotaEnd: { not: Prisma.DbNull } },
+        orderBy: { startedAt: "desc" },
+        take: 100,
+        select: { costUsd: true, quotaStart: true, quotaEnd: true },
+      });
+      return quotaRate(rows);
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** The tracker's word on the ticket for the lifecycle bar; null when it cannot be read — the bar then falls back to the run alone. */

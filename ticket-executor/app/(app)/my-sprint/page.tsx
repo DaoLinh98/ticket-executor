@@ -44,6 +44,7 @@ import RebuildPreviewDialog from "./RebuildPreviewDialog";
 import SchedulerLog from "./SchedulerLog";
 import CapacityStrip from "./CapacityStrip";
 import SpendStrip from "./SpendStrip";
+import TickPreview from "./TickPreview";
 import { sprintSpend } from "@/lib/sprintSpend";
 import TicketTimeline from "./TicketTimeline";
 import {
@@ -948,6 +949,8 @@ export default function MySprintPage() {
                 onDismiss={dismissCaseNow}
                 onWatch={openExecution}
               />
+
+              {stored?.id ? <TickPreview planId={stored.id} onOpen={openExecution} /> : null}
 
               <SchedulerLog events={events} onOpen={openExecution} />
               </div>

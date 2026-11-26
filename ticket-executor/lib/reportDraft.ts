@@ -26,11 +26,28 @@ function rowKey(k: DraftKey): string {
  * A missing row is not an error and not a distinguishable state: the page opens
  * on a fresh day exactly as often as it reopens one, and both are "here is the
  * draft".
+ *
+ * `sprintStart` carries the tickets added by hand through the sprint: a fresh
+ * day starts with the manual tickets of the latest earlier draft dated on or
+ * after that day. The first day of a new sprint finds none, which is how they
+ * are cleared. A day that already has a row is never re-seeded, so a ticket
+ * removed today stays removed.
  */
-export async function loadDraft(k: DraftKey, name: string): Promise<ReportDraftState> {
+export async function loadDraft(k: DraftKey, name: string, sprintStart = ""): Promise<ReportDraftState> {
   const row = await prisma.reportDraft.findUnique({ where: { key: rowKey(k) } });
-  if (!row) return emptyDraft(name);
-  return normalize(row.state, name);
+  if (row) return normalize(row.state, name);
+  const draft = emptyDraft(name);
+  if (!sprintStart || k.day <= sprintStart) return draft;
+  const earlier = await prisma.reportDraft.findFirst({
+    where: {
+      key: { startsWith: [k.provider, k.org, ""].join("::") },
+      reportDay: { gte: sprintStart, lt: k.day },
+    },
+    orderBy: { reportDay: "desc" },
+    select: { state: true },
+  });
+  const manual = earlier ? normalize(earlier.state, name).manual : undefined;
+  return manual?.length ? { ...draft, manual } : draft;
 }
 
 export async function saveDraft(k: DraftKey, state: ReportDraftState): Promise<void> {

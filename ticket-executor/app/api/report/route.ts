@@ -1,24 +1,24 @@
 import { NextResponse } from "next/server";
-import { hasIdentity, isMine } from "@/lib/identity";
+import { claimedSprint, type PlanKey } from "@/lib/executionStore";
+import { hasIdentity } from "@/lib/identity";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { emptyDraft, type ReportDraftState } from "@/lib/report";
 import { loadDraft, loadPreviousSent, loadSent, saveDraft } from "@/lib/reportDraft";
 import { getOrCreateSetting } from "@/lib/settings";
 import { slackReportChannel } from "@/lib/slack";
 import { deliverablesOnly } from "@/lib/sprintPlan";
-import { loadMyOpenTickets, normalizeProvider } from "@/lib/tickets";
+import { loadMyCycle, normalizeProvider } from "@/lib/tickets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// The Report page's two questions: what is assigned to the developer right now,
+// The Report page's two questions: what is in the developer's sprint right now,
 // and how did they leave today's report.
 //
-// The ticket read spans the whole organization rather than one project. A day is
-// not a project: the developer routinely touches two between two stand-ups, and
-// a report that can only name one of them is a report they have to finish by
-// hand. `loadMyOpenTickets` answers it in one provider call, so the wider scope
-// costs nothing.
+// The list is the same set My Sprint shows — what the developer carried through
+// the current iteration (`claimedSprint`) — so the two pages never disagree and
+// the report is not buried under every old open item. A ticket outside it is
+// added by hand from the search box.
 export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   const setting = await getOrCreateSetting();
@@ -39,12 +39,20 @@ export async function GET(req: Request) {
       });
     }
 
-    const loaded = await loadMyOpenTickets(provider, identity, day);
-    const deliverables = deliverablesOnly(loaded.tickets, provider);
-    const mine = deliverables.filter((t) => isMine(t, identity));
-    const handedOff = deliverables.filter((t) => !isMine(t, identity));
+    const { cycle, loaded, cycleNotice } = await loadMyCycle(
+      provider,
+      identity,
+      setting.sprintAnchorProject,
+      day
+    );
+    const key: PlanKey = { provider, org, project: "", sprint: cycle.sprint, identityEmail: identity.email };
+    const claimed = (await claimedSprint(key, deliverablesOnly(loaded.tickets, provider), identity)).filter(
+      (c) => c.claim !== "dropped"
+    );
+    const mine = claimed.filter((c) => c.claim === "mine").map((c) => c.ticket);
+    const handedOff = claimed.filter((c) => c.claim === "handed-off").map((c) => c.ticket);
     const [draft, sent, previous] = await Promise.all([
-      loadDraft({ provider, org, day }, identity.name),
+      loadDraft({ provider, org, day }, identity.name, cycle.startDate),
       loadSent({ provider, org, day }),
       loadPreviousSent({ provider, org, day }),
     ]);
@@ -53,13 +61,11 @@ export async function GET(req: Request) {
       provider,
       configured: true,
       connected: loaded.connected,
-      notice: loaded.notice ?? "",
+      notice: [loaded.notice, cycleNotice].filter(Boolean).join(" "),
       truncated: !!loaded.truncated,
       day,
       identity,
-      // Hierarchy rows (an Epic or a Feature that happens to bear the
-      // developer's name) are dropped before the identity filter, which is the
-      // order every sprint read in this app uses.
+      sprint: cycle.sprint,
       tickets: [...mine, ...handedOff],
       handedOff: handedOff.map((t) => t.id),
       draft,
