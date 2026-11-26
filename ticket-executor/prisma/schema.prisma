@@ -175,38 +175,6 @@ model TicketPullRequest {
   @@unique([provider, ticketId])
 }
 
-// One triage turn over one developer's slice of one sprint.
-//
-// Not a Run: triage writes nothing — no file, no comment, no story point — so it
-// has no worktree, no branch and nothing for admission control to protect. What
-// it keeps from a run is the part that matters, a declared output contract, so
-// the answer is data the planner acts on rather than a table a human retypes.
-//
-// Persisted rather than held in memory because the plan built from it is acted
-// on for a fortnight: "why is #123 marked blocked" must stay answerable long
-// after the turn's log is gone.
-model SprintTriage {
-  id            String   @id @default(cuid())
-  provider      String
-  org           String
-  project       String
-  sprint        String
-  // Whose slice was triaged. Two developers on one sprint are two triages.
-  identityEmail String   @default("")
-  // Exactly the work items the turn was told to review. Kept so a result can be
-  // read back without re-deriving which tickets were in the sprint that day.
-  ticketIds     String[]
-  status        String   @default("running") // running | succeeded | failed
-  // The validated structured output (see TRIAGE_OUTPUT in lib/execution/triage.ts).
-  result        Json     @default("{}")
-  errorMessage  String   @default("")
-  costUsd       Float    @default(0)
-  createdAt     DateTime @default(now())
-  endedAt       DateTime?
-
-  @@index([provider, org, project, sprint])
-}
-
 // The developer's plan for one sprint: the queue the agent works through, and
 // the calendar its finished work is revealed on.
 //

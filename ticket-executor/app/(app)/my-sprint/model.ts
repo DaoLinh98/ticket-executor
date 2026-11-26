@@ -5,7 +5,6 @@ import { DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL } from "@/lib/claudeOptions";
 import type { CaseStatus, Finding, LastClosed, Recommendation, Trigger } from "@/lib/qaFollowUp";
 import { isQueueable, STAGE_LABEL, stageFrom } from "@/lib/ticketLifecycle";
 import type { Ticket } from "@/lib/types";
-import type { TriagedTicket } from "@/lib/execution/triage";
 
 export type MySprint = {
   configured: boolean;
@@ -21,14 +20,6 @@ export type MySprint = {
   claimed?: { ticket: Ticket; claim: Claim; assigneeNow: string; fromPlan: boolean }[];
   plan: SprintPlanResult | null;
   config: PlanConfig;
-};
-
-export type TriageRow = {
-  id: string;
-  status: "running" | "succeeded" | "failed";
-  result: { summary?: string; finalNotes?: string[]; tickets?: TriagedTicket[] };
-  errorMessage: string;
-  costUsd: number;
 };
 
 export type PlannedRow = {

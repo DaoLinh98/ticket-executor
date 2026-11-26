@@ -23,7 +23,6 @@ import {
   type SprintPlanResult,
 } from "../sprintPlan";
 import { isQueueable, pendingActionFor, stageOf, type PendingAction, type Stage } from "../ticketLifecycle";
-import type { TriageResult, TriagedTicket } from "./triage";
 import type { Ticket } from "../types";
 
 export type PlanKey = {
@@ -34,29 +33,14 @@ export type PlanKey = {
   identityEmail: string;
 };
 
-/** Fold a triage result into planner inputs.
- *
- *  Three things cross over, and only three: the re-estimate becomes the points
- *  the calendar is laid out with, the work order becomes the queue, and
- *  `needsClarification` becomes the flag that keeps a ticket out of the
- *  scheduler. The reasons and the comment drafts stay in the triage row — they
- *  are for the developer to read, not for the planner to act on. */
-export function planInputs(claimed: ClaimedTicket[], triage: TriageResult | null): PlanInput[] {
-  const byId = new Map<string, TriagedTicket>(
-    (triage?.tickets ?? []).map((t) => [String(t.id), t])
-  );
-  return claimed.map((c) => {
-    const statusBlocked = stageOf(c.ticket.status) === "blocked";
-    const base = { ticket: c.ticket, claim: c.claim, assigneeNow: c.assigneeNow, blocked: statusBlocked };
-    const t = byId.get(String(c.ticket.id));
-    if (!t) return base;
-    return {
-      ...base,
-      points: t.suggestedPoints > 0 ? t.suggestedPoints : undefined,
-      order: t.workOrder > 0 ? t.workOrder : undefined,
-      blocked: statusBlocked || t.needsClarification || t.readiness === "blocked",
-    };
-  });
+/** Planner inputs for a claimed sprint: the provider's ticket, its claim, and whether its tracker status blocks it. */
+export function planInputs(claimed: ClaimedTicket[]): PlanInput[] {
+  return claimed.map((c) => ({
+    ticket: c.ticket,
+    claim: c.claim,
+    assigneeNow: c.assigneeNow,
+    blocked: stageOf(c.ticket.status) === "blocked",
+  }));
 }
 
 /**
@@ -229,7 +213,6 @@ async function computePlan(
   key: PlanKey,
   live: Ticket[],
   identity: DevIdentity,
-  triage: TriageResult | null,
   window: { startDate: string; finishDate: string },
   today: string,
   cfg: PlanConfig
@@ -237,7 +220,7 @@ async function computePlan(
   const claimed = await claimedSprint(key, live, identity);
   const existing = await findPlan(key);
   const kept = new Map((existing?.items ?? []).filter((i) => i.implementOrder > 0).map((i) => [i.ticketId, i.implementOrder]));
-  const inputs = planInputs(claimed, triage).map((input) =>
+  const inputs = planInputs(claimed).map((input) =>
     input.order === undefined && kept.has(input.ticket.id) ? { ...input, order: kept.get(input.ticket.id) } : input
   );
   return { computed: buildPlan(inputs, window, today, cfg), existing };
@@ -247,12 +230,11 @@ export async function previewRebuild(
   key: PlanKey,
   live: Ticket[],
   identity: DevIdentity,
-  triage: TriageResult | null,
   window: { startDate: string; finishDate: string },
   today: string,
   cfg: PlanConfig
 ): Promise<PlanDiff & { overflowPoints: number; titles: Record<string, string> }> {
-  const { computed, existing } = await computePlan(key, live, identity, triage, window, today, cfg);
+  const { computed, existing } = await computePlan(key, live, identity, window, today, cfg);
   const diff = planDiff((existing?.items ?? []).filter((i) => !i.untracked), computed.tickets);
   return {
     ...diff,
@@ -266,13 +248,12 @@ export async function rebuildPlan(
   key: PlanKey,
   live: Ticket[],
   identity: DevIdentity,
-  triage: TriageResult | null,
   window: { startDate: string; finishDate: string },
   today: string,
   cfg: PlanConfig,
   opts: { reviewers?: string[]; includeWider?: boolean } = {}
 ) {
-  const { computed } = await computePlan(key, live, identity, triage, window, today, cfg);
+  const { computed } = await computePlan(key, live, identity, window, today, cfg);
   const saved = await savePlan(key, window, cfg, computed, opts);
   if (!saved) return saved;
 

@@ -17,7 +17,6 @@ import DesktopOnly from "../DesktopOnly";
 // Section order + copy. Each group answers one question a new dev has.
 const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
   { id: "environment", title: "ENVIRONMENT", blurb: "Local tooling and database the app itself needs." },
-  { id: "skills", title: "SKILLS", blurb: "The skills Flow Runner's turns use. They live on your machine; this repo ships a copy you can install from here." },
   { id: "agents", title: "AGENTS", blurb: "The subagents a D-Agent workflow run spawns. They live in ~/.claude/agents; this repo ships a copy you can install from here." },
   { id: "connection", title: "PROVIDER CONNECTION", blurb: "The organization-level connection tickets are read from." },
   { id: "agent-access", title: "CLAUDE'S PROVIDER ACCESS", blurb: "How the Claude CLI itself reaches the provider — its MCP path, separate from the app's connection above. Without it a skill cannot read the ticket." },
@@ -26,13 +25,12 @@ const GROUPS: { id: CheckGroup; title: string; blurb: string }[] = [
 ];
 
 // Groups stacked per column; on a narrow screen the columns fall into one, in this order.
-const GROUP_COLUMNS: CheckGroup[][] = [["environment", "connection", "agent-access"], ["skills"], ["agents"]];
+const GROUP_COLUMNS: CheckGroup[][] = [["environment", "connection", "agent-access"], ["agents"]];
 
 // Which Guide section explains how to clear this group's failures.
 // Keys match SECTIONS ids in app/guide/content.tsx.
 const GUIDE_ANCHOR: Partial<Record<CheckGroup, string>> = {
   environment: "cli",
-  skills: "skills",
   agents: "agents",
   connection: "connection",
   "agent-access": "mcp",
@@ -201,10 +199,9 @@ function SystemCheckPageInner() {
                   <span style={{ fontSize: FONT.sm, color: COLORS.faint, lineHeight: 1.5, marginTop: "-4px" }}>{g.blurb}</span>
                   <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
                     {rows.map((c) => <CheckRow key={c.id} c={c} />)}
-                    {/* The skills and agents ship in this repo, so this group is the one
+                    {/* The agents ship in this repo, so this group is the one
                         thing on this page the user can fix without leaving it. */}
-                    {g.id === "skills" && <SkillInstaller onChanged={() => load()} />}
-                    {g.id === "skills" && <SkillInstaller pack="agents" onChanged={() => load()} />}
+                    {g.id === "agents" && <SkillInstaller pack="agents" onChanged={() => load()} />}
                   </div>
                 </div>
               );

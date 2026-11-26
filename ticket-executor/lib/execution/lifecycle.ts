@@ -74,7 +74,6 @@ export async function syncNewTickets(plan: SyncPlan, now = new Date(), force = f
     { provider: plan.provider, org: plan.org, project: "", sprint: plan.sprint, identityEmail: plan.identityEmail },
     live,
     identity,
-    null,
     window,
     today,
     {
