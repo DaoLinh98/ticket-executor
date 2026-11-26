@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { claimedSprint, findPlan, planInputs, type PlanKey } from "@/lib/executionStore";
-// import { latestTriage, type TriageResult } from "@/lib/executionStore";
 import { hasIdentity } from "@/lib/identity";
 import { resolveCredential } from "@/lib/providerCredentials";
 import { getOrCreateSetting } from "@/lib/settings";
@@ -76,12 +75,7 @@ export async function GET(req: Request) {
         }
       : cfg;
 
-    // Triage is switched off on this page for now.
-    // const triageRow = await latestTriage(key);
-    // const triage =
-    //   triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
-
-    const plan = buildPlan(planInputs(claimed, null), window, today, planCfg);
+    const plan = buildPlan(planInputs(claimed), window, today, planCfg);
     const mine = claimed.filter((c) => c.claim === "mine").map((c) => c.ticket);
 
     return NextResponse.json({

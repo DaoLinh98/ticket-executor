@@ -39,7 +39,7 @@ import { providerMeta } from "./providers";
 import { companionNote, companionPathsFromInstructions, INSTRUCTION_FILES } from "./repoContext";
 
 export type CheckStatus = "pass" | "warn" | "fail";
-export type CheckGroup = "environment" | "skills" | "agents" | "connection" | "agent-access" | "repo";
+export type CheckGroup = "environment" | "agents" | "connection" | "agent-access" | "repo";
 
 export type Check = {
   id: string;
@@ -63,11 +63,6 @@ export type PreflightResult = {
   deep: boolean;
 };
 
-// REQUIRED_SKILLS / skillDirs() / findSkill() now live in lib/skillPack.ts
-// (which also owns install + version state) and are re-exported here so the
-// existing import sites keep working.
-export { REQUIRED_SKILLS, findSkill, skillDirs } from "./skillPack";
-import { REQUIRED_SKILLS, findSkill, skillDirs, skillStates } from "./skillPack";
 import { agentInstallDir, agentStates } from "./agentPack";
 
 // There is deliberately no app-wide default Root repo: one connection serves many
@@ -104,10 +99,6 @@ function run(
 }
 
 const git = (args: string[], opts?: { cwd?: string; timeout?: number }) => run("git", args, opts);
-
-// ---------------------------------------------------------------------------
-// skills
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // check groups
@@ -238,56 +229,6 @@ async function environmentChecks(deep: boolean): Promise<Check[]> {
   );
 
   return checks;
-}
-
-function skillChecks(): Check[] {
-  return skillStates().map((s) => {
-    const base = { id: `skill-${s.name}`, group: "skills" as const, label: s.name };
-    // An optional skill (one reached only from one Flow Runner action) is not
-    // missing-and-fatal — it is missing-and-unused until that action is used.
-    // Reporting it as a blocker here would tell every install it is broken over a
-    // feature it never used.
-    if (s.status === "missing") {
-      return {
-        ...base,
-        level: s.required ? ("blocker" as const) : ("warning" as const),
-        status: s.required ? ("fail" as const) : ("warn" as const),
-        message: s.required
-          ? `Not found in ${skillDirs().length} skill folder(s).`
-          : `Not installed. Only needed while the setting that uses it is on — a run would be refused up front, not left to fail.`,
-        fix: "Install it from the Guide or with the Install button here — this repo ships a copy.",
-      };
-    }
-    if (s.status === "outdated") {
-      // A major-version gap is not "slightly behind": the 2.x contract is what
-      // makes a skill answer with StructuredOutput and stop before publishing.
-      // A 1.x copy returns prose the runner cannot route on, so every node fails
-      // — block rather than warn, since the log would never explain why.
-      const majorGap = parseInt(s.bundledVersion, 10) > parseInt(s.installedVersion ?? "0", 10);
-      return {
-        ...base,
-        level: majorGap ? ("blocker" as const) : ("warning" as const),
-        status: majorGap ? ("fail" as const) : ("warn" as const),
-        message: majorGap
-          ? `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion} — incompatible contract.`
-          : `Installed ${s.installedVersion}, this repo ships ${s.bundledVersion}.`,
-        fix: majorGap
-          ? "Update it: a 1.x skill answers in prose, but the runner now routes on the structured output only 2.x returns, so every run would fail at its first node."
-          : "Update it to pick up the newer instructions — an old skill fails in ways the log won't explain.",
-      };
-    }
-    if (s.status === "modified") {
-      return {
-        ...base, level: "warning" as const, status: "warn" as const,
-        message: `Version ${s.installedVersion}, but the file differs from the bundled copy.`,
-        fix: "Yours was edited locally. Leave it if that was deliberate; otherwise overwrite it with the bundled copy.",
-      };
-    }
-    return {
-      ...base, level: "blocker" as const, status: "pass" as const,
-      message: `${s.installedVersion} — ${s.installedPath}`,
-    };
-  });
 }
 
 // Only the D-Agent workflow spawns these, and its startRun() refuses a missing or
@@ -848,7 +789,7 @@ export async function runPreflight(opts?: { rootRepo?: string; deep?: boolean })
   // start of every run — cache its verdict for the implement route to read.
   if (deep) setMcpProbe(agent.probe.key, agent.probe.ok, agent.probe.reason);
   return summarize(
-    [...env, ...skillChecks(), ...agentChecks(), ...conn, ...agent.checks, ...repoChecks(rootRepo, deep)],
+    [...env, ...agentChecks(), ...conn, ...agent.checks, ...repoChecks(rootRepo, deep)],
     rootRepo,
     deep
   );

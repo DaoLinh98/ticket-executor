@@ -8,19 +8,7 @@ import type { ReactNode } from "react";
 import type { CheckGroup } from "@/lib/preflight";
 import { AccessDiagram, Bullets, Callout, Cmd, Code, DocsLink, P, Shot, SkillInstallerSlot } from "./parts";
 
-// Mirrors REQUIRED_SKILLS in lib/preflight.ts. Not imported from there: that
-// module is server-only (it reaches child_process through lib/mcp.ts), and a
-// value import would pull it into the client bundle. Keep the two in sync.
-const SKILLS = [
-  "triage-sprint-v4",
-] as const;
-
-// What each one actually does. Runs themselves are D-Agent subagents — see the agents section.
-const SKILL_BLURB: Record<(typeof SKILLS)[number], string> = {
-  "triage-sprint-v4": "Flow Runner's triage — reviews your sprint's tickets for readiness, estimates and work order. Writes nothing.",
-};
-
-// Mirrors BUNDLED_AGENTS in lib/agentPack.ts (server-only, like REQUIRED_SKILLS).
+// Mirrors BUNDLED_AGENTS in lib/agentPack.ts (server-only: it reaches the filesystem).
 const AGENTS = ["analyst", "planner", "implementer", "reviewer", "fixer", "reflector", "publisher", "review-triager", "qa-triager", "responder"] as const;
 
 const AGENT_BLURB: Record<(typeof AGENTS)[number], string> = {
@@ -100,36 +88,6 @@ git --version`}</Cmd>
     ),
   },
 
-  // 2 ----------------------------------------------------------------------
-  {
-    id: "skills",
-    title: "Install the skills",
-    blurb: "A skill is the instruction set a Flow Runner turn executes. This repo ships them — install them onto your machine in one click.",
-    checkGroup: "skills",
-    docs: [{ label: "Agent Skills", href: "https://docs.claude.com/en/docs/claude-code/skills" }],
-    body: (
-      <>
-        <P>
-          Each skill is a single <Code>SKILL.md</Code> file in its own folder under <Code>~/.claude/skills/</Code> — the folder the Claude CLI reads:
-        </P>
-        <Bullets
-          items={SKILLS.map((s) => (
-            <>
-              <Code>{s}</Code> — {SKILL_BLURB[s]}
-            </>
-          ))}
-        />
-        <SkillInstallerSlot />
-        <Callout tone="accent" title="This writes to your home directory">
-          Installing copies the folders from this repo into <Code>~/.claude/skills/</Code>. Nothing is ever deleted, and a skill you have edited yourself is never overwritten without an explicit confirmation.
-        </Callout>
-        <P>
-          You can also verify from a terminal: run <Code>claude</Code>, then <Code>/skills</Code>.
-        </P>
-      </>
-    ),
-  },
-
   // 2b ---------------------------------------------------------------------
   {
     id: "agents",
@@ -150,7 +108,7 @@ git --version`}</Cmd>
           ))}
         />
         <SkillInstallerSlot pack="agents" />
-        <Callout tone="accent" title="Versioned like the skills">
+        <Callout tone="accent" title="Versioned">
           The app installs missing or older agents on start. A copy older than the one this repo ships is refused when a Workflow run starts, and one you have edited yourself is never overwritten without an explicit confirmation.
         </Callout>
         <P>

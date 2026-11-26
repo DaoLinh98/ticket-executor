@@ -9,8 +9,8 @@
  * was a button on the Guide page. That was right while the app ran on a
  * developer's own machine, whose home directory persists. It is wrong in a
  * container: `~/.claude` is recreated with the container, so a fresh deploy
- * starts with no skills and the first triage fails on
- * `Unknown command: /triage-sprint-v4`.
+ * starts with no skills and a run that needs one
+ * fails on `Unknown command`.
  *
  * Idempotent. A copy older than the bundle is replaced — it answers an older
  * contract — while a copy of the same version

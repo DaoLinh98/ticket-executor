@@ -8,18 +8,15 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { homedir } from "os";
 import path from "path";
 
-/** The skills every install needs: Flow Runner's triage turn builds every plan — so a
- *  missing one is a blocker. Runs themselves are D-Agent subagents (`agents/`), not skills.
+/** The skills every install needs — none today: runs are D-Agent subagents (`agents/`), not skills.
  *  Lives here rather than in preflight.ts so preflight can depend on this module
  *  without a cycle. */
-export const REQUIRED_SKILLS = [
-  "triage-sprint-v4",
-] as const;
+export const REQUIRED_SKILLS = [] as const;
 
-/** Skills the app shipped before and no longer does — the retired Ticket Execution engine's, and the QC reply
- *  turn the QA follow-up case replaced. A machine may still have them installed, so D-Agent turns keep them
+/** Skills the app shipped before and no longer does — the retired Ticket Execution engine's, the QC reply
+ *  turn the QA follow-up case replaced, and Flow Runner's sprint triage. A machine may still have them installed, so D-Agent turns keep them
  *  denied (`DENIED_SKILLS`). */
-export const RETIRED_SKILLS = ["implement-ticket-v4", "fix-code-review-v4", "review-changes-v4", "fix-qa-v4", "reply-qa-v4"] as const;
+export const RETIRED_SKILLS = ["implement-ticket-v4", "fix-code-review-v4", "review-changes-v4", "fix-qa-v4", "reply-qa-v4", "triage-sprint-v4"] as const;
 
 /** Every skill this repo ships a copy of. */
 export const BUNDLED_SKILLS = [...REQUIRED_SKILLS] as const;

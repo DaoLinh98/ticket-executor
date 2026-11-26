@@ -24,7 +24,7 @@ Install these before touching the app.
 | 1 | Node.js 20+ | `node -v` | `@types/node` is pinned to 20. |
 | 2 | PostgreSQL | `psql --version` | Any local instance. The repo's convention is port **5438**. |
 | 3 | Claude Code CLI, logged in | `claude --version` | The engine spawns this binary. If it is not on `PATH`, set `CLAUDE_BIN`. |
-| 4 | The bundled skills and agents installed | `ls ~/.claude/skills ~/.claude/agents` | Installed by the app on boot. See §4. |
+| 4 | The bundled agents installed | `ls ~/.claude/agents` | Installed by the app on boot. See §4. |
 | 5 | Target repo cloned | `git -C <path> status` | The clone you want runs to happen in. Its path is the ticket's **Root repo** value. See §5. |
 | 6 | Azure DevOps PAT | — | Scopes in §6. |
 
@@ -65,12 +65,8 @@ plan (`SprintPlan`, `PlannedTicket`, `AutomationEvent`) and the D-Agent runs
 
 A run is a **D-Agent** run: each step is a subagent shipped in `agents/` and
 copied into `~/.claude/agents/` when the server boots (an older installed copy
-is replaced, and a run is refused while one is missing or outdated). The
-skills in `skills/` are only Flow Runner's own turns:
-
-| Skill | Used when |
-|-------|-----------|
-| `triage-sprint-v4` | Flow Runner triage (building the plan) |
+is replaced, and a run is refused while one is missing or outdated). No skill
+ships with the app.
 
 QC's feedback on a delivered ticket — a comment, QA failed, back to In Progress — opens a
 **QC follow-up** case on My Sprint. The `qa-triager` agent classifies every point against
@@ -79,7 +75,7 @@ approve the fix, post the reply, or dismiss it. Nothing is posted or changed bef
 **Auto-analyse QC feedback** runs the analysis on its own, 10 minutes after QC's last
 comment; the bell asks again every 4 hours a case waits on you.
 
-Older ticket skills (`implement-ticket-v4`, `fix-code-review-v4`,
+Older ticket skills (`implement-ticket-v4`, `triage-sprint-v4`, `fix-code-review-v4`,
 `review-changes-v4`, `fix-qa-v4`, `reply-qa-v4`) are no longer bundled;
 a copy left in `~/.claude/skills` is harmless and stays denied to D-Agent turns.
 

@@ -30,7 +30,6 @@ import {
   startReviewRun,
   tickNow,
 } from "@/lib/executionStore";
-// import { latestTriage, type TriageResult } from "@/lib/executionStore";
 import { hasIdentity } from "@/lib/identity";
 import { prisma } from "@/lib/prisma";
 import { resolveCredential, reviewersFor } from "@/lib/providerCredentials";
@@ -107,13 +106,8 @@ export async function POST(req: Request) {
     maxTicketsPerDay: Number(body.maxTicketsPerDay) > 0 ? Number(body.maxTicketsPerDay) : 0,
   };
 
-  // Triage is switched off on this page for now.
-  // const triageRow = await latestTriage(key);
-  // const triage =
-  //   triageRow?.status === "succeeded" ? (triageRow.result as unknown as TriageResult) : null;
-
   if (body.dryRun === true) {
-    const preview = await previewRebuild(key, deliverablesOnly(loaded.tickets, provider), identity, null, window, today, cfg);
+    const preview = await previewRebuild(key, deliverablesOnly(loaded.tickets, provider), identity, window, today, cfg);
     return NextResponse.json({ preview });
   }
 
@@ -121,7 +115,6 @@ export async function POST(req: Request) {
     key,
     deliverablesOnly(loaded.tickets, provider),
     identity,
-    null,
     window,
     today,
     cfg
