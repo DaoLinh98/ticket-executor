@@ -31,7 +31,7 @@ runner beyond `node --test`; ask before adding tooling.
   between header and `<main>`, never inside `<main>` (clips dropdowns).
 - **Ticket Execution UI** — `app/TicketExecutor.tsx` is the only stateful container; `app/ticket-executor/` is
   presentational. New state → container, new markup → child. Tabs: Overview, Resolve Review, Commits, Ask.
-- **Flow Runner** — `lib/executionStore.ts` re-exports `lib/execution/` (`claudeCli`, `triage`, `planStore`,
+- **Flow Runner** — `lib/executionStore.ts` re-exports `lib/execution/` (`claudeCli`, `planStore`,
   `release`, `scheduler`, `lifecycle`, `qaFollowUp`, `translate`). **Routes import `lib/executionStore` only.**
 - **D-Agent** — `app/(app)/workflow` → `app/ticket-executor/workflow/` (`WorkflowView.tsx` stateful), canvas in
   `lib/workflow/`, engine in `lib/dagent/`. **`app/api/dagent/runs/*` import `lib/dagent` (`index.ts`) only.**
@@ -67,7 +67,7 @@ A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<bra
 | `fix` | agent | `fixer` | exactly the blockers (`fixBlockersOf()`: a rebase conflict, else a hard diff violation, else the review's), commit; ≤ `MAX_FIX_ATTEMPTS` (5) — shared by harness and review blockers; a harness blocker past the budget = FAIL. A later round's brief carries the previous attempt (given / reported / left unchanged); the re-review reads its disputes as "Fixer's account". `stalledFix()`: the review re-raises the blockers the last fix was given (same count, same files, ≥ 50 % word overlap) → reflect at once, not the rest of the budget | syncBase / reflect |
 | `reflect` | agent | `reflector` | maybe a lesson in Root repo `KNOWLEDGE.md`; brief: why it stops (blocked / no progress / budget), the blockers standing (what a blocked fixer was given, else the review's), what the last fix left unchanged | FAIL |
 | `prePublish` | check | git | clean, right branch, HEAD verified, base unmoved (re-sync ≤ `MAX_PRE_PUBLISH` 3). After a re-sync, diffGuard skips the re-review when every repo's own diff hashes (`diffHashes`) to what the passing review judged (`reviewedDiffs`) | publish / syncBase / FAIL |
-| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; description = `prBody()` verbatim (summary, AC table with the review's proof, verification, decisions, manual checks, not verified), held under `prBodyLimit()` (ADO refuses a create past 4000 chars: compact rows first, then drops decisions → not verified → manual checks, with a note naming the run); `maxVisits: 1` | verifyPublish / FAIL |
+| `publish` | agent | `publisher` | push + open/reuse **draft PR** per repo; description = `prBody()` verbatim (summary = what implement did, AC table with files changed + the review's result, verification — no decisions, manual checks or open review points), held under `prBodyLimit()` (ADO refuses a create past 4000 chars: compact rows first, then cut on a line, with a note naming the run); `maxVisits: 1` | verifyPublish / FAIL |
 | `verifyPublish` | check | git + provider | remote head = HEAD, draft, ticket linked, PR targets the skill's base or the default branch (ADO read-back) | END / NEEDS_REVIEW |
 | `recap` | agent | `recapper` | the epilogue every ending passes through (see 10). Brief = the whole run from `channels` (ending + AC + plan + delivery + diff + review + what is left open); writes `headline` + up to 6 sections (`outcome`/`ask`/`work`/`review`/`watch`/`next`), **each in English and Vietnamese in the one turn**, saved as artifact `recap`. `tools: StructuredOutput` only — no files, no git, no work item; `maxVisits: MAX_RECAPS` (3) | the stashed ending |
 
@@ -143,8 +143,8 @@ After touching `lib/dagent/` or `lib/workflow/`:
   via `lib/mcp.ts`: one file per run in `tmpdir()/te-mcp`, deleted after the turn, outside the repo.
 
 ## Sprint plan and automation
-Binds `lib/execution/{triage,planStore,release,scheduler,lifecycle,qaFollowUp}.ts`, `lib/sprintPlan.ts` and
-`lib/qaFollowUp.ts`. Skills bundled in `skills/` are Flow Runner's own turns only (`triage-sprint-v4`); retired skills
+Binds `lib/execution/{planStore,release,scheduler,lifecycle,qaFollowUp}.ts`, `lib/sprintPlan.ts` and
+`lib/qaFollowUp.ts`. No skill ships in `skills/` any more; retired skills (incl. `triage-sprint-v4`)
 stay in `RETIRED_SKILLS` so D-Agent turns keep them denied.
 
 1. **Implementing and releasing are two schedules.** `implementOrder` is a queue; `releaseDay` a calendar paced by
@@ -155,8 +155,7 @@ stay in `RETIRED_SKILLS` so D-Agent turns keep them denied.
    `statusMoved`), each re-reading state; `releasedAt` only when complete. The one retryable outward action.
 4. **The scheduler owns no policy.** `tick()` only calls D-Agent `startRun()` / `releasePlannedTicket()`, locks per tick,
    logs an `AutomationEvent` for **every** decision incl. "do nothing". A `draft` plan is never scheduled.
-5. **Allocation is arithmetic** — `buildPlan()` is pure. Agent judgement enters only via `triage-sprint-v4`'s JSON
-   (`suggestedPoints`, `workOrder`, `needsClarification`); triage writes nothing and is not a Run.
+5. **Allocation is arithmetic** — `buildPlan()` is pure; no agent judgement enters the plan.
 6. **`deliverablesOnly()`** drops hierarchy types (ADO only) and runs **before** `mineOnly()` in every `/api/my-sprint*`.
 7. **A sprint is what the developer carried.** `lib/sprintClaim.ts` → `mine` / `handed-off` / `dropped` from the
    app's record (plan, `DagentRun`, PR), never tracker history. `savePlan()` deletes nothing, never re-dates a settled
