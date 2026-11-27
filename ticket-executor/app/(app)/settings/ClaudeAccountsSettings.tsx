@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { AnimatePresence } from "motion/react";
+import { Reveal } from "../../Collapse";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { COLORS, FONT, card, fieldInput, fieldLabel, pill, tintedCard, toneTint } from "@/lib/ui";
 import { CLAUDE_EXPIRY_WARNING_MS } from "@/lib/notifications";
@@ -158,7 +160,9 @@ export default function ClaudeAccountsSettings() {
         </div>
       </div>
 
+      <AnimatePresence initial={false}>
       {editor && (
+        <Reveal key="editor" gap={20}>
         <div style={{ display: "flex", flexDirection: "column", gap: "14px", ...card({ padding: "16px", background: "var(--te-inset-bg)" }) }}>
           <span style={fieldLabel()}>{editor.id ? "EDIT CREDENTIAL" : "NEW CREDENTIAL"}</span>
           <label style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -219,7 +223,9 @@ export default function ClaudeAccountsSettings() {
             <ActionButton label="Cancel" variant="ghost" onClick={() => setEditor(null)} />
           </div>
         </div>
+        </Reveal>
       )}
+      </AnimatePresence>
     </div>
   );
 }

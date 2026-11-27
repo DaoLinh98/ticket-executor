@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { COLORS, FONT, fieldInput, fieldLabel } from "@/lib/ui";
@@ -167,14 +168,17 @@ export default function FlowRunnerSettings() {
         <ActionButton tall label="Save budget" variant="outline" onClick={saveBudget} busy={busy.has("budget")} disabled={!budgetValid || Number(budget) === Number(savedBudget)} />
         <span style={{ flex: "1 1 100%", fontSize: FONT.sm, color: COLORS.textDim }}>A ticket whose runs cost this much is flagged on Insights. A warning only — no run is stopped.</span>
       </div>
+      <AnimatePresence>
       {preview && (
         <RebuildPreviewDialog
+          key="rebuild"
           preview={preview}
           busy={busy.has("plan")}
           onConfirm={() => act("plan", async () => { await rebuild(); setPreview(null); })}
           onCancel={() => setPreview(null)}
         />
       )}
+      </AnimatePresence>
     </div>
   );
 }

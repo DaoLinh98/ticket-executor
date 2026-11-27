@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import Toast, { type ToastMessage } from "../ticket-executor/Toast";
 
@@ -26,7 +27,7 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={showToast}>
       {children}
-      {toast && <Toast key={toast.id} toast={toast} onClose={close} />}
+      <AnimatePresence>{toast && <Toast key={toast.id} toast={toast} onClose={close} />}</AnimatePresence>
     </ToastContext.Provider>
   );
 }

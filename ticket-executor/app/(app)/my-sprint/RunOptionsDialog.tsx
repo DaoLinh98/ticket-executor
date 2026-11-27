@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect, useState } from "react";
 import { COLORS, FONT, displayText, modalOverlayStyle, modalShellStyle, sectionCaption } from "@/lib/ui";
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, DEFAULT_PLAN_EFFORT, DEFAULT_PLAN_MODEL, modelIdForLabel, modelLabel, resolveModelId } from "@/lib/claudeOptions";
@@ -39,8 +40,8 @@ export default function RunOptionsDialog({
   }, [onCancel]);
 
   return (
-    <div className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
-      <div
+    <ModalOverlay className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
+      <ModalPanel
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
@@ -69,7 +70,7 @@ export default function RunOptionsDialog({
           <ActionButton label="Cancel" variant="ghost" onClick={onCancel} disabled={busy} />
           <ActionButton label="Save" variant="primary" onClick={() => onSave(shownModel, pickedEffort)} busy={busy} />
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

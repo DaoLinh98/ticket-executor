@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect, useState } from "react";
 import { COLORS, FONT, displayText, fieldInput, modalOverlayStyle, modalShellStyle, pill } from "@/lib/ui";
 import ActionButton from "./ActionButton";
@@ -24,8 +25,8 @@ export default function ResolveReviewDialog({ row, busy, onConfirm, onCancel }: 
   }, [onCancel, busy]);
 
   return (
-    <div className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={() => { if (!busy) onCancel(); }}>
-      <div
+    <ModalOverlay className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={() => { if (!busy) onCancel(); }}>
+      <ModalPanel
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
@@ -112,7 +113,7 @@ export default function ResolveReviewDialog({ row, busy, onConfirm, onCancel }: 
             busy={busy}
           />
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

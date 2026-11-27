@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect, type ReactNode } from "react";
 import { COLORS, FONT, displayText, modalOverlayStyle, modalShellStyle } from "@/lib/ui";
 import ActionButton from "./ActionButton";
@@ -26,8 +27,8 @@ export default function ConfirmDialog({
   }, [onCancel]);
 
   return (
-    <div className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
-      <div
+    <ModalOverlay className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
+      <ModalPanel
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
@@ -43,7 +44,7 @@ export default function ConfirmDialog({
           <ActionButton label="Cancel" variant="ghost" onClick={onCancel} disabled={busy} />
           <ActionButton label={confirmLabel} variant="primary" onClick={onConfirm} busy={busy} />
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

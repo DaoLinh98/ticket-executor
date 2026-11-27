@@ -1,5 +1,8 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { Collapse, Reveal } from "../../Collapse";
+import { MenuPanel } from "../../MenuPanel";
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import Combobox from "../../Combobox";
 import SelectMenu from "../../SelectMenu";
@@ -214,8 +217,9 @@ export default function OverviewTab({
                 color: COLORS.text, fontSize: FONT.md, lineHeight: 1.6, outline: "none",
               }}
             />
+            <AnimatePresence>
             {showPeople && (
-              <div
+              <MenuPanel
                 role="listbox"
                 className="te-scroll"
                 style={{
@@ -246,8 +250,9 @@ export default function OverviewTab({
                     </span>
                   </button>
                 ))}
-              </div>
+              </MenuPanel>
             )}
+            </AnimatePresence>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               <span style={{ flex: 1, minWidth: "120px", fontSize: FONT.sm, color: COLORS.textMuted }}>
@@ -315,7 +320,7 @@ export default function OverviewTab({
                     {vi ? "Hide translation" : "Translate to Vietnamese"}
                   </button>
                   </div>
-                  {vi && (
+                  <Collapse open={!!vi}>
                     <div style={{ marginTop: "9px", paddingTop: "9px", borderTop: `1px solid ${COLORS.borderSubtle}` }}>
                       <div style={{ ...sectionCaption(), marginBottom: "4px" }}>VIETNAMESE</div>
                       {/* Plain text, not RichText: this string came from a model,
@@ -323,7 +328,7 @@ export default function OverviewTab({
                           deliberately does not sanitize what it is handed. */}
                       <div style={{ fontSize: FONT.md, lineHeight: 1.7, color: COLORS.textSoft, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{vi}</div>
                     </div>
-                  )}
+                  </Collapse>
                 </div>
               </div>
               );
@@ -354,14 +359,18 @@ export default function OverviewTab({
         <div style={fieldCard}><div style={fieldLabel}>MODEL</div><SelectMenu value={modelLabel(model, modelOptions)} onChange={(v) => setOverrideValue(t.id, "model", modelIdForLabel(v, modelOptions))} options={modelOptions.map((m) => m.label)} ariaLabel="Claude model" /></div>
         <div style={fieldCard}><div style={fieldLabel}>EFFORT</div><SelectMenu value={effort} onChange={(v) => setOverrideValue(t.id, "effort", v)} options={[...CLAUDE_EFFORTS]} ariaLabel="Effort" /></div>
         <div style={{ ...fieldCard, border: `1px solid ${COLORS.borderSubtle}` }}><div style={fieldLabel}>TARGET BRANCH</div><div style={{ fontFamily: "var(--font-mono), monospace", fontSize: FONT.base, color: "var(--te-indigo)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branch}</div></div>
+        <AnimatePresence initial={false}>
         {rootRepoMissing && (
-          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
+          <Reveal key="root-repo" gap={8} style={{ gridColumn: "1 / -1" }}>
+          <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("warning", { padding: "10px 13px", radius: "10px" }) }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2" style={{ stroke: COLORS.warning, flex: "0 0 auto", marginTop: "1px" }}><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
             <span style={{ fontSize: FONT.base, color: COLORS.warning, lineHeight: 1.55 }}>
               Set <strong>ROOT REPO</strong> before running — the local git clone this ticket should be implemented in (e.g. <span style={{ fontFamily: "var(--font-mono), monospace" }}>C:\repos\my-service</span>). It is remembered per project, so you only pick it once.
             </span>
           </div>
+          </Reveal>
         )}
+        </AnimatePresence>
       </section>
       <section>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -431,8 +440,9 @@ export default function OverviewTab({
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: ctaMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
             </button>
           </div>
+          <AnimatePresence>
           {ctaMenuOpen && (
-            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", right: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "200px" }) }}>
+            <MenuPanel style={{ position: "absolute", bottom: "calc(100% + 8px)", right: 0, zIndex: 30, ...dropdownPanelStyle({ minWidth: "200px" }) }}>
               <button
                 onClick={(e) => { setCtaMenuOpen(false); action.onClick(e); }}
                 aria-disabled={gated}
@@ -449,8 +459,9 @@ export default function OverviewTab({
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4" /></svg>
                 Add to Release plan
               </button>
-            </div>
+            </MenuPanel>
           )}
+          </AnimatePresence>
         </div>
       </div>
     </div>

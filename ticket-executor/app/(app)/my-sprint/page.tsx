@@ -1,5 +1,8 @@
 "use client";
 
+import { Reveal } from "../../Collapse";
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../../MenuPanel";
 import { useEffect, useState, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -781,15 +784,18 @@ export default function MySprintPage() {
             spellCheck={false}
             style={{ ...fieldInput(), width: "100%", boxSizing: "border-box" }}
           />
+          <AnimatePresence>
           {searchOpen && needle && stored && addable.length === 0 && (
-            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+            <MenuPanel style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 10px", fontSize: FONT.sm, color: COLORS.textMuted }}>
                 {searching ? <><LoadingRing size={14} /> Searching all projects…</> : "No other ticket matches."}
               </div>
-            </div>
+            </MenuPanel>
           )}
+          </AnimatePresence>
+          <AnimatePresence>
           {searchOpen && addable.length > 0 && (
-            <div id="sprint-search-hits" role="listbox" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+            <MenuPanel id="sprint-search-hits" role="listbox" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
               {addable.map((t, i) => (
                 <div
                   key={t.id}
@@ -817,8 +823,9 @@ export default function MySprintPage() {
                   </button>
                 </div>
               ))}
-            </div>
+            </MenuPanel>
           )}
+          </AnimatePresence>
         </div>
       </PageToolbar>
 
@@ -840,16 +847,22 @@ export default function MySprintPage() {
             </div>
           ) : (
             <>
+              <AnimatePresence initial={false}>
               {loadError && (
+                <Reveal key="err" gap={8}>
                 <div style={tintedCard("danger")}>
                   <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{loadError}</span>
                 </div>
+                </Reveal>
               )}
               {data?.notice && (
+                <Reveal key="r">
                 <div style={tintedCard("warning")}>
                   <span style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>{data.notice}</span>
                 </div>
+                </Reveal>
               )}
+              </AnimatePresence>
 
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <motion.span initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} style={displayText("heading")}>{data?.sprint || "Last 14 days"}</motion.span>
@@ -882,7 +895,9 @@ export default function MySprintPage() {
               <div className="te-scroll te-sprint-pane te-sprint-side" style={{ gridColumn: 2, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
               <NeedsYou items={attention} />
 
+              <AnimatePresence initial={false}>
               {(runningRows.length > 0 || reviewingRows.length > 0) && (
+                <Reveal key="working" gap={20}>
                 <div style={{ ...tintedCard("accent"), display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                   <LoadingRing size={18} />
                   <span style={{ fontSize: FONT.base, color: COLORS.text, fontWeight: 700 }}>
@@ -906,7 +921,9 @@ export default function MySprintPage() {
                   <div style={{ flex: 1 }} />
                   <ActionButton label="Stop all" variant="warning" onClick={askStopEverything} busy={busy.has("stop-all")} />
                 </div>
+                </Reveal>
               )}
+              </AnimatePresence>
 
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
                 <span style={fieldLabel()} title="Tracker status of the tickets still yours — the plan table shows the run state">TRACKER STATUS</span>
@@ -925,14 +942,18 @@ export default function MySprintPage() {
 
               <CapacityStrip days={releaseDayOptions} rows={rows} pointsPerDay={Number(stored?.pointsPerDay ?? data?.config.pointsPerDay) || 0} today={data?.today ?? ""} />
 
+              <AnimatePresence initial={false}>
               {(data?.plan?.overflowPoints ?? 0) > 0 && (
+                <Reveal key="overflow" gap={20}>
                 <div style={tintedCard("danger")}>
                   <span style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>
                     {data?.plan?.overflowPoints} points have no release day left in this sprint at{" "}
                     {stored?.pointsPerDay ?? data?.config.pointsPerDay} points/day. Re-order, re-estimate, or move work out.
                   </span>
                 </div>
+                </Reveal>
               )}
+              </AnimatePresence>
 
               <QaFollowUps
                 cases={cases}
@@ -981,7 +1002,9 @@ export default function MySprintPage() {
                   onSort={setSort}
                   onProject={setProjectFilter}
                 />
+                <AnimatePresence initial={false}>
                 {chosen.length > 0 && (
+                  <Reveal key="bulk-bar" gap={8}>
                   <div style={{ ...card({ padding: "8px 12px" }), display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.text }}>{chosen.length} selected</span>
                     <div style={{ flex: 1 }} />
@@ -991,7 +1014,9 @@ export default function MySprintPage() {
                     <button type="button" className="te-action-btn" disabled={!bulkRemove.length} onClick={askBulkRemove} style={{ ...ctaButtonStyle("outline"), opacity: bulkRemove.length ? 1 : 0.4 }}>Remove {bulkRemove.length}</button>
                     <button type="button" className="te-action-btn" onClick={clearSelection} style={ctaButtonStyle("ghost")}>Clear</button>
                   </div>
+                  </Reveal>
                 )}
+                </AnimatePresence>
                 <div className="te-scroll te-sprint-pane" style={{ flex: "1 1 auto", minHeight: "360px", minWidth: 0, display: "flex" }}>
                 <PlanTable
                   rows={shownRows}
@@ -1033,9 +1058,11 @@ export default function MySprintPage() {
           )}
         </div>
       </main>
-      {preview && <RebuildPreviewDialog preview={preview} busy={busy.has("plan")} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
+      <AnimatePresence>
+      {preview && <RebuildPreviewDialog key="rebuild" preview={preview} busy={busy.has("plan")} onConfirm={confirmRebuild} onCancel={() => setPreview(null)} />}
       {bulkOptions && bulkSettings.length > 0 && (
         <RunOptionsDialog
+          key="bulk"
           ticketId=""
           count={bulkSettings.length}
           model={bulkSettings[0].model}
@@ -1046,12 +1073,13 @@ export default function MySprintPage() {
         />
       )}
       {historyFor && (
-        <TicketTimeline ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
+        <TicketTimeline key="history" ticketId={historyFor} title={rows.find((t) => t.ticketId === historyFor)?.title ?? ""} onClose={() => setHistoryFor("")} />
       )}
       {optionsFor && (() => {
         const row = rows.find((t) => t.id === optionsFor);
         return row ? (
           <RunOptionsDialog
+            key="options"
             ticketId={row.ticketId}
             model={row.model}
             effort={row.effort}
@@ -1065,6 +1093,7 @@ export default function MySprintPage() {
         const c = clarifications.find((x) => x.plannedTicketId === askingFor);
         return c ? (
           <AskPoDialog
+            key="askpo"
             ticketId={c.ticketId}
             questions={c.questions}
             busy={busy.has("askpo-" + c.plannedTicketId)}
@@ -1074,18 +1103,20 @@ export default function MySprintPage() {
         ) : null;
       })()}
       {confirm && (
-        <ConfirmDialog title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy.has(confirm.busyKey)} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
+        <ConfirmDialog key="confirm" title={confirm.title} confirmLabel={confirm.confirmLabel} busy={busy.has(confirm.busyKey)} onConfirm={runConfirm} onCancel={() => setConfirm(null)}>
           {confirm.body}
         </ConfirmDialog>
       )}
       {reviewDialogRow && (
         <ResolveReviewDialog
+          key="review"
           row={reviewDialogRow}
           busy={busy.has("fixreview-" + reviewDialogRow.id)}
           onConfirm={(findings) => resolveReviewNow(reviewDialogRow, findings)}
           onCancel={() => setReviewDialogRow(null)}
         />
       )}
+      </AnimatePresence>
     </div>
   );
 }

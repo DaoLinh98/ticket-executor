@@ -1,5 +1,6 @@
 "use client";
 
+import { Collapse } from "../../Collapse";
 import { useState, type ReactNode } from "react";
 import { COLORS, FONT, chipShape, fieldInput, sectionCaption, tabStyle } from "@/lib/ui";
 import { IC, STATUS, TONE, clock } from "@/lib/workflow/meta";
@@ -71,7 +72,7 @@ function MoreMetrics({ list }: { list: { k: string; v: string }[] }) {
       <FoldToggle open={open} onToggle={() => setOpen((o) => !o)} label="tokens and timing">
         Tokens &amp; timing
       </FoldToggle>
-      {open ? metricGrid(list) : null}
+      <Collapse open={open}>{metricGrid(list)}</Collapse>
     </div>
   );
 }
@@ -87,7 +88,7 @@ function LogFold({ live, children }: { live: boolean; children: ReactNode }) {
           Activity log
         </FoldToggle>
       </h3>
-      {open ? children : null}
+      <Collapse open={open}>{children}</Collapse>
     </>
   );
 }

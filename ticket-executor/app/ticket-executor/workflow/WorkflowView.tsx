@@ -1,9 +1,10 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { COLORS, FONT, card, chipShape, ctaButtonStyle, fieldInput, tintedCard } from "@/lib/ui";
+import { COLORS, FONT, card, chipShape, ctaButtonStyle, tintedCard } from "@/lib/ui";
 import { layoutRun } from "@/lib/workflow/layout";
 import { STAGES, STATUS } from "@/lib/workflow/meta";
 import {
@@ -30,6 +31,7 @@ import PageToolbar from "../../(app)/PageToolbar";
 import { useResolvedIsMobile } from "../../(app)/MobileNav";
 import { useToast } from "../../(app)/ToastProvider";
 import { copyText } from "../../(app)/report/copyText";
+import SelectMenu from "../../SelectMenu";
 import { useLiveInvalidate } from "../../useLive";
 import { RUNS_KEY, fetchRunRows, fetchRunView, planRowKey, runViewKey, ticketCommitsKey, usePlanRow } from "../../queries";
 import LoadingRing from "../LoadingRing";
@@ -508,17 +510,18 @@ export default function WorkflowView() {
                     />
                   ) : null}
                   {older.length > 0 ? (
-                    <select
-                      aria-label="Compare this run with an older run of the ticket"
-                      value={ui.compare ?? ""}
-                      onChange={(e) => patch({ compare: e.target.value || null })}
-                      style={{ ...fieldInput({ height: "32px", fontSize: FONT.sm }), width: "100%", marginTop: 12 }}
-                    >
-                      <option value="">Compare with an older run…</option>
-                      {older.map((r) => (
-                        <option key={r.id} value={r.id}>{new Date(r.startedAt).toLocaleString()} · {r.state}</option>
-                      ))}
-                    </select>
+                    <div style={{ marginTop: 12 }}>
+                      <SelectMenu
+                        variant="input"
+                        ariaLabel="Compare this run with an older run of the ticket"
+                        value={ui.compare ?? ""}
+                        onChange={(v) => patch({ compare: v || null })}
+                        options={[
+                          { value: "", label: "Compare with an older run…" },
+                          ...older.map((r) => ({ value: r.id, label: `${new Date(r.startedAt).toLocaleString()} · ${r.state}` })),
+                        ]}
+                      />
+                    </div>
                   ) : null}
                   {cmpId ? <PreviousRun prevId={cmpId} diff={cmpDiff} heading="Compared with an older run" linkLabel="Open that run →" onOpen={() => { setPickedTicket(null); setPickedRun(null); reset(); }} /> : null}
                 </>
@@ -542,12 +545,14 @@ export default function WorkflowView() {
           </div>
         </div>
       )}
+      <AnimatePresence>
       {confirmCancel ? (
-        <ConfirmDialog title={`Cancel the run for #${ticket.id}?`} confirmLabel="Cancel run" busy={actM.isPending} onConfirm={onCancel} onCancel={() => setConfirmCancel(false)}>
+        <ConfirmDialog key="cancel" title={`Cancel the run for #${ticket.id}?`} confirmLabel="Cancel run" busy={actM.isPending} onConfirm={onCancel} onCancel={() => setConfirmCancel(false)}>
           <span>{ticket.title}</span>
           <span>It stops the agent now. {hud.cost} is already spent on this run. The ticket can be run again afterwards.</span>
         </ConfirmDialog>
       ) : null}
+      </AnimatePresence>
     </div>
   );
 }

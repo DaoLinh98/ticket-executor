@@ -1,5 +1,8 @@
 "use client";
 
+import { Reveal } from "../../Collapse";
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../../MenuPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -300,8 +303,9 @@ export default function ReportPage() {
             spellCheck={false}
             style={{ ...fieldInput({ height: "32px" }), width: "100%", boxSizing: "border-box" }}
           />
+          <AnimatePresence>
           {searchOpen && searchTerm && (
-            <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
+            <MenuPanel style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 40, ...dropdownPanelStyle({ maxHeight: "320px" }) }}>
               {addable.length === 0 ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: "40px", padding: "0 10px", fontSize: FONT.sm, color: COLORS.textMuted }}>
                   {searching ? <><LoadingRing size={14} /> Searching all projects…</> : "No other ticket matches."}
@@ -323,23 +327,32 @@ export default function ReportPage() {
                   </button>
                 </div>
               ))}
-            </div>
+            </MenuPanel>
           )}
+          </AnimatePresence>
         </div>
       </PageToolbar>
 
       <main className="te-scroll te-main" style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", padding: "20px 28px", background: "var(--te-page-veil)" }}>
         <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", gap: "14px" }}>
+          <AnimatePresence initial={false}>
           {error && (
+            <Reveal key="r">
             <div style={tintedCard("danger")}>
               <div style={{ fontSize: FONT.base, color: COLORS.danger, fontWeight: 600 }}>{error}</div>
             </div>
+            </Reveal>
           )}
+          </AnimatePresence>
+          <AnimatePresence initial={false}>
           {data && !data.configured && data.notice && (
+            <Reveal key="r">
             <div style={tintedCard("warning")}>
               <div style={{ fontSize: FONT.base, color: COLORS.warning, fontWeight: 600 }}>{data.notice}</div>
             </div>
+            </Reveal>
           )}
+          </AnimatePresence>
 
           {loading ? (
             <div style={{ display: "flex", justifyContent: "center", paddingTop: "60px" }}><LoadingRing size={120} /></div>
@@ -468,7 +481,9 @@ export default function ReportPage() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
                   </button>
                 </div>
+                <AnimatePresence initial={false}>
                 {(data?.sent || draft.edited) && (
+                  <Reveal key="status" gap={8}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     {data?.sent && (
                       <span style={{ ...pill({ color: sentMatches ? COLORS.success : COLORS.warning, size: "xs" }), whiteSpace: "nowrap" }}>
@@ -486,7 +501,9 @@ export default function ReportPage() {
                       </>
                     )}
                   </div>
+                  </Reveal>
                 )}
+                </AnimatePresence>
                 <textarea
                   value={text}
                   onChange={(e) => onEditPreview(e.target.value)}

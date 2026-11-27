@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useBoltsContext } from "./BoltsContext";
 import { type IterationOption } from "./SprintPicker";
 import AppHeader from "./ticket-executor/AppHeader";
@@ -1756,13 +1756,16 @@ export default function TicketExecutor() {
         </main>
       </div>
 
+      <AnimatePresence>
       {openCommit && (
         <CommitFilesModal
+          key="commit"
           commit={openCommit}
           files={commitFiles}
           onClose={() => { setOpenCommit(null); setCommitFiles(null); }}
         />
       )}
+      </AnimatePresence>
     </div>
   );
 }

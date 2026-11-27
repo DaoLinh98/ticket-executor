@@ -2,8 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { FONT, dropdownPanelStyle, ringBorder } from "@/lib/ui";
+import { AnimatePresence } from "motion/react";
+import { COLORS, FONT, dropdownPanelStyle, fieldInput, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
+import { MenuPanel } from "./MenuPanel";
+
+export type SelectOption = string | { value: string; label: string };
 
 // Themed, non-creatable dropdown — same button+panel pattern as the ticket
 // status dropdown (dropdownPanelStyle-based menu), reused for the ticket-list
@@ -17,19 +21,27 @@ export default function SelectMenu({
   variant = "field",
   alwaysGlow = false,
   maxHeight = "240px",
+  valueColor,
+  disabled = false,
+  width,
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: SelectOption[];
   /** When set, an extra leading option with value "" is offered, labeled e.g. "Status: All". */
   allLabel?: string;
   ariaLabel?: string;
-  variant?: "filter" | "field";
+  variant?: "filter" | "field" | "input";
   /** Keep the spinning ring on even with no value selected — for standalone header
    *  controls (e.g. the Dashboard's Provider/Project pickers) that should always read
    *  as a live control, unlike the sidebar's optional refinement filters. */
   alwaysGlow?: boolean;
   maxHeight?: string;
+  /** Pass-through for the colour of an `input` variant's value. */
+  valueColor?: string;
+  disabled?: boolean;
+  /** Wrapper width for an `input` variant (default: fill the cell). */
+  width?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -45,10 +57,27 @@ export default function SelectMenu({
   }, [open]);
 
   const active = !!value || alwaysGlow;
-  const list = allLabel ? ["", ...options] : options;
+  const opts = options.map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+  const list = allLabel ? [{ value: "", label: allLabel }, ...opts] : opts;
+  const shown = opts.find((o) => o.value === value)?.label ?? (value || allLabel || "");
 
   const buttonStyle: CSSProperties =
-    variant === "filter"
+    variant === "input"
+      ? {
+          ...fieldInput({ height: "32px", fontSize: FONT.sm }),
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          width: "100%",
+          padding: "0 8px 0 10px",
+          color: valueColor ?? COLORS.text,
+          fontWeight: 600,
+          textAlign: "left",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.5 : 1,
+          transition: "filter .15s",
+        }
+      : variant === "filter"
       ? {
           position: "relative",
           width: "100%",
@@ -81,10 +110,10 @@ export default function SelectMenu({
         };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", flex: variant === "field" ? 1 : undefined, minWidth: 0 }}>
-      <button type="button" aria-label={ariaLabel} onClick={(e) => { fireBoltFromEvent(e); setOpen((o) => !o); }} style={buttonStyle}>
+    <div ref={wrapRef} style={{ position: "relative", flex: variant === "field" ? 1 : undefined, minWidth: 0, width }}>
+      <button type="button" aria-label={ariaLabel} disabled={disabled} onClick={(e) => { fireBoltFromEvent(e); setOpen((o) => !o); }} style={buttonStyle}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-          {value ? value : allLabel ?? ""}
+          {shown}
         </span>
         <svg
           width="14"
@@ -100,35 +129,35 @@ export default function SelectMenu({
             flex: "0 0 auto",
             color: "var(--te-faint)",
             transform: open ? "rotate(180deg)" : "none",
-            transition: "transform .18s",
+            transition: "transform .2s var(--te-ease-out)",
           }}
         >
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
+      <AnimatePresence>
       {open && (
-        <div
+        <MenuPanel
           className="te-scroll"
           style={{
             position: "absolute",
             top: "calc(100% + 8px)",
-            left: variant === "filter" ? 0 : "-7px",
-            right: variant === "filter" ? 0 : "-7px",
+            left: variant === "field" ? "-7px" : 0,
+            right: variant === "field" ? "-7px" : 0,
             zIndex: 30,
-            animation: "fadeUp .16s ease-out both",
-            ...dropdownPanelStyle({ maxHeight }),
+            ...dropdownPanelStyle({ maxHeight, ...(variant === "input" ? { minWidth: "max-content" } : {}) }),
           }}
         >
           {list.map((o) => {
-            const isSel = o === value;
-            const label = o === "" ? allLabel ?? "" : o;
+            const isSel = o.value === value;
+            const label = o.label;
             return (
               <button
-                key={o || "__all__"}
+                key={o.value || "__all__"}
                 type="button"
                 onClick={(e) => {
                   fireBoltFromEvent(e);
-                  onChange(o);
+                  onChange(o.value);
                   setOpen(false);
                 }}
                 style={{
@@ -151,8 +180,9 @@ export default function SelectMenu({
               </button>
             );
           })}
-        </div>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

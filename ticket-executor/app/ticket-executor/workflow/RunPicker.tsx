@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../../MenuPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { COLORS, FONT, dropdownPanelStyle, fieldInput } from "@/lib/ui";
 import type { RunListItem } from "@/lib/dagent/view";
@@ -98,8 +100,9 @@ export default function RunPicker({ runs, currentId, onPick }: { runs: RunListIt
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
+      <AnimatePresence>
       {open ? (
-        <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, width: PICKER_W, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "min(380px, 50vh)" }) }}>
+        <MenuPanel className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, width: PICKER_W, ...dropdownPanelStyle({ maxHeight: "min(380px, 50vh)" }) }}>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search ticket" aria-label="Search runs by ticket" autoFocus style={{ ...fieldInput(), width: "100%", marginBottom: 4 }} />
           {groups.length === 0 ? <div style={{ padding: "8px 9px", fontSize: FONT.sm, color: COLORS.textMuted }}>No ticket matches.</div> : null}
           {groups.map((g) => (
@@ -133,8 +136,9 @@ export default function RunPicker({ runs, currentId, onPick }: { runs: RunListIt
               })}
             </div>
           ))}
-        </div>
+        </MenuPanel>
       ) : null}
+      </AnimatePresence>
     </div>
   );
 }

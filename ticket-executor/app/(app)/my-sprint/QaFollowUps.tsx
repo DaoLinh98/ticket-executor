@@ -1,5 +1,7 @@
+import { AnimatePresence, motion } from "motion/react";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import { COLORS, FONT, card, fieldInput, pill, sectionCaption } from "@/lib/ui";
+import { Reveal } from "../../Collapse";
+import { COLORS, FONT, MOTION, card, fieldInput, pill, sectionCaption } from "@/lib/ui";
 import { TRIGGER_LABEL, type FindingKind } from "@/lib/qaFollowUp";
 import ActionButton from "./ActionButton";
 import type { QaCase } from "./model";
@@ -127,7 +129,9 @@ export default function QaFollowUps({
               </div>
             )}
 
+            <AnimatePresence initial={false}>
             {deciding && picked.length > 0 && (
+              <Reveal key="note" gap={10}>
               <input
                 value={notes[c.id] ?? ""}
                 onChange={(e) => onNote(c.id, e.target.value)}
@@ -135,7 +139,9 @@ export default function QaFollowUps({
                 aria-label="Note for the fix"
                 style={fieldInput()}
               />
+              </Reveal>
             )}
+            </AnimatePresence>
             {(deciding || c.status === "fixed") && (
               <textarea
                 value={body}
@@ -147,9 +153,19 @@ export default function QaFollowUps({
             )}
 
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <AnimatePresence initial={false}>
               {deciding && picked.length > 0 && (
-                <ActionButton label={`Approve fix (${picked.length})`} variant="primary" onClick={() => onApprove(c)} busy={busy.has("qafix-" + c.id)} />
+                <motion.span
+                  key="approve"
+                  initial={{ opacity: 0, width: 0 }}
+                  animate={{ opacity: 1, width: "auto", transition: { duration: 0.22, ease: MOTION.easeExpo } }}
+                  exit={{ opacity: 0, width: 0, transition: { duration: 0.16, ease: MOTION.easeOut } }}
+                  style={{ display: "inline-flex", overflow: "hidden" }}
+                >
+                  <ActionButton label={`Approve fix (${picked.length})`} variant="primary" onClick={() => onApprove(c)} busy={busy.has("qafix-" + c.id)} />
+                </motion.span>
               )}
+              </AnimatePresence>
               {(deciding || c.status === "fixed") && (
                 <ActionButton label="Post reply" variant={deciding && (picked.length > 0 || c.recommendation === "none") ? "outline" : "primary"} onClick={() => onPost(c)} busy={busy.has("post-" + c.id)} disabled={!body.trim()} />
               )}

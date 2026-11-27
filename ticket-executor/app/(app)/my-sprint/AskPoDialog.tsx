@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect, useState } from "react";
 import { COLORS, FONT, displayText, fieldInput, modalOverlayStyle, modalShellStyle } from "@/lib/ui";
 import ActionButton from "./ActionButton";
@@ -28,8 +29,8 @@ export default function AskPoDialog({
   }, [onCancel]);
 
   return (
-    <div className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
-      <div
+    <ModalOverlay className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onCancel}>
+      <ModalPanel
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
@@ -53,7 +54,7 @@ export default function AskPoDialog({
           <ActionButton label="Cancel" variant="ghost" onClick={onCancel} disabled={busy} />
           <ActionButton label="Post to ticket" variant="primary" onClick={() => onPost(body)} busy={busy} disabled={!body.trim()} />
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

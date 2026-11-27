@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../MenuPanel";
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject } from "react";
 import type { Ticket } from "@/lib/types";
@@ -70,8 +72,9 @@ export default function TicketDetailHeader({
             {effStatus}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: statusMenuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
           </button>
+          <AnimatePresence>
           {statusMenuOpen && (
-            <div className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "190px", maxHeight: "280px" }) }}>
+            <MenuPanel className="te-scroll" style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30, ...dropdownPanelStyle({ minWidth: "190px", maxHeight: "280px" }) }}>
               {statusMenuLoading ? (
                 <div style={{ padding: "10px", display: "flex", justifyContent: "center" }}><LoadingRing size={20} /></div>
               ) : statusMenuOptions.length === 0 ? (
@@ -81,8 +84,9 @@ export default function TicketDetailHeader({
                   <button key={s} onClick={(e) => onSelectStatus(s, e)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", width: "100%", textAlign: "left", padding: "8px 10px", ...chipShape(6), border: "none", cursor: "pointer", background: s === effStatus ? "rgba(251,114,80,.14)" : "transparent", color: s === effStatus ? "var(--accent)" : "var(--te-text-soft)", fontSize: FONT.base, fontWeight: s === effStatus ? 700 : 500 }}>{s}</button>
                 ))
               )}
-            </div>
+            </MenuPanel>
           )}
+          </AnimatePresence>
         </div>
         {/* On a phone the full chip is a label and a caret for one link. The
             link itself is what gets used — pasted into a chat, opened in the
@@ -137,8 +141,9 @@ export default function TicketDetailHeader({
             decision to start one is made. On the rest they were a row of chrome
             above content that has nothing to do with a run — and on a phone that
             row costs a third of the fold. */}
+        <AnimatePresence initial={false}>
         {tab === "overview" && (
-        <div className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
+        <motion.div key="actions" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0, transition: { duration: 0.2, ease: MOTION.easeExpo } }} exit={{ opacity: 0, transition: { duration: 0.12, ease: MOTION.easeOut } }} className="te-tabbar-actions" style={{ paddingBottom: "8px", display: "flex", alignItems: "center", gap: "7px" }}>
           <button onClick={action.onClick} title={action.title} aria-disabled={gated} style={action.style}>
             {action.playIcon && <span style={{ position: "absolute", top: 0, left: "-45%", width: "45%", height: "100%", background: "linear-gradient(100deg,transparent,rgba(255,255,255,.32),transparent)", animation: "sheen 3.6s ease-in-out infinite", pointerEvents: "none" }} />}
             {action.spinner && <span style={{ position: "relative", zIndex: 1, display: "inline-flex" }}><LoadingRing size={14} /></span>}
@@ -163,8 +168,9 @@ export default function TicketDetailHeader({
               <span style={{ position: "relative", zIndex: 1 }}>{action.cancelAction.label}</span>
             </button>
           )}
-        </div>
+        </motion.div>
         )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -280,8 +286,9 @@ function OpenTicketButton({ url, onOpenTicketLink }: { url: string; onOpenTicket
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: menuOpen ? "rotate(180deg)" : "none", transition: "transform .18s" }}><path d="M6 9l6 6 6-6" /></svg>
         </button>
       </div>
+      <AnimatePresence>
       {menuOpen && (
-        <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 30, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ minWidth: "160px" }) }}>
+        <MenuPanel style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 30, ...dropdownPanelStyle({ minWidth: "160px" }) }}>
           <button
             onClick={(e) => {
               fireBoltFromEvent(e);
@@ -306,8 +313,9 @@ function OpenTicketButton({ url, onOpenTicketLink }: { url: string; onOpenTicket
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
             {copied ? "Copied" : "Copy link"}
           </button>
-        </div>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

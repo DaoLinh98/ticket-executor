@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { Reveal } from "../../Collapse";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -401,7 +403,9 @@ export default function SettingsPage() {
         </span>
       </div>
 
+      <AnimatePresence initial={false}>
       {editor && (
+        <Reveal key="editor" gap={20}>
         <div style={{ display: "flex", flexDirection: "column", gap: "16px", ...card({ padding: "16px", background: "var(--te-inset-bg)" }) }}>
           <span style={fieldLabel()}>{editor.id ? "EDIT ORGANIZATION" : "NEW ORGANIZATION"}</span>
           <div className="te-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
@@ -461,7 +465,9 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+        </Reveal>
       )}
+      </AnimatePresence>
 
       <span style={hint}>
         Connect at the organization level — the project is chosen on the Projects page or the Ticket Execution dropdown, and the current sprint loads automatically per project.
@@ -591,12 +597,16 @@ export default function SettingsPage() {
               {panes[tab]}
             </motion.div>
 
+            <AnimatePresence initial={false}>
             {error && (
+              <Reveal key="r">
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }) }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" style={{ stroke: COLORS.danger, flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
                 <span style={{ fontSize: FONT.base, color: "#FF8F8F", lineHeight: 1.5 }}>{error}</span>
               </div>
+              </Reveal>
             )}
+            </AnimatePresence>
 
             {tab !== "flowrunner" && tab !== "claude" && tab !== "skills" && <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px", paddingTop: "4px" }}>
               <button onClick={save} style={{ ...ctaButtonStyle("primary", { height: "34px", cornerPx: 7 }), padding: "0 20px" }}>Save changes</button>

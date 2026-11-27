@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import LoadingRing from "../../ticket-executor/LoadingRing";
@@ -24,8 +25,8 @@ export default function TicketTimeline({ ticketId, title, onClose }: { ticketId:
   const events = q.data ?? [];
 
   return (
-    <div className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onClose}>
-      <div
+    <ModalOverlay className="te-modal-overlay" style={modalOverlayStyle({ zIndex: 60 })} onClick={onClose}>
+      <ModalPanel
         className="te-modal-shell"
         role="dialog"
         aria-modal="true"
@@ -57,7 +58,7 @@ export default function TicketTimeline({ ticketId, title, onClose }: { ticketId:
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <ActionButton label="Close" variant="ghost" onClick={onClose} />
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

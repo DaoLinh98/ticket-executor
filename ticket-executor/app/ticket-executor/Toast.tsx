@@ -1,7 +1,8 @@
 "use client";
 
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { COLORS, FONT, toastStyle, chipShape } from "@/lib/ui";
+import { COLORS, FONT, MOTION, toastStyle, chipShape } from "@/lib/ui";
 
 /** One notification. `id` exists so the caller can mount a fresh Toast per
  *  message (`key={toast.id}`) — that is what restarts both the slide-in and the
@@ -40,10 +41,13 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
   }, [paused, onClose]);
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 24, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.3, ease: MOTION.easeExpo } }}
+      exit={{ opacity: 0, y: 12, scale: 0.98, transition: { duration: 0.16, ease: MOTION.easeOut } }}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, maxWidth: "min(560px, calc(100vw - 48px))", display: "flex", alignItems: "flex-start", gap: "11px", padding: "14px 16px 14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "var(--te-raised-bg)", boxShadow: "0 20px 50px -20px #000", animation: "slideIn .3s both" }}
+      style={{ position: "fixed", overflow: "hidden", bottom: "24px", right: "24px", zIndex: 60, maxWidth: "min(560px, calc(100vw - 48px))", display: "flex", alignItems: "flex-start", gap: "11px", padding: "14px 16px 14px 18px", border: `1px solid ${tone.border}`, borderLeft: `3px solid ${tone.accent}`, borderRadius: "11px", background: "var(--te-raised-bg)", boxShadow: "0 20px 50px -20px #000" }}
     >
       {toast.kind === "error" ? (
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" strokeWidth="2.6" style={{ stroke: tone.accent, flex: "0 0 auto", marginTop: "2px" }}><path d="M6 6l12 12M18 6L6 18" style={{ strokeDasharray: 34, strokeDashoffset: 34, animation: "draw .5s .1s ease forwards" }} /></svg>
@@ -79,6 +83,6 @@ export default function Toast({ toast, onClose }: { toast: ToastMessage; onClose
         </button>
       )}
       <span style={{ position: "absolute", left: 0, bottom: 0, height: "2px", width: "100%", background: tone.accent, opacity: 0.6, transformOrigin: "left", animation: `shrink ${duration}ms linear forwards`, animationPlayState: paused ? "paused" : "running" }} />
-    </div>
+    </motion.div>
   );
 }

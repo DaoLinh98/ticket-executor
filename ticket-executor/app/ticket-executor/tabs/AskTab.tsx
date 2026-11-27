@@ -1,5 +1,8 @@
 "use client";
 
+import { Reveal } from "../../Collapse";
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../../MenuPanel";
 import { useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, RefObject } from "react";
 import type { AskState } from "@/lib/ask";
@@ -144,16 +147,21 @@ export default function AskTab({
         </div>
       </div>
 
+      <AnimatePresence initial={false}>
       {state === "failed" && error && (
+        <Reveal key="r">
         <div style={{ display: "flex", gap: "13px", alignItems: "flex-start", ...tintedCard("danger") }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flex: "0 0 auto", marginTop: "1px" }}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
           <div style={{ fontSize: FONT.base, color: "#C7A8A8", lineHeight: 1.55 }}>{error}</div>
         </div>
+        </Reveal>
       )}
+      </AnimatePresence>
 
       <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: "10px", ...card({ padding: "13px 15px" }) }}>
+        <AnimatePresence>
         {menuOpen && (
-          <div className="te-scroll" style={{ position: "absolute", bottom: "calc(100% - 8px)", left: "15px", right: "15px", zIndex: 20, animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "260px" }) }}>
+          <MenuPanel className="te-scroll" style={{ position: "absolute", bottom: "calc(100% - 8px)", left: "15px", right: "15px", zIndex: 20, ...dropdownPanelStyle({ maxHeight: "260px" }) }}>
             {matches.map((s, i) => (
               // onMouseDown, not onClick: a tap must not blur the textarea first,
               // or the picker unmounts before the choice lands.
@@ -172,8 +180,9 @@ export default function AskTab({
                 /{s}
               </button>
             ))}
-          </div>
+          </MenuPanel>
         )}
+        </AnimatePresence>
         <textarea
           ref={taRef}
           value={prompt}

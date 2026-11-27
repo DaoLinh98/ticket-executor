@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 import { COLORS, FONT, card, chipShape } from "@/lib/ui";
 import { IC } from "@/lib/workflow/meta";
@@ -29,8 +30,10 @@ export default function RecapCard({ en, vi }: Props) {
         <Ico d={IC.out} size={13} sw={2.2} />
       </button>
 
+      <AnimatePresence>
       {open ? (
         <PanelDialog
+          key="recap"
           title="Run recap"
           subtitle="everything this run did, in one page"
           icon={IC.sparkle}
@@ -40,6 +43,7 @@ export default function RecapCard({ en, vi }: Props) {
           onClose={() => setOpen(false)}
         />
       ) : null}
+      </AnimatePresence>
     </div>
   );
 }

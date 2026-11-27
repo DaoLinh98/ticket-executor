@@ -9,7 +9,7 @@ import { SCOPE_LABEL, type TicketScope } from "@/lib/ticketScope";
 import { ACCENT } from "./constants";
 import LoadingRing from "./LoadingRing";
 import { useBoltsContext } from "../BoltsContext";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { reveal } from "../Motion";
 
 /** The board view's rows, grouped under their kanban column.
@@ -218,12 +218,13 @@ export default function TicketSidebar({
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12.5l2.4 2.4L16 9.5" /></svg>
           </button>
         </div>
+        <AnimatePresence initial={false}>
         {!selectMode && filtersOpen && (
           /* Four filters no longer fit the rail on one line, so the row wraps
              into pairs rather than squeezing every menu down to a width that
              shows none of its value. The plan filter is offered only where a
              plan exists — see `plannedOrder`. */
-          <div style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", animation: "fadeUp .18s ease-out both", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
+          <motion.div key="filters" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0, transition: { duration: 0.2, ease: MOTION.easeExpo } }} exit={{ opacity: 0, y: -4, transition: { duration: 0.12, ease: MOTION.easeOut } }} style={{ position: "relative", zIndex: 20, display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", ...card({ padding: "7px", background: COLORS.panelBgDark }) }}>
             {([
               { v: fStatus, set: setFStatus, label: "Status", opts: statusOptions },
               { v: fType, set: setFType, label: "Type", opts: typeOptions },
@@ -246,8 +247,9 @@ export default function TicketSidebar({
             {activeFilters > 0 && (
               <button onClick={(e) => { fireBoltFromEvent(e); clearFilters(); }} title="Clear filters" style={{ flex: "0 0 auto", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--te-border)", ...chipShape(6), background: "transparent", color: "var(--te-text-dim)", cursor: "pointer" }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
             )}
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
       <div className="te-scroll te-scroll--smooth" style={{ flex: 1, overflowY: "auto", padding: "2px 12px 16px", display: "flex", flexDirection: "column", gap: "7px", minHeight: 0 }}>
         {loading && (

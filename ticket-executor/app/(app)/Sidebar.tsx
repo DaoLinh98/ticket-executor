@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { COLORS, FONT, clipCorner, logoText, ringBorder } from "@/lib/ui";
+import { AnimatePresence, motion } from "motion/react";
+import { COLORS, FONT, MOTION, clipCorner, logoText, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "../BoltsContext";
 import ProviderTag from "./ProviderTag";
 import { useIsMobile, useMobileNav } from "./MobileNav";
@@ -147,9 +148,11 @@ export default function Sidebar({ authEnabled = true }: { authEnabled?: boolean 
 
   return (
     <>
-      {navOpen && (
-        <div className="te-nav-scrim" role="presentation" onClick={() => setNavOpen(false)} />
-      )}
+      <AnimatePresence>
+        {navOpen && (
+          <motion.div key="scrim" className="te-nav-scrim" role="presentation" onClick={() => setNavOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1, transition: { duration: 0.2, ease: MOTION.easeOut } }} exit={{ opacity: 0, transition: { duration: 0.16, ease: MOTION.easeOut } }} style={{ animation: "none" }} />
+        )}
+      </AnimatePresence>
       <aside
       className="te-sidebar"
       data-mobile-open={navOpen ? "true" : "false"}

@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { MenuPanel } from "../MenuPanel";
 import { useEffect, useRef, useState } from "react";
 import { useClaudeUsage } from "../queries";
 import { pctText, type QuotaWindow } from "@/lib/claudeQuota";
@@ -77,8 +79,9 @@ export default function UsageMeter() {
         <span style={{ width: 34 }}>{main ? <Bar pct={main.pct} /> : <span style={{ display: "block", height: 6, background: COLORS.borderSubtle, borderRadius: 3 }} />}</span>
         <span style={{ fontFamily: MONO, fontSize: FONT.sm, fontWeight: 700, color: main ? toneOf(main.pct) : COLORS.faint }}>{main ? pctText(main.pct) : "—"}</span>
       </button>
+      <AnimatePresence>
       {open && (
-        <div className="te-scroll te-notif-panel" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "300px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
+        <MenuPanel className="te-scroll te-notif-panel" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "300px", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 8px", borderBottom: `1px solid ${COLORS.borderSubtle}` }}>
             <span style={sectionCaption()}>Claude usage</span>
             <span style={{ flex: 1 }} />
@@ -101,8 +104,9 @@ export default function UsageMeter() {
                 : "Reading usage…"}
             </div>
           )}
-        </div>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

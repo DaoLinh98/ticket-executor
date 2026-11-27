@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { COLORS, FONT, card, fieldInput, pill, sectionCaption, tabStyle } from "@/lib/ui";
+import { COLORS, FONT, card, pill, sectionCaption, tabStyle } from "@/lib/ui";
+import SelectMenu from "../../SelectMenu";
 import type { AutomationRow } from "./model";
 
 const ACTION_COLOR: Record<string, string> = {
@@ -38,15 +39,14 @@ export default function SchedulerLog({ events, onOpen }: { events: AutomationRow
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        <select
-          aria-label="Show one ticket's events"
+        <SelectMenu
+          variant="input"
+          width="150px"
+          ariaLabel="Show one ticket's events"
           value={ticket}
-          onChange={(e) => setTicket(e.target.value)}
-          style={{ ...fieldInput({ height: "32px", fontSize: FONT.sm }), width: "auto", padding: "0 6px" }}
-        >
-          <option value="">All tickets</option>
-          {tickets.map((id) => <option key={id} value={id}>#{id}</option>)}
-        </select>
+          onChange={setTicket}
+          options={[{ value: "", label: "All tickets" }, ...tickets.map((id) => ({ value: id, label: `#${id}` }))]}
+        />
       </div>
       <div className="te-scroll te-sprint-pane" style={{ ...card({ padding: "12px 14px" }), maxHeight: "480px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "7px" }}>
         {shown.length === 0 && <span style={{ fontSize: FONT.sm, color: COLORS.textDim }}>No event matches.</span>}

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, type CSSProperties, type MouseEvent } from "react";
+import { AnimatePresence } from "motion/react";
 import type { ReviewData } from "@/lib/types";
+import { Reveal } from "../../Collapse";
 import { COLORS, FONT, avatar, card, ctaButtonStyle, initials, pill, statusPill, tintedCard } from "@/lib/ui";
 import { timeAgo } from "../helpers";
 import LoadingRing from "../LoadingRing";
@@ -84,7 +86,9 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
               </span>
             </div>
           </section>
+          <AnimatePresence initial={false}>
           {review.comments.length > 0 && (
+            <Reveal key="comments" gap={22}>
             <section>
               <h3 style={{ margin: "0 0 12px", fontFamily: "var(--te-font-display)", fontSize: FONT.sm, fontWeight: 700, letterSpacing: ".16em", color: COLORS.textDim }}>REVIEW COMMENTS</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
@@ -100,7 +104,9 @@ export default function ResolveReviewTab({ review, loading, fixReviewRunning, fi
                 ))}
               </div>
             </section>
+            </Reveal>
           )}
+          </AnimatePresence>
           <div style={{ display: "flex", alignItems: "center", gap: "16px", ...tintedCard(review.unresolvedCount > 0 ? "danger" : "success", { padding: "18px 20px", radius: "13px" }) }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.lg, fontWeight: 700, color: "var(--te-text)" }}>

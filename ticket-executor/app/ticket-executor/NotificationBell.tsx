@@ -1,5 +1,8 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { Collapse } from "../Collapse";
+import { MenuPanel } from "../MenuPanel";
 import { useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
 import { COLORS, FONT, SURFACE, dropdownPanelStyle, ringBorder, tabStyle, tintFill, tintedCard } from "@/lib/ui";
 import {
@@ -103,12 +106,13 @@ export default function NotificationBell({
           <span style={{ position: "absolute", top: "-4px", right: "-4px", minWidth: "15px", height: "15px", padding: "0 3px", borderRadius: "999px", background: COLORS.accent, color: "var(--te-btn-primary-text)", fontSize: FONT.xs, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{badge}</span>
         )}
       </button>
+      <AnimatePresence>
       {open && (
-        <div
+        <MenuPanel
           ref={panelRef}
           onScroll={() => { if (hasMore && !loadingMore && nearBottom()) onLoadMore(); }}
           className="te-scroll te-notif-panel"
-          style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", animation: "fadeUp .16s ease-out both", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
+          style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40, width: "372px", ...dropdownPanelStyle({ maxHeight: "420px" }) }}>
           {/* Two views, not a per-kind filter list. The panel opens on "All" —
               the whole record of what the app did on your behalf, which is what
               the badge counts; "Needs you" narrows it to the actionable half. */}
@@ -125,16 +129,16 @@ export default function NotificationBell({
               </button>
             )}
           </div>
-          {degraded && (
+          <Collapse open={degraded}>
             <div style={{ ...tintedCard("warning", { padding: "9px 11px", radius: "9px" }), marginBottom: "4px", fontSize: FONT.sm, color: COLORS.warning, lineHeight: 1.5 }}>
               Could not reach the provider on the last check — this list may be out of date.
             </div>
-          )}
-          {shown.length === 0 && !degraded && !hasMore && !loadingMore && (
+          </Collapse>
+          <Collapse open={shown.length === 0 && !degraded && !hasMore && !loadingMore}>
             <div style={{ padding: "16px 12px", fontSize: FONT.base, color: COLORS.faint, textAlign: "center" }}>
               {filter === "action" ? "Nothing needs you right now." : "No notifications."}
             </div>
-          )}
+          </Collapse>
           {shown.map((n) => {
             const unread = isUnread(n, read);
             const title = titleOf(n.ticketId);
@@ -165,13 +169,14 @@ export default function NotificationBell({
               </button>
             );
           })}
-          {loadingMore && (
+          <Collapse open={loadingMore}>
             <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
               <LoadingRing size={22} />
             </div>
-          )}
-        </div>
+          </Collapse>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

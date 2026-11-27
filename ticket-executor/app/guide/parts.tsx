@@ -3,6 +3,8 @@
 // Presentational building blocks used by the Guide page's section bodies.
 // Everything here is props-in/JSX-out — no fetching, no business logic.
 
+import { AnimatePresence } from "motion/react";
+import { ModalOverlay, ModalPanel } from "../Modal";
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { COLORS, FONT, card, codeBlock, ctaButtonStyle, modalShellStyle, pill } from "@/lib/ui";
@@ -119,17 +121,20 @@ export function Shot({ src, caption }: { src: string; caption: string }) {
         <figcaption style={{ fontSize: FONT.xs, color: COLORS.faint, lineHeight: 1.5 }}>{caption}</figcaption>
       </figure>
 
+      <AnimatePresence>
       {open && (
-        <div
+        <ModalOverlay
+          key="lightbox"
           onClick={() => setOpen(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", background: "var(--te-scrim)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", animation: "fadeIn .18s both", cursor: "zoom-out" }}
+          style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", background: "var(--te-scrim)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", cursor: "zoom-out" }}
         >
-          <div className="te-modal-shell" onClick={(e) => e.stopPropagation()} style={{ ...modalShellStyle(), padding: "10px", maxWidth: "min(1100px,92vw)", maxHeight: "88vh", overflow: "auto" }}>
+          <ModalPanel className="te-modal-shell" onClick={(e) => e.stopPropagation()} style={{ ...modalShellStyle(), padding: "10px", maxWidth: "min(1100px,92vw)", maxHeight: "88vh", overflow: "auto" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={src} alt={caption} style={{ display: "block", maxWidth: "100%", borderRadius: "9px" }} />
-          </div>
-        </div>
+          </ModalPanel>
+        </ModalOverlay>
       )}
+      </AnimatePresence>
     </>
   );
 }

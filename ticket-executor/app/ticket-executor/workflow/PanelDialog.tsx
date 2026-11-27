@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../../Modal";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { COLORS, FONT, codeBlock, modalOverlayStyle, modalShellStyle, ringBorder, tabStyle } from "@/lib/ui";
 import { IC } from "@/lib/workflow/meta";
@@ -94,7 +95,7 @@ export default function PanelDialog({ title, subtitle, icon, tone, source, vie, 
   }, [focus, lang]);
 
   return (
-    <div
+    <ModalOverlay
       className="te-modal-overlay"
       role="dialog"
       aria-modal="true"
@@ -102,7 +103,7 @@ export default function PanelDialog({ title, subtitle, icon, tone, source, vie, 
       onClick={onClose}
       style={{ ...modalOverlayStyle(), padding: "24px" }}
     >
-      <div
+      <ModalPanel
         ref={shell}
         className="te-modal-shell"
         onClick={(e) => e.stopPropagation()}
@@ -149,7 +150,7 @@ export default function PanelDialog({ title, subtitle, icon, tone, source, vie, 
         <div ref={body} className="te-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "18px 20px calc(24px + env(safe-area-inset-bottom))" }}>
           {lang === "eng" || !vie ? eng ?? <PanelProse text={source} /> : <PanelProse text={vie} />}
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { Collapse } from "../../Collapse";
+import { AnimatePresence } from "motion/react";
 import { useMemo, useState } from "react";
 import { COLORS, FONT, card, chipShape, codeBlock, tabStyle } from "@/lib/ui";
 import { IC, TONE, ktok, plural } from "@/lib/workflow/meta";
@@ -94,7 +96,7 @@ export default function BriefCard({ label, brief, prev, prevAttempt }: Props) {
         ) : null}
       </span>
 
-      {shown ? (
+      <Collapse open={shown}>
       <>
       <div role="tablist" aria-label="Brief view" style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap" }}>
         {views.map(([k, text]) => (
@@ -140,10 +142,12 @@ export default function BriefCard({ label, brief, prev, prevAttempt }: Props) {
         </pre>
       )}
       </>
-      ) : null}
+      </Collapse>
 
+      <AnimatePresence>
       {open ? (
         <PanelDialog
+          key="brief"
           title="Context received"
           subtitle={`${label} · the brief this agent started from`}
           icon={IC.file}
@@ -153,6 +157,7 @@ export default function BriefCard({ label, brief, prev, prevAttempt }: Props) {
           onClose={() => setOpen(null)}
         />
       ) : null}
+      </AnimatePresence>
     </div>
   );
 }

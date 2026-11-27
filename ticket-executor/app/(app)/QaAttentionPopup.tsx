@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { ModalOverlay, ModalPanel } from "../Modal";
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { attentionNotifications } from "@/lib/notifications";
@@ -13,13 +15,13 @@ export default function QaAttentionPopup() {
   const { fireBoltFromEvent } = useBoltsContext();
   const items = useMemo(() => attentionNotifications(notifications, read), [notifications, read]);
 
-  if (!items.length) return null;
-
   const dismiss = () => items.forEach(markOneRead);
 
   return (
-    <div className="te-modal-overlay" style={{ ...modalOverlayStyle({ zIndex: 70 }), padding: "24px" }}>
-      <div
+    <AnimatePresence>
+    {items.length > 0 && (
+    <ModalOverlay key="qa" className="te-modal-overlay" style={{ ...modalOverlayStyle({ zIndex: 70 }), padding: "24px" }}>
+      <ModalPanel
         className="te-modal-shell"
         role="alertdialog"
         aria-modal="true"
@@ -52,7 +54,9 @@ export default function QaAttentionPopup() {
             Open Flow Runner
           </button>
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
+    )}
+    </AnimatePresence>
   );
 }

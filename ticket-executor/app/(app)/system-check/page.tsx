@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { Reveal } from "../../Collapse";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import Link from "next/link";
@@ -114,16 +116,24 @@ function SystemCheckPageInner() {
           <div className="te-sprint-page" style={{ width: "100%", flex: "1 1 0", minHeight: 0 }}>
           <div className="te-sprint-split" style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", gap: "24px" }}>
           <div className="te-scroll te-sprint-pane" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+            <AnimatePresence initial={false}>
             {error && (
+              <Reveal key="r">
               <div style={{ ...tintedCard("danger", { padding: "11px 13px", radius: "10px" }), fontSize: FONT.base, color: COLORS.danger, lineHeight: 1.5 }}>{error}</div>
+              </Reveal>
             )}
+            </AnimatePresence>
 
+            <AnimatePresence initial={false}>
             {banner && (
+              <Reveal key="r">
               <div style={{ ...tintedCard(banner.tone), display: "flex", flexDirection: "column", gap: "5px" }}>
                 <span style={{ fontSize: FONT.md, fontWeight: 700, color: banner.color }}>{banner.title}</span>
                 <span style={{ fontSize: FONT.base, color: COLORS.textDim, lineHeight: 1.6 }}>{banner.text}</span>
               </div>
+              </Reveal>
             )}
+            </AnimatePresence>
 
             {/* Controls */}
             <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import LoadingRing from "../../ticket-executor/LoadingRing";
-import { COLORS, FONT, card, fieldInput, pill, sectionCaption, statusPill } from "@/lib/ui";
+import SelectMenu from "../../SelectMenu";
+import { COLORS, FONT, card, pill, sectionCaption, statusPill } from "@/lib/ui";
 import { isFixingQa, MAX_QA_ROUNDS, stageFrom } from "@/lib/ticketLifecycle";
 import { awaitsAnalysis, type LastClosed } from "@/lib/qaFollowUp";
 import type { QueueMove } from "@/lib/sprintPlan";
@@ -188,17 +189,16 @@ export default function PlanTable({
                 )}
               </span>,
               redatable ? (
-                <select
+                <SelectMenu
                   key="release"
-                  aria-label={`Release day for #${t.ticketId}`}
+                  variant="input"
+                  ariaLabel={`Release day for #${t.ticketId}`}
                   value={t.releaseDay}
                   disabled={busy.has("redate-" + t.id)}
-                  onChange={(e) => h.setReleaseDay(t.id, e.target.value)}
-                  style={{ ...fieldInput({ height: "32px", fontSize: FONT.sm }), width: "100%", padding: "0 6px", color: t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted, fontWeight: 600 }}
-                >
-                  {!t.releaseDay && <option value="">—</option>}
-                  {days.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
-                </select>
+                  onChange={(v) => h.setReleaseDay(t.id, v)}
+                  valueColor={t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted}
+                  options={[...(t.releaseDay ? [] : [{ value: "", label: "—" }]), ...days.map((d) => ({ value: d, label: dayLabel(d) }))]}
+                />
               ) : (
                 <span key="release" style={{ fontSize: FONT.base, fontWeight: 600, color: t.releasedAt ? COLORS.success : t.releaseDay === data?.today ? COLORS.accent : COLORS.textMuted }}>
                   {dayLabel(t.releasedAt ? t.releasedAt.slice(0, 10) : t.releaseDay)}
@@ -227,7 +227,7 @@ export default function PlanTable({
                   padding: "11px 14px", alignItems: "center",
                   borderTop: i === 0 ? "none" : "1px solid " + COLORS.borderSubtle,
                   opacity: claim === "dropped" ? 0.55 : 1,
-                  animation: "fadeUp .4s both", animationDelay: i * 30 + "ms",
+                  animation: "fadeUp .4s both", animationDelay: Math.min(i, 10) * 30 + "ms",
                 }}
               >
                 {cells.map((cell, ci) =>

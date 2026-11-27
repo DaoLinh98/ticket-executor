@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
+import { Reveal } from "../Collapse";
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Reactor from "../Reactor";
@@ -132,11 +134,15 @@ export default function LoginPage() {
           Remember me for 30 days
         </label>
 
+        <AnimatePresence initial={false}>
         {error && (
+          <Reveal key="r">
           <div style={{ ...tintedCard("danger", { padding: "10px 13px", radius: "9px" }), fontSize: FONT.base, color: "#FFB3AD", animation: "fadeUp .3s both" }}>
             {error}
           </div>
+          </Reveal>
         )}
+        </AnimatePresence>
 
         <button
           type="submit"

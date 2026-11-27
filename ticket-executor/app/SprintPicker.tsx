@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence } from "motion/react";
 import { FONT, dropdownPanelStyle, pill, ringBorder } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
+import { MenuPanel } from "./MenuPanel";
 
 export type IterationOption = {
   id?: string;
@@ -100,15 +102,15 @@ export default function SprintPicker({
         )}
       </button>
 
+      <AnimatePresence>
       {open && hasOptions && (
-        <div
+        <MenuPanel
           className="te-scroll"
           style={{
             position: "absolute",
             top: "calc(100% + 10px)",
             ...(align === "right" ? { right: 0 } : { left: 0 }),
             zIndex: 40,
-            animation: "fadeUp .16s ease-out both",
             ...dropdownPanelStyle({ minWidth: "230px", maxHeight: "340px" }),
             borderRadius: "13px",
             boxShadow: "0 26px 64px -22px rgba(0,0,0,.7), 0 0 0 1px rgba(251,114,80,.06)",
@@ -168,8 +170,9 @@ export default function SprintPicker({
               </button>
             );
           })}
-        </div>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

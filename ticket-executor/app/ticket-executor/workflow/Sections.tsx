@@ -1,5 +1,7 @@
 "use client";
 
+import { Collapse } from "../../Collapse";
+import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 import { COLORS, FONT, card, chipShape, ctaButtonStyle, pill } from "@/lib/ui";
 import { IC, TONE } from "@/lib/workflow/meta";
@@ -84,7 +86,7 @@ function FoldedTitle({ sec, open, onToggle }: { sec: Section; open: boolean; onT
   const title = "title" in sec ? sec.title ?? "" : "";
   const count = sec.kind === "list" ? sec.items.length : sec.kind === "table" ? sec.rows.length : 0;
   return (
-    <div style={{ margin: open ? "0 0 10px" : 0, fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
+    <div style={{ fontSize: FONT.base, fontWeight: 600, color: COLORS.text }}>
       <FoldToggle open={open} onToggle={onToggle} label={title}>
         <IconTile d={("icon" in sec && sec.icon) || IC.list} tone={("tone" in sec && sec.tone) || "muted"} size={24} iconSize={14} />
         <span style={{ flex: 1, minWidth: 0 }}>{title}</span>
@@ -107,8 +109,8 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
         return (
         <section key={i} style={{ marginTop: "12px", ...(boxed(sec) ? card({ padding: "12px", background: COLORS.panelBgDark, border: COLORS.borderSubtle }) : null) }}>
           {folded.folded ? <FoldedTitle sec={folded} open={open} onToggle={() => toggle(i)} /> : null}
-          {open ? (
-          <>
+          <Collapse open={open}>
+          <div style={{ paddingTop: folded.folded ? 10 : 0 }}>
           {sec.kind === "kv" ? (
             <>
               <Title title={sec.title} icon={sec.icon} tone={sec.tone} />
@@ -241,14 +243,16 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
           {sec.kind === "retry" ? (
             <RetrySection sec={sec} picked={retryFrom ?? sec.defaultId} onPick={onRetryPick} />
           ) : null}
-          </>
-          ) : null}
+          </div>
+          </Collapse>
         </section>
         );
       })}
 
+      <AnimatePresence>
       {expanded ? (
         <PanelDialog
+          key="section"
           title={expanded.title ?? "Section"}
           subtitle={`${expanded.rows.length} row${expanded.rows.length === 1 ? "" : "s"} · ${expanded.cols.join(" · ")}`}
           icon={expanded.icon ?? IC.list}
@@ -258,6 +262,7 @@ export default function Sections({ sections, copied, onCopy, retryFrom, onRetryP
           onClose={() => setExpanded(null)}
         />
       ) : null}
+      </AnimatePresence>
     </>
   );
 }

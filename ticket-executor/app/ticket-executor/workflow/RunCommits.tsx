@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { CommitSummary } from "@/lib/types";
@@ -57,9 +58,12 @@ export default function RunCommits({ ticketId, provider }: { ticketId: string; p
             Dismiss
           </button>
         </div>
-      ) : open ? (
-        <CommitFilesModal commit={open} files={filesQ.data ?? null} onClose={() => setOpen(null)} />
       ) : null}
+      <AnimatePresence>
+        {open && !filesQ.isError ? (
+          <CommitFilesModal key="commit" commit={open} files={filesQ.data ?? null} onClose={() => setOpen(null)} />
+        ) : null}
+      </AnimatePresence>
     </section>
   );
 }

@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { AnimatePresence } from "motion/react";
 import { FONT, dropdownPanelStyle } from "@/lib/ui";
 import { useBoltsContext } from "./BoltsContext";
+import { MenuPanel } from "./MenuPanel";
 
 // Creatable combobox: pick an option from the themed dropdown OR type a custom
 // value that is not in the list. Styled to match the prototype (dark, mono).
@@ -111,14 +113,15 @@ export default function Combobox({
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
-            style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .18s" }}
+            style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s var(--te-ease-out)" }}
           >
             <path d="M6 9l6 6 6-6" />
           </svg>
         </button>
       </div>
+      <AnimatePresence>
       {open && list.length > 0 && (
-        <div
+        <MenuPanel
           className="te-scroll"
           style={{
             position: "absolute",
@@ -128,7 +131,6 @@ export default function Combobox({
             zIndex: 30,
             ...dropdownPanelStyle({ maxHeight: "196px" }),
             borderRadius: "10px",
-            animation: "fadeUp .16s ease-out both",
           }}
         >
           {list.map((o, i) => {
@@ -164,8 +166,9 @@ export default function Combobox({
               </button>
             );
           })}
-        </div>
+        </MenuPanel>
       )}
+      </AnimatePresence>
     </div>
   );
 }

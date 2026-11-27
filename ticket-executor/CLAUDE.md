@@ -207,16 +207,11 @@ Exempt: live run state/SSE, watermark polls, System Check probe, `getWorkItemSta
    `SettingsProvider`, `NotificationsProvider`, `settings/PushNotifications`, `TicketExecutor.tsx` loaders — new
    reads via `queryClient.fetchQuery` (`readJson`), new live behaviour as `useLive`.
 
-## Mobile first — mandatory
-Decide the 390px layout first; check every UI change at **390 × 844** and desktop. One breakpoint `max-width: 900px`
-(JS twin `MOBILE_QUERY`, change both); responsive rules only in the media block at the foot of `app/globals.css`
-(components add `te-*` classes; `useIsMobile()` is for the drawer only); tap targets ≥ 40px, nothing behind `:hover`;
-`var(--te-app-h)`, never `100vh`; respect `env(safe-area-inset-*)`; state that matters is server-side, not `localStorage`.
-
-## UI changes — mandatory
-Read `UI-STYLEGUIDE.md` and `lib/ui.ts` in full before editing `app/`. Reuse/extend helpers; colours from `COLORS`,
-sizes from `FONT`, new tokens in `app/globals.css`. Anything new updates `lib/ui.ts` **and** `UI-STYLEGUIDE.md`,
-then `npx tsc --noEmit` and look at the screen.
+## UI — mandatory
+**`UI-STYLEGUIDE.md` is the one UI contract** (mobile-first, tokens, helper map, states, motion, responsive hooks). Read it and
+skim `lib/ui.ts` before editing `app/`; new UI is built from those rules, and a new helper/token/`te-*` class updates
+`lib/ui.ts` / `globals.css` and the styleguide in the same change. **Every action has motion (§5):** anything that
+appears, disappears or moves animates in and out, and the layout around it eases too (`Reveal gap`) — never a pop or a jump.
 
 ## Conventions that bite
 - **Root repo is per ticket** (`RootRepoProjectMap`), re-validated server-side before any spawn. **Preflight checks go

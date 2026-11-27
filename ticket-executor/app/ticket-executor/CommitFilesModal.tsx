@@ -1,5 +1,6 @@
 "use client";
 
+import { ModalOverlay, ModalPanel } from "../Modal";
 import { useEffect, useState } from "react";
 import type { CommitFile, CommitSummary } from "@/lib/types";
 import { COLORS, FONT, modalShellStyle, pill, ringBorder } from "@/lib/ui";
@@ -48,8 +49,8 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
   const active = files?.find((f) => f.path === activePath) ?? null;
 
   return (
-    <div className="te-modal-overlay" style={{ position: "fixed", inset: 0, zIndex: 55, background: "var(--te-scrim)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
-      <div className="te-modal-shell" style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay className="te-modal-overlay" style={{ position: "fixed", inset: 0, zIndex: 55, background: "var(--te-scrim)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", animation: "fadeIn .2s both" }} onClick={onClose}>
+      <ModalPanel className="te-modal-shell" style={{ width: "1280px", maxWidth: "96vw", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", ...modalShellStyle() }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "14px", padding: "16px 20px", borderBottom: "1px solid var(--te-border-subtle)", flex: "0 0 auto" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: "var(--te-font-display)", fontSize: FONT.md, fontWeight: 700, color: "var(--te-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{commit.message || "(no message)"}</div>
@@ -124,7 +125,7 @@ export default function CommitFilesModal({ commit, files, onClose }: Props) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalOverlay>
   );
 }

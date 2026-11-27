@@ -17,7 +17,7 @@ Then only the sections for what you touch:
 | `lib/tickets.ts`, `lib/ado.ts`, `lib/github.ts`, any provider call | Multi-provider support; Redis cache on every load |
 | New GET route, DB/provider read, or write path | Redis cache on every load |
 | Client components, `app/queries.ts`, `app/useLive.ts`, `lib/liveStream.ts` | Data fetching and live state |
-| Anything under `app/` (UI, CSS, layout) | UI changes; Mobile first (then `UI-STYLEGUIDE.md` + `lib/ui.ts`) |
+| Anything under `app/` (UI, CSS, layout) | UI (+ `UI-STYLEGUIDE.md`, `lib/ui.ts`) |
 | `lib/notifications.ts`, `lib/notificationSources.ts`, `lib/push*.ts`, `public/sw.js` | The notification bell |
 | `lib/preflight.ts`, `instrumentation.ts`, `lib/terminal.ts`, `lib/ask.ts` | Conventions that bite |
 | `schema.prisma`, migrations | Commands (migrate + generate rule) |
