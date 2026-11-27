@@ -59,8 +59,6 @@ export type Ctx = {
   visits: Record<string, number>;
   /** The work item as the harness read it for the judging role's brief — per turn, never persisted. */
   workItem?: WorkItem;
-  /** Skills switched off in Settings, read for a skill-picking role's brief — per turn, never persisted. */
-  skillsOff?: string[];
   /** Where the run was going when the harness sent it through `recap` first — the edge `recap` then returns. */
   outcome?: { to: Target; reason: string };
 };

@@ -46,7 +46,7 @@ Trình tự trong `execAgent`:
 
 1. **MCP**: `resolveMcp` + `writeRunMcpConfig` ghi file cấu hình MCP riêng cho lượt này (chứa PAT, nằm ở `tmpdir()/te-mcp`, xóa sau lượt).
 2. **Repo liên quan**: `companionDirs()` → `--add-dir` cho các repo companion nằm trong scope của plan.
-3. **Tiền xử lý theo node** (xem từng node bên dưới): `readiness` đọc work item + `refreshBase` khi recheck; `readiness/qaTriage/reviewTriage` nạp `skillsOff()`.
+3. **Tiền xử lý theo node** (xem từng node bên dưới): `readiness` đọc work item + `refreshBase` khi recheck.
 4. **Dựng brief**: `node.prompt(ctx)` (hàm trong `prompts.ts`), lưu thành artifact `brief:<stepId>` → hiện trên trang là **"Context received"**.
 5. **Chọn model**: `turnFor()` (`stepModels.ts`).
 6. **Chạy** `runWithClaudeAccounts` — hết quota/token lỗi thì chạy lại lượt đó trên tài khoản Claude kế tiếp.
@@ -143,7 +143,7 @@ Ví dụ: `implement`/`fix`/`evaluate` đọc `channels.plan` (`planContract`); 
 - **Work item**: do **harness đọc** trước (`readWorkItem()`: `loadTicket` + `loadTicketDetail` + `loadTicketComments` song song, `richToText` đổi HTML → text, cắt ở 16 000 ký tự). Đọc mỗi lần ghé, nên recheck thấy câu trả lời của PO. Đọc lỗi → brief dặn agent tự đọc qua MCP.
 - **Previous readiness check** (chỉ khi recheck): câu hỏi đã hỏi, phần còn thiếu, `checkedAt` — để không hỏi lại điều PO đã trả lời.
 - **Checking delivery**: quy tắc kiểm tra "AC đã giao" trên base (hoặc `origin/<baseBranch>` nếu chọn).
-- **Your job** (5 việc) + **Skills menu** (`skillCatalog()` trừ `skillsOff`, mỗi skill tóm tắt bằng `skillSummary`, kèm `baseBranch` của skill nếu có).
+- **Your job** (5 việc) + **Skills menu** (`skillCatalog()`, mỗi skill tóm tắt bằng `skillSummary`, kèm `baseBranch` của skill nếu có).
 
 **Harness trước lượt**: lần ghé thứ 2 trở đi → `refreshBase()` (đưa worktree còn sạch về base hôm nay).
 

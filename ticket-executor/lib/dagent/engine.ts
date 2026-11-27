@@ -16,7 +16,7 @@ import { CHECKS, companionDirs, deliveryFacts, refreshBase, removeWorktrees, sea
 import { agentsOf, flowOf, graphById, GRAPHS, MAX_HOPS, overVisits, recapWorth } from "./graph";
 import { PLAN_FILE } from "./prompts";
 import { checkReadiness, checkReview, deliveryOf, knowledgeDiff, renderPlan, richToText } from "./rules";
-import { skillCatalog, skillsOff } from "./skills";
+import { skillCatalog } from "./skills";
 import { turnFor } from "./stepModels";
 import { closeStep, nextSeq, openStep, saveArtifact, saveRun, saveTransition } from "./store";
 import { BRIEF_PREFIX, END, FAIL, NEEDS_INPUT, NEEDS_REVIEW, ZERO_USAGE, type AgentNode, type Ctx, type Flow, type GateResult, type Graph, type LogEntry, type Node, type NodeResult, type Repo, type Usage, type WorkItem } from "./types";
@@ -95,10 +95,8 @@ async function execAgent(live: Live, node: AgentNode): Promise<NodeResult> {
   // A recheck runs on the worktree set up when the run began: bring it to today's base before judging delivery.
   if (node.id === "readiness" && (live.ctx.visits.readiness ?? 0) > 1) live.logs.push(...(await refreshBase(live.ctx)));
   if (node.id === "readiness") live.ctx.workItem = await readWorkItem(live);
-  if (PICKS_SKILLS.includes(node.id)) live.ctx.skillsOff = await skillsOff();
   const prompt = node.prompt(live.ctx);
   live.ctx.workItem = undefined;
-  live.ctx.skillsOff = undefined;
   // The brief is the only context a fresh turn gets — kept per step so /workflow shows what each agent was told.
   await saveArtifact(live.id, `${BRIEF_PREFIX}${live.stepId}`, prompt).catch(() => null);
   const pick = turnFor(node.id, live.ctx.visits, live);
@@ -194,8 +192,7 @@ async function readWorkItem(live: Live): Promise<WorkItem | undefined> {
 // The first judging role picks the skills that fit the ticket; the harness resolves each to its SKILL.md (every later
 // brief names it) and, when one requires another base branch, moves the worktrees there before any work is planned.
 async function applySkills(live: Live, data: Record<string, unknown>): Promise<string> {
-  // A pick of a skill switched off in Settings is dropped like one that is not installed.
-  const catalog = skillCatalog(live.ctx.rootRepo, await skillsOff());
+  const catalog = skillCatalog(live.ctx.rootRepo);
   const picked = Array.isArray(data.skills) ? (data.skills as { name?: string; reason?: string }[]) : [];
   const resolved = picked.flatMap((p) => {
     const s = catalog.find((x) => x.name === p.name);

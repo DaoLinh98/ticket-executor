@@ -76,7 +76,7 @@ export function skillSummary(description: string, max = 160): string {
 
 // The installed skills the first judging role chooses from.
 function skillMenu(c: Ctx, withBase: boolean): string {
-  const catalog = skillCatalog(c.rootRepo, c.skillsOff);
+  const catalog = skillCatalog(c.rootRepo);
   if (!catalog.length) return section("Skills", `No skill is installed — report \`skills\` empty${withBase ? " and `baseBranch` empty" : ""}.`);
   return section("Skills", [
     `Pick every skill that fits this ticket (none is a valid answer) and report them in \`skills\`. Every later role follows the skills you pick. ` +

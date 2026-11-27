@@ -84,24 +84,6 @@ export const useClaudeUsage = () =>
     refetchInterval: 60_000,
   });
 
-/** One machine skill and whether D-Agent runs are offered it (`/api/dagent/skills`). */
-export type DagentSkill = { name: string; description: string; enabled: boolean };
-
-export const DAGENT_SKILLS_KEY = ["dagent-skills"] as const;
-
-const readSkills = async (r: Response): Promise<DagentSkill[]> => {
-  const d = await r.json();
-  if (!r.ok || !Array.isArray(d?.skills)) throw new Error(d?.error || "Could not read the skills.");
-  return d.skills as DagentSkill[];
-};
-
-export const useDagentSkills = () =>
-  useQuery({ queryKey: DAGENT_SKILLS_KEY, queryFn: async () => readSkills(await fetch("/api/dagent/skills", { cache: "no-store" })), staleTime: 0 });
-
-/** Switches one skill on or off; resolves to the whole list as the server now has it. */
-export const putDagentSkill = async (name: string, enabled: boolean): Promise<DagentSkill[]> =>
-  readSkills(await fetch("/api/dagent/skills", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, enabled }) }));
-
 export const CLAUDE_MODELS_KEY = ["claude-models"] as const;
 
 export const useClaudeModels = () =>

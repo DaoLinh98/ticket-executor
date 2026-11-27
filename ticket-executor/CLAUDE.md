@@ -47,9 +47,8 @@ runner beyond `node --test`; ask before adding tooling.
 `dagent-implement-v4` (`graph.ts`) driven by `engine.ts`; each agent step is `claude -p --agent <name>
 --json-schema …` from `cli.ts`. **No skill runs as a step** — behaviour = `~/.claude/agents/<name>.md` + `prompts.ts` brief.
 **Ticket skills:** the first judging role (`readiness` / `qaTriage` / `reviewTriage`) picks from `skillCatalog()`
-(`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS` and the skills switched off in
-Settings → Skills — `SavedOption` kind `dagent-skill-off`, `skillsOff()`, `/api/dagent/skills`; stored as the off names,
-so a newly installed skill is offered by default) into `skills`; `applySkills()`
+(`skills.ts`: Root repo `.claude/skills` + `~/.claude/skills`, minus `DENIED_SKILLS`; every installed skill is
+offered, there is no Settings switch) into `skills`; `applySkills()`
 (`engine.ts`) resolves each to its `SKILL.md`, which every later brief names (brief wins on branch/commit/push/PR).
 A picked skill's `baseBranch` → `seatBase()` moves each repo with `origin/<branch>` onto it before `plan`
 (none has it = FAIL); `basesOf()` then drives `syncBase`, `prePublish` and the publisher's PR target.
